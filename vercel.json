@@ -1,0 +1,27 @@
+{
+  "functions": {
+    "app/api/tools/[tool]/route.ts": {
+      "maxDuration": 120
+    },
+    "app/api/tools/sign/route.ts": {
+      "maxDuration": 30
+    },
+    "app/api/ai/summarize/route.ts": {
+      "maxDuration": 60
+    },
+    "app/api/ai/translate/route.ts": {
+      "maxDuration": 60
+    }
+  },
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        { "key": "Strict-Transport-Security", "value": "max-age=63072000; includeSubDomains; preload" }
+      ]
+    }
+  ]
+}

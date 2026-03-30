@@ -1,0 +1,114 @@
+"use client"
+
+import { useState, useCallback } from "react"
+import type { ProcessingStep } from "@/components/tools/ProcessingModal"
+
+export type ToolState =
+  | { status: "idle" }
+  | { status: "files-selected"; files: File[] }
+  | { status: "processing"; step: ProcessingStep; uploadProgress?: number }
+  | { status: "success"; downloadUrl: string; filename: string; processingTime: string; outputSize: number }
+  | { status: "error"; message: string; retryable: boolean; upgradeRequired?: boolean }
+
+function getFilenameFromResponse(res: Response): string {
+  const disposition = res.headers.get("Content-Disposition")
+  if (disposition) {
+    const match = disposition.match(/filename="?([^";\n]+)"?/)
+    if (match) return match[1]
+  }
+  return "output.pdf"
+}
+
+function uploadWithProgress(
+  url: string,
+  formData: FormData,
+  onProgress: (pct: number) => void
+): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open("POST", url)
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        onProgress(Math.round((e.loaded / e.total) * 100))
+      }
+    }
+
+    xhr.onload = () => {
+      const headers = new Headers()
+      xhr.getAllResponseHeaders().trim().split(/[\r\n]+/).forEach((line) => {
+        const parts = line.split(": ")
+        if (parts.length === 2) headers.append(parts[0], parts[1])
+      })
+      resolve(new Response(xhr.response, { status: xhr.status, statusText: xhr.statusText, headers }))
+    }
+
+    xhr.onerror = () => reject(new Error("Network error"))
+    xhr.responseType = "blob"
+    xhr.send(formData)
+  })
+}
+
+export function useTool(toolSlug: string) {
+  const [state, setState] = useState<ToolState>({ status: "idle" })
+
+  const process = useCallback(
+    async (files: File[], options: Record<string, unknown> = {}) => {
+      setState({ status: "processing", step: "start" })
+
+      const form = new FormData()
+      for (const file of files) form.append("file", file)
+      form.append("options", JSON.stringify(options))
+
+      setState({ status: "processing", step: "upload", uploadProgress: 0 })
+
+      try {
+        const response = await uploadWithProgress(
+          `/api/tools/${toolSlug}`,
+          form,
+          (progress) => {
+            setState({ status: "processing", step: "upload", uploadProgress: progress })
+          }
+        )
+
+        setState({ status: "processing", step: "process" })
+
+        if (!response.ok) {
+          let errMsg = "Processing failed"
+          let upgradeRequired = false
+          try {
+            const err = await response.json()
+            errMsg = err.error || errMsg
+            upgradeRequired = !!err.upgradeRequired
+          } catch {
+            // blob response, can't parse JSON
+          }
+          setState({ status: "error", message: errMsg, retryable: true, upgradeRequired })
+          return
+        }
+
+        setState({ status: "processing", step: "download" })
+
+        const blob = await response.blob()
+        const downloadUrl = URL.createObjectURL(blob)
+        const processingTime = response.headers.get("X-Processing-Time") ?? "0"
+        const outputSize = Number(response.headers.get("X-Output-Size") ?? blob.size)
+
+        setState({
+          status: "success",
+          downloadUrl,
+          filename: getFilenameFromResponse(response),
+          processingTime,
+          outputSize,
+        })
+      } catch {
+        setState({ status: "error", message: "A network error occurred. Please try again.", retryable: true })
+      }
+    },
+    [toolSlug]
+  )
+
+  const reset = useCallback(() => setState({ status: "idle" }), [])
+
+  return { state, process, reset }
+}
