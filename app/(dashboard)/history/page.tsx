@@ -1,4 +1,4 @@
-import { Clock, Download, FileText } from "lucide-react"
+import { Clock } from "lucide-react"
 
 export default function HistoryPage() {
   return (

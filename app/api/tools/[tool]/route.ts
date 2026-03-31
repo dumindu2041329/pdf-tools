@@ -3,11 +3,16 @@ import { NextResponse } from "next/server"
 import { runTool } from "@/lib/iloveapi/tools"
 import { ILoveAPIError, mapILoveAPIError } from "@/lib/iloveapi/errors"
 
+export const maxDuration = 60; // 60 seconds (useful for Vercel Hobby/Pro)
+
+// Ensure app router accepts large formData
+export const dynamic = 'force-dynamic';
+
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ tool: string }> }
 ) {
-  const { userId } = await auth()
+  await auth()
   // Note: we removed the strict 401 check here because free tools can be used without login.
   // In a robust production environment, you would check if the requested tool requires premium access here.
 
@@ -16,8 +21,8 @@ export async function POST(
   let formData: FormData
   try {
     formData = await req.formData()
-  } catch (err) {
-    console.error("FormData parse error (often due to cancelled XHR or broken upload):", err)
+  } catch {
+    // Silently handle upload cancellations without polluting terminal
     return NextResponse.json({ error: "Failed to parse file upload request" }, { status: 400 })
   }
 

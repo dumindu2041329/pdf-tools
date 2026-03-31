@@ -6,9 +6,7 @@ import {
   Clock,
   Zap,
   Crown,
-  ArrowRight,
 } from "lucide-react"
-import { Button } from "@/components/ui/button"
 import { UsageMeter } from "@/components/shared/UsageMeter"
 import { toolsConfig } from "@/lib/tools-config"
 
@@ -82,20 +80,6 @@ export default function DashboardPage() {
       </div>
 
       {/* Upgrade CTA */}
-      <div className="rounded-xl border border-primary/20 bg-gradient-to-r from-primary/5 to-primary/10 p-6 flex items-center justify-between">
-        <div>
-          <h3 className="font-semibold">Upgrade to Premium</h3>
-          <p className="text-sm text-muted-foreground mt-1">
-            Get unlimited files, 80+ OCR languages, AI tools, and more.
-          </p>
-        </div>
-        <Button asChild>
-          <Link href="/pricing">
-            Upgrade
-            <ArrowRight className="ml-2 h-4 w-4" />
-          </Link>
-        </Button>
-      </div>
     </div>
   )
 }

@@ -10,6 +10,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let task: any = null;
 
   try {
@@ -43,7 +44,7 @@ export async function POST(req: Request) {
     // Create signature request with raw fetch using SDK's assigned server
     const signatureData = await createSignatureRequest({
       task: task.id,
-      files: [{ server_filename: (addedFile as any).serverFilename, filename: file.name }],
+      files: [{ server_filename: (addedFile as { serverFilename: string }).serverFilename, filename: file.name }],
       signers,
       uuid_visible: true,
       verify_enabled: true,
@@ -58,7 +59,7 @@ export async function POST(req: Request) {
   } catch (err) {
     console.error("Signature error:", err)
     if (task) {
-      try { await task.delete(); } catch(e) { /* ignore */ }
+      try { await task.delete(); } catch { /* ignore */ }
     }
     return NextResponse.json({ error: "Failed to create signature request" }, { status: 500 })
   }

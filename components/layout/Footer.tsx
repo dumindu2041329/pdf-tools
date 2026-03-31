@@ -32,7 +32,6 @@ const toolCategories = [
     title: "Company",
     links: [
       { href: "/about", label: "About" },
-      { href: "/pricing", label: "Pricing" },
       { href: "/features", label: "Features" },
     ],
   },
@@ -81,24 +80,10 @@ export function Footer() {
         </div>
 
         {/* Bottom bar */}
-        <div className="border-t border-border/40 py-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="border-t border-border/40 py-6 flex flex-col items-center justify-center gap-4">
           <p className="text-xs text-muted-foreground">
             © {new Date().getFullYear()} PDFTools. All rights reserved.
           </p>
-          <div className="flex items-center gap-4">
-            <Link
-              href="/privacy"
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Privacy Policy
-            </Link>
-            <Link
-              href="/terms"
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Terms of Service
-            </Link>
-          </div>
         </div>
       </div>
     </footer>

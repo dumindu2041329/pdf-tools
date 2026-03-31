@@ -37,11 +37,15 @@ export async function runTool(input: ToolRunInput): Promise<ToolRunResult> {
     
     // SDK specific assignments
     if (f.password) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (file as any).params = (file as any).params || {};
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (file as any).params.password = f.password;
     }
     if (f.rotate !== undefined) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (file as any).params = (file as any).params || {};
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (file as any).params.rotate = f.rotate;
     }
     
@@ -49,6 +53,7 @@ export async function runTool(input: ToolRunInput): Promise<ToolRunResult> {
   }
 
   // Step 3: Process
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const processOptions: Record<string, any> = { ...input.options }
   if (input.outputFilename) {
     processOptions.output_filename = input.outputFilename
@@ -64,8 +69,11 @@ export async function runTool(input: ToolRunInput): Promise<ToolRunResult> {
 
   return {
     buffer: buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer, // Convert Uint8Array to ArrayBuffer cleanly
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     downloadFilename: (processResult as any).download_filename ?? input.outputFilename ?? "output.pdf",
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     outputFilesize: (processResult as any).output_filesize ?? buffer.byteLength,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     timer: (processResult as any).timer ?? "0",
     taskId: task.id,
     server: "api.ilovepdf.com", // Abstracted away in SDK

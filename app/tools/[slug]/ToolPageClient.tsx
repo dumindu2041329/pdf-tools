@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useRef } from "react"
 import { getToolBySlug } from "@/lib/tools-config"
 import { ToolHero } from "@/components/tools/ToolHero"
 import { FileUploader } from "@/components/tools/FileUploader"
@@ -21,15 +21,18 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
   const [files, setFiles] = useState<File[]>([])
   const [options, setOptions] = useState<Record<string, unknown>>({})
   const { state, process, reset } = useTool(tool.iloveapiTool)
+  const isProcessingRef = useRef(false)
 
   const handleProcess = () => {
-    if (files.length === 0) return
+    if (files.length === 0 || isProcessingRef.current) return
+    isProcessingRef.current = true
     process(files, options)
   }
 
   const handleReset = () => {
     setFiles([])
     setOptions({})
+    isProcessingRef.current = false
     reset()
   }
 

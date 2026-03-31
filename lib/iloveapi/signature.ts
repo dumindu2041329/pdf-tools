@@ -81,6 +81,7 @@ export async function getSignatureStatus(
   try {
     const status = await ilovepdf.getSignatureStatus(tokenRequester)
     return status as unknown as Record<string, unknown>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     if (err.message) throw new ILoveAPIError({ message: err.message, type: "StatusError" })
     throw err
@@ -94,6 +95,7 @@ export async function downloadSignedFile(
   try {
     const arr = await ilovepdf.downloadSignedFiles(tokenRequester)
     return arr.buffer.slice(arr.byteOffset, arr.byteOffset + arr.byteLength) as ArrayBuffer
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     throw new ILoveAPIError({ type: "DownloadError", message: err.message || "Download failed" })
   }
@@ -106,6 +108,7 @@ export async function downloadAuditTrail(
   try {
     const arr = await ilovepdf.downloadAuditFiles(tokenRequester)
     return arr.buffer.slice(arr.byteOffset, arr.byteOffset + arr.byteLength) as ArrayBuffer
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     throw new ILoveAPIError({ type: "DownloadError", message: err.message || "Download failed" })
   }
@@ -117,6 +120,7 @@ export async function voidSignatureRequest(
   try {
     await ilovepdf.voidSignature(tokenRequester)
     return { success: true }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     if (err.message) throw new ILoveAPIError({ message: err.message, type: "VoidError" })
     throw err
@@ -129,6 +133,7 @@ export async function sendSignatureReminder(
   try {
     await ilovepdf.sendReminders(tokenRequester)
     return { success: true }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     if (err.message) throw new ILoveAPIError({ message: err.message, type: "ReminderError" })
     throw err

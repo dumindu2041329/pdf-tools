@@ -8,24 +8,40 @@ import {
   UserButton,
   useAuth,
 } from "@clerk/nextjs"
-import { FileText, Menu, X } from "lucide-react"
+import { FileText, Menu, X, ChevronDown } from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
 
 import { Button } from "@/components/ui/button"
 import { ThemeToggle } from "@/components/theme/ThemeToggle"
+import { ToolsDropdown } from "@/components/layout/ToolsDropdown"
 import { cn } from "@/lib/utils"
 
 const navLinks = [
-  { href: "/", label: "Tools" },
-  { href: "/pricing", label: "Pricing" },
-  { href: "/features", label: "Features" },
-  { href: "/about", label: "About" },
+  { href: "/", label: "Tools", hasDropdown: true },
+  { href: "/#features", label: "Features", hasDropdown: false },
+  { href: "/#about", label: "About", hasDropdown: false },
 ]
 
 export function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [toolsDropdownOpen, setToolsDropdownOpen] = useState(false)
   const pathname = usePathname()
   const { isSignedIn } = useAuth()
+
+  const handleAnchorClick = (e: React.MouseEvent<HTMLAnchorElement>, href: string) => {
+    if (href.startsWith('/#') && pathname === '/') {
+      e.preventDefault()
+      const destination = href.replace('/#', '')
+      const element = document.getElementById(destination)
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth' })
+        window.history.pushState(null, '', href)
+      }
+      setMobileOpen(false)
+    } else {
+      setMobileOpen(false)
+    }
+  }
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60">
@@ -43,18 +59,54 @@ export function Navbar() {
         {/* Desktop nav */}
         <div className="hidden md:flex items-center gap-1">
           {navLinks.map((link) => (
-            <Link
+            <div
               key={link.href}
-              href={link.href}
               className={cn(
-                "px-3 py-2 rounded-lg text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground",
-                pathname === link.href
-                  ? "bg-accent text-accent-foreground"
-                  : "text-muted-foreground"
+                link.hasDropdown ? "relative inline-block" : ""
               )}
             >
-              {link.label}
-            </Link>
+              {link.hasDropdown ? (
+                <div
+                  onMouseEnter={() => setToolsDropdownOpen(true)}
+                  onMouseLeave={() => setToolsDropdownOpen(false)}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setToolsDropdownOpen(!toolsDropdownOpen)}
+                    className={cn(
+                      "flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground cursor-pointer",
+                      toolsDropdownOpen
+                        ? "bg-accent text-accent-foreground"
+                        : "text-muted-foreground"
+                    )}
+                  >
+                    {link.label}
+                    <ChevronDown className={cn(
+                      "h-3.5 w-3.5 transition-transform",
+                      toolsDropdownOpen && "rotate-180"
+                    )} />
+                  </button>
+                  <ToolsDropdown
+                    isOpen={toolsDropdownOpen}
+                    onMouseEnter={() => setToolsDropdownOpen(true)}
+                    onMouseLeave={() => setToolsDropdownOpen(false)}
+                  />
+                </div>
+              ) : (
+                <Link
+                  href={link.href}
+                  onClick={(e) => handleAnchorClick(e, link.href)}
+                  className={cn(
+                    "flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground",
+                    pathname === link.href
+                      ? "bg-accent text-accent-foreground"
+                      : "text-muted-foreground"
+                  )}
+                >
+                  {link.label}
+                </Link>
+              )}
+            </div>
           ))}
         </div>
 
@@ -116,21 +168,36 @@ export function Navbar() {
             className="md:hidden border-t border-border/40 bg-background/95 backdrop-blur-xl overflow-hidden"
           >
             <div className="px-4 py-4 space-y-2">
-              {navLinks.map((link) => (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  onClick={() => setMobileOpen(false)}
-                  className={cn(
-                    "block px-3 py-2 rounded-lg text-sm font-medium transition-colors hover:bg-accent",
-                    pathname === link.href
-                      ? "bg-accent text-accent-foreground"
-                      : "text-muted-foreground"
-                  )}
-                >
-                  {link.label}
-                </Link>
-              ))}
+              <Link
+                href="/"
+                onClick={() => setMobileOpen(false)}
+                className={cn(
+                  "block px-3 py-2 rounded-lg text-sm font-medium transition-colors hover:bg-accent",
+                  pathname === "/" ? "bg-accent text-accent-foreground" : "text-muted-foreground"
+                )}
+              >
+                All Tools
+              </Link>
+              <Link
+                href="/#features"
+                onClick={(e) => handleAnchorClick(e, "/#features")}
+                className={cn(
+                  "block px-3 py-2 rounded-lg text-sm font-medium transition-colors hover:bg-accent",
+                  pathname === "/#features" ? "bg-accent text-accent-foreground" : "text-muted-foreground"
+                )}
+              >
+                Features
+              </Link>
+              <Link
+                href="/#about"
+                onClick={(e) => handleAnchorClick(e, "/#about")}
+                className={cn(
+                  "block px-3 py-2 rounded-lg text-sm font-medium transition-colors hover:bg-accent",
+                  pathname === "/#about" ? "bg-accent text-accent-foreground" : "text-muted-foreground"
+                )}
+              >
+                About
+              </Link>
               <div className="pt-2 border-t border-border/40 space-y-2">
                 {isSignedIn ? (
                   <Link

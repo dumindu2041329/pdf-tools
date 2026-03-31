@@ -2,7 +2,6 @@
 
 import { GitBranch, Plus, ArrowRight, Zap } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import Link from "next/link"
 import { toolsConfig } from "@/lib/tools-config"
 
 const exampleWorkflows = [
@@ -81,11 +80,8 @@ export default function WorkflowsPage() {
         <Zap className="h-12 w-12 text-muted-foreground mb-4" />
         <h3 className="text-lg font-semibold">Custom Workflows Coming Soon</h3>
         <p className="text-sm text-muted-foreground mt-1 max-w-md">
-          Build your own multi-step workflows with drag-and-drop. Available for Premium users.
+          Build your own multi-step workflows with drag-and-drop.
         </p>
-        <Button variant="outline" className="mt-6" asChild>
-          <Link href="/pricing">View Premium Plans</Link>
-        </Button>
       </div>
     </div>
   )

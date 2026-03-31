@@ -38,6 +38,7 @@ export async function canProcessFile(
 }
 
 // Stubbed — no-op until DB is connected
+/* eslint-disable @typescript-eslint/no-unused-vars */
 export async function recordCreditUsage(
   _userId: string,
   _tool: string,
@@ -52,7 +53,8 @@ export async function getUsageStats(_userId: string) {
   return {
     filesProcessedToday: 0,
     filesProcessedThisMonth: 0,
-    plan: "free" as const,
+    subscriptionPlan: "free" as const,
     limits: planLimits.free,
   }
 }
+/* eslint-enable @typescript-eslint/no-unused-vars */

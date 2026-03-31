@@ -1,7 +1,10 @@
 "use client"
 
+"use client"
+
+import { useState, useEffect } from "react"
 import Link from "next/link"
-import { motion } from "framer-motion"
+import { motion, AnimatePresence } from "framer-motion"
 import {
   ArrowRight,
   Upload,
@@ -11,11 +14,13 @@ import {
   Clock,
   Lock,
   Star,
-  Check,
+  ChevronUp,
+  FileText,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { ToolGrid } from "@/components/tools/ToolGrid"
+import { GLSLHills } from "@/components/ui/glsl-hills"
 
 // ── Animation variants ───────────────────────────────────────
 const fadeUp = {
@@ -32,9 +37,10 @@ function HeroSection() {
   return (
     <section className="relative overflow-hidden">
       {/* Background gradients */}
-      <div className="absolute inset-0 -z-10">
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-primary/10 rounded-full blur-[120px]" />
-        <div className="absolute bottom-0 right-0 w-[400px] h-[400px] bg-cyan-500/10 rounded-full blur-[100px]" />
+      <div className="absolute inset-0 -z-10 overflow-hidden">
+        <GLSLHills width="100%" height="100%" />
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-primary/10 rounded-full blur-[120px] pointer-events-none" />
+        <div className="absolute bottom-0 right-0 w-[400px] h-[400px] bg-cyan-500/10 rounded-full blur-[100px] pointer-events-none" />
       </div>
 
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-20 pb-24 sm:pt-28 sm:pb-32">
@@ -262,7 +268,7 @@ function FeaturesSection() {
   ]
 
   return (
-    <section className="py-20 sm:py-28">
+    <section id="features" className="py-20 sm:py-28">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <motion.div
           initial="hidden"
@@ -304,141 +310,67 @@ function FeaturesSection() {
   )
 }
 
-// ── Pricing Preview Section ──────────────────────────────────
-function PricingSection() {
-  const plans = [
-    {
-      name: "Free",
-      price: "$0",
-      period: "forever",
-      description: "Perfect for occasional use",
-      features: [
-        "All core PDF tools",
-        "30 files/month",
-        "20 MB max file size",
-        "English OCR",
-        "3 AI summaries/month",
-      ],
-      cta: "Get Started",
-      href: "/sign-up",
-      highlighted: false,
-    },
-    {
-      name: "Premium",
-      price: "$9",
-      period: "/month",
-      description: "For power users and professionals",
-      features: [
-        "Everything in Free",
-        "500 files/month",
-        "200 MB max file size",
-        "80+ OCR languages",
-        "Edit PDF & Sign PDF",
-        "Unlimited AI features",
-        "Custom workflows",
-        "Priority support",
-      ],
-      cta: "Upgrade to Premium",
-      href: "/pricing",
-      highlighted: true,
-    },
-    {
-      name: "Business",
-      price: "$29",
-      period: "/month",
-      description: "For teams and organizations",
-      features: [
-        "Everything in Premium",
-        "Unlimited files",
-        "500 MB max file size",
-        "Up to 50 team members",
-        "Unlimited signatures",
-        "API access",
-        "Data region selection",
-      ],
-      cta: "Contact Sales",
-      href: "/pricing",
-      highlighted: false,
-    },
-  ]
-
+// ── About Section ──────────────────────────────────────────────
+function AboutSection() {
   return (
-    <section className="py-20 sm:py-28 bg-muted/30">
+    <section id="about" className="py-20 sm:py-28 bg-muted/30">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        <motion.div
-          initial="hidden"
-          whileInView="visible"
-          viewport={{ once: true, margin: "-100px" }}
-          className="text-center mb-16"
-        >
-          <motion.h2
-            custom={0}
-            variants={fadeUp}
-            className="text-3xl sm:text-4xl font-bold tracking-tight"
+        <div className="grid gap-12 lg:grid-cols-2 lg:items-center">
+          <motion.div
+            initial={{ opacity: 0, x: -30 }}
+            whileInView={{ opacity: 1, x: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.5 }}
           >
-            Simple, Transparent Pricing
-          </motion.h2>
-          <motion.p
-            custom={1}
-            variants={fadeUp}
-            className="mt-4 text-lg text-muted-foreground"
-          >
-            Start free. Upgrade when you need more.
-          </motion.p>
-        </motion.div>
-
-        <div className="grid gap-8 md:grid-cols-3 max-w-5xl mx-auto">
-          {plans.map((plan, i) => (
-            <motion.div
-              key={plan.name}
-              initial={{ opacity: 0, y: 30 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ duration: 0.5, delay: i * 0.15 }}
-              className={`relative flex flex-col rounded-2xl border p-8 ${
-                plan.highlighted
-                  ? "border-primary bg-card shadow-2xl shadow-primary/10 scale-[1.02]"
-                  : "border-border/50 bg-card"
-              }`}
-            >
-              {plan.highlighted && (
-                <div className="absolute -top-4 left-1/2 -translate-x-1/2 rounded-full bg-primary px-4 py-1 text-xs font-semibold text-primary-foreground shadow-lg">
-                  Most Popular
-                </div>
-              )}
-
-              <div className="mb-6">
-                <h3 className="text-lg font-semibold">{plan.name}</h3>
-                <div className="mt-2 flex items-baseline gap-1">
-                  <span className="text-4xl font-extrabold">{plan.price}</span>
-                  <span className="text-muted-foreground">{plan.period}</span>
-                </div>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  {plan.description}
-                </p>
+            <h2 className="text-3xl sm:text-4xl font-bold tracking-tight mb-6">
+              About PDFTools
+            </h2>
+            <div className="space-y-4 text-lg text-muted-foreground">
+              <p>
+                PDFTools was built with a simple mission: to make PDF editing and 
+                management accessible to everyone without the bloat, expensive subscriptions, 
+                or privacy concerns.
+              </p>
+              <p>
+                Powered by the reliable iLoveAPI, we provide a blazingly fast, 
+                secure, and intuitive interface for performing complex document 
+                operations directly in your browser. From simple merges to AI-driven summaries, 
+                we&apos;re constantly evolving to bring you the best tools possible.
+              </p>
+            </div>
+            <div className="mt-8 flex gap-4">
+              <div className="flex flex-col">
+                <span className="text-3xl font-extrabold text-primary">28+</span>
+                <span className="text-sm text-muted-foreground font-medium">Free Tools</span>
               </div>
-
-              <ul className="flex-1 space-y-3 mb-8">
-                {plan.features.map((feature) => (
-                  <li
-                    key={feature}
-                    className="flex items-start gap-2 text-sm"
-                  >
-                    <Check className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-                    {feature}
-                  </li>
-                ))}
-              </ul>
-
-              <Button
-                variant={plan.highlighted ? "default" : "outline"}
-                className="w-full"
-                asChild
-              >
-                <Link href={plan.href}>{plan.cta}</Link>
-              </Button>
-            </motion.div>
-          ))}
+              <div className="w-px bg-border/50" />
+              <div className="flex flex-col">
+                <span className="text-3xl font-extrabold text-primary">100%</span>
+                <span className="text-sm text-muted-foreground font-medium">Secure</span>
+              </div>
+              <div className="w-px bg-border/50" />
+              <div className="flex flex-col">
+                <span className="text-3xl font-extrabold text-primary">&lt;1hr</span>
+                <span className="text-sm text-muted-foreground font-medium">Auto-Deletion</span>
+              </div>
+            </div>
+          </motion.div>
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            whileInView={{ opacity: 1, scale: 1 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.5, delay: 0.2 }}
+            className="relative h-[400px] rounded-3xl overflow-hidden bg-primary/5 border border-primary/20 flex items-center justify-center shadow-2xl shadow-primary/5"
+          >
+            <div className="absolute inset-0 bg-gradient-to-tr from-primary/10 via-transparent to-cyan-500/10" />
+            <div className="relative flex flex-col items-center justify-center p-8 text-center bg-background/80 backdrop-blur-md rounded-2xl border border-white/10 shadow-xl w-3/4 max-w-sm">
+              <FileText className="h-16 w-16 text-primary mb-4" />
+              <h3 className="text-xl font-semibold mb-2">Simplicity First</h3>
+              <p className="text-sm text-muted-foreground">
+                We believe document management should be effortless. No steep learning curves, just drag, drop, and done.
+              </p>
+            </div>
+          </motion.div>
         </div>
       </div>
     </section>
@@ -469,7 +401,13 @@ function CTASection() {
               Join thousands of users who trust PDFTools for their document
               workflows. Get started in seconds — no credit card required.
             </p>
-            <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-4">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.5, delay: 0.2 }}
+              className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-4"
+            >
               <Button
                 size="lg"
                 className="bg-white text-primary hover:bg-white/90 shadow-lg text-base px-8"
@@ -482,13 +420,13 @@ function CTASection() {
               </Button>
               <Button
                 size="lg"
-                variant="outline"
-                className="border-white/30 text-white hover:bg-white/10 text-base px-8"
+                variant="ghost"
+                className="border border-white/30 text-white hover:bg-white/10 backdrop-blur-md shadow-lg shadow-black/10 text-base px-8"
                 asChild
               >
                 <Link href="#tools">View All Tools</Link>
               </Button>
-            </div>
+            </motion.div>
           </div>
         </motion.div>
       </div>
@@ -498,14 +436,51 @@ function CTASection() {
 
 // ── Page Component ───────────────────────────────────────────
 export default function HomePage() {
+  const [showButton, setShowButton] = useState(false)
+
+  useEffect(() => {
+    // On mount/reload, force scroll to the absolute top of the page 
+    // and remove any hash targeting so we sit on the clean root
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' })
+    if (window.location.hash) {
+      window.history.replaceState(null, '', window.location.pathname)
+    }
+
+    const handleScroll = () => {
+      setShowButton(window.scrollY > 500)
+    }
+    window.addEventListener("scroll", handleScroll)
+    return () => window.removeEventListener("scroll", handleScroll)
+  }, [])
+
+  const scrollToTop = () => {
+    window.scrollTo({ top: 0, behavior: "smooth" })
+  }
+
   return (
     <>
       <HeroSection />
       <ToolsSection />
       <HowItWorksSection />
       <FeaturesSection />
-      <PricingSection />
+      <AboutSection />
       <CTASection />
+
+      <AnimatePresence>
+        {showButton && (
+          <motion.button
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.8 }}
+            transition={{ duration: 0.2 }}
+            onClick={scrollToTop}
+            className="fixed bottom-6 right-6 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/25 hover:bg-primary/90 transition-colors cursor-pointer"
+            aria-label="Scroll to top"
+          >
+            <ChevronUp className="h-6 w-6" />
+          </motion.button>
+        )}
+      </AnimatePresence>
     </>
   )
 }
