@@ -21,6 +21,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { ToolGrid } from "@/components/tools/ToolGrid"
 import { GLSLHills } from "@/components/ui/glsl-hills"
+import { useClerk } from "@clerk/nextjs"
 
 // ── Animation variants ───────────────────────────────────────
 const fadeUp = {
@@ -33,7 +34,7 @@ const fadeUp = {
 }
 
 // ── Hero Section ─────────────────────────────────────────────
-function HeroSection() {
+function HeroSection({ onGetStarted }: { onGetStarted: () => void }) {
   return (
     <section className="relative overflow-hidden">
       {/* Background gradients */}
@@ -61,7 +62,7 @@ function HeroSection() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.1 }}
-            className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-extrabold tracking-tight leading-[1.1]"
+            className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-extrabold tracking-tight leading-[1.1] font-serif"
           >
             Every PDF Tool You Need,{" "}
             <span className="bg-gradient-to-r from-primary via-violet-500 to-cyan-500 bg-clip-text text-transparent">
@@ -74,7 +75,7 @@ function HeroSection() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.2 }}
-            className="mt-6 text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto"
+            className="mt-6 text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto font-serif"
           >
             Merge, split, compress, convert, and edit your PDF files.
             Fast, secure, and completely free. No registration needed for basic tools.
@@ -93,8 +94,8 @@ function HeroSection() {
                 <ArrowRight className="ml-2 h-4 w-4" />
               </Link>
             </Button>
-            <Button size="lg" variant="outline" asChild className="text-base px-8">
-              <Link href="/sign-up">Get Started Free</Link>
+            <Button size="lg" variant="outline" className="text-base px-8" onClick={onGetStarted}>
+              Get Started Free
             </Button>
           </motion.div>
 
@@ -138,7 +139,7 @@ function ToolsSection() {
           <motion.h2
             custom={0}
             variants={fadeUp}
-            className="text-3xl sm:text-4xl font-bold tracking-tight"
+            className="text-3xl sm:text-4xl font-bold tracking-tight font-serif"
           >
             All the PDF Tools You Need
           </motion.h2>
@@ -196,7 +197,7 @@ function HowItWorksSection() {
           <motion.h2
             custom={0}
             variants={fadeUp}
-            className="text-3xl sm:text-4xl font-bold tracking-tight"
+            className="text-3xl sm:text-4xl font-bold tracking-tight font-serif"
           >
             How It Works
           </motion.h2>
@@ -279,7 +280,7 @@ function FeaturesSection() {
           <motion.h2
             custom={0}
             variants={fadeUp}
-            className="text-3xl sm:text-4xl font-bold tracking-tight"
+            className="text-3xl sm:text-4xl font-bold tracking-tight font-serif"
           >
             Why Choose PDFTools?
           </motion.h2>
@@ -322,7 +323,7 @@ function AboutSection() {
             viewport={{ once: true }}
             transition={{ duration: 0.5 }}
           >
-            <h2 className="text-3xl sm:text-4xl font-bold tracking-tight mb-6">
+            <h2 className="text-3xl sm:text-4xl font-bold tracking-tight mb-6 font-serif">
               About PDFTools
             </h2>
             <div className="space-y-4 text-lg text-muted-foreground">
@@ -378,7 +379,7 @@ function AboutSection() {
 }
 
 // ── Final CTA Section ────────────────────────────────────────
-function CTASection() {
+function CTASection({ onGetStarted }: { onGetStarted: () => void }) {
   return (
     <section className="py-20 sm:py-28">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
@@ -394,7 +395,7 @@ function CTASection() {
           <div className="absolute bottom-0 left-0 w-48 h-48 bg-white/10 rounded-full translate-y-1/2 -translate-x-1/2" />
 
           <div className="relative z-10">
-            <h2 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
+            <h2 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight font-serif">
               Ready to Transform Your PDFs?
             </h2>
             <p className="mt-4 text-lg text-white/80 max-w-xl mx-auto">
@@ -411,12 +412,10 @@ function CTASection() {
               <Button
                 size="lg"
                 className="bg-white text-primary hover:bg-white/90 shadow-lg text-base px-8"
-                asChild
+                onClick={onGetStarted}
               >
-                <Link href="/sign-up">
-                  Get Started Free
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </Link>
+                Get Started Free
+                <ArrowRight className="ml-2 h-4 w-4" />
               </Button>
               <Button
                 size="lg"
@@ -437,6 +436,9 @@ function CTASection() {
 // ── Page Component ───────────────────────────────────────────
 export default function HomePage() {
   const [showButton, setShowButton] = useState(false)
+  const { openSignUp } = useClerk()
+
+  const handleGetStarted = () => openSignUp({ forceRedirectUrl: "/" })
 
   useEffect(() => {
     // On mount/reload, force scroll to the absolute top of the page 
@@ -459,12 +461,12 @@ export default function HomePage() {
 
   return (
     <>
-      <HeroSection />
+      <HeroSection onGetStarted={handleGetStarted} />
       <ToolsSection />
       <HowItWorksSection />
       <FeaturesSection />
       <AboutSection />
-      <CTASection />
+      <CTASection onGetStarted={handleGetStarted} />
 
       <AnimatePresence>
         {showButton && (

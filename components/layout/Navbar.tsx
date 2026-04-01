@@ -7,6 +7,7 @@ import {
   SignInButton,
   UserButton,
   useAuth,
+  useClerk,
 } from "@clerk/nextjs"
 import { FileText, Menu, X, ChevronDown } from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
@@ -27,6 +28,9 @@ export function Navbar() {
   const [toolsDropdownOpen, setToolsDropdownOpen] = useState(false)
   const pathname = usePathname()
   const { isSignedIn } = useAuth()
+  const { openSignUp } = useClerk()
+
+  const handleGetStarted = () => openSignUp({ forceRedirectUrl: "/" })
 
   const handleAnchorClick = (e: React.MouseEvent<HTMLAnchorElement>, href: string) => {
     if (href.startsWith('/#') && pathname === '/') {
@@ -115,9 +119,6 @@ export function Navbar() {
           <ThemeToggle />
           {isSignedIn ? (
             <>
-              <Button variant="ghost" size="sm" asChild>
-                <Link href="/dashboard">Dashboard</Link>
-              </Button>
               <UserButton
                 appearance={{
                   elements: {
@@ -133,8 +134,8 @@ export function Navbar() {
                   Sign in
                 </Button>
               </SignInButton>
-              <Button size="sm" asChild>
-                <Link href="/sign-up">Get Started Free</Link>
+              <Button size="sm" onClick={handleGetStarted}>
+                Get Started Free
               </Button>
             </>
           )}
@@ -200,13 +201,15 @@ export function Navbar() {
               </Link>
               <div className="pt-2 border-t border-border/40 space-y-2">
                 {isSignedIn ? (
-                  <Link
-                    href="/dashboard"
-                    onClick={() => setMobileOpen(false)}
-                    className="block px-3 py-2 rounded-lg text-sm font-medium text-muted-foreground hover:bg-accent"
-                  >
-                    Dashboard
-                  </Link>
+                  <>
+                    <UserButton
+                      appearance={{
+                        elements: {
+                          avatarBox: "w-9 h-9 ring-2 ring-primary/20",
+                        },
+                      }}
+                    />
+                  </>
                 ) : (
                   <div className="flex flex-col gap-2 px-3">
                     <SignInButton mode="modal">
@@ -214,8 +217,8 @@ export function Navbar() {
                         Sign in
                       </Button>
                     </SignInButton>
-                    <Button className="w-full" asChild>
-                      <Link href="/sign-up">Get Started Free</Link>
+                    <Button className="w-full" onClick={() => { handleGetStarted(); setMobileOpen(false) }}>
+                      Get Started Free
                     </Button>
                   </div>
                 )}

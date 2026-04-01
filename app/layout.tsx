@@ -1,6 +1,6 @@
 import type { Metadata } from "next"
 import { ClerkProvider } from "@clerk/nextjs"
-import { Geist, Geist_Mono } from "next/font/google"
+import { Geist, Geist_Mono, Noto_Serif_Display } from "next/font/google"
 import { ThemeProvider } from "@/components/theme/ThemeProvider"
 import "./globals.css"
 
@@ -11,6 +11,11 @@ const geistSans = Geist({
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
+  subsets: ["latin"],
+})
+
+const notoSerifDisplay = Noto_Serif_Display({
+  variable: "--font-noto-serif-display",
   subsets: ["latin"],
 })
 
@@ -43,7 +48,7 @@ export default function RootLayout({
       <html
         lang="en"
         suppressHydrationWarning
-        className={`${geistSans.variable} ${geistMono.variable}`}
+        className={`${geistSans.variable} ${geistMono.variable} ${notoSerifDisplay.variable}`}
       >
         <body
           suppressHydrationWarning
