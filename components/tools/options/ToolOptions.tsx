@@ -21,7 +21,7 @@ interface ToolOptionsProps {
 
 const optionsMap: Record<
   string,
-  React.ComponentType<{ options: Record<string, unknown>; onChange: (opts: Record<string, unknown>) => void }>
+  React.ComponentType<{ toolSlug: string; options: Record<string, unknown>; onChange: (opts: Record<string, unknown>) => void }>
 > = {
   "compress-pdf": CompressOptions,
   "split-pdf": SplitOptions,
@@ -47,7 +47,7 @@ export function ToolOptions({ toolSlug, options, onChange }: ToolOptionsProps) {
   return (
     <div className="rounded-xl border border-border bg-card p-6">
       <h3 className="text-sm font-semibold mb-4">Options</h3>
-      <OptionsComponent options={options} onChange={onChange} />
+      <OptionsComponent toolSlug={toolSlug} options={options} onChange={onChange} />
     </div>
   )
 }

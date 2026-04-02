@@ -8,6 +8,7 @@ import { DownloadCard } from "@/components/tools/DownloadCard"
 import { ToolOptions, hasToolOptions } from "@/components/tools/options/ToolOptions"
 import { Button } from "@/components/ui/button"
 import { useTool } from "@/hooks/useTool"
+import { validateToolOptions } from "@/lib/toolValidation"
 import { Zap, AlertCircle, RotateCw } from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
 
@@ -20,18 +21,38 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
   const toolHasOptions = hasToolOptions(tool.slug)
   const [files, setFiles] = useState<File[]>([])
   const [options, setOptions] = useState<Record<string, unknown>>({})
+  const [validationError, setValidationError] = useState<string | null>(null)
   const { state, process, reset } = useTool(tool.iloveapiTool)
   const isProcessingRef = useRef(false)
 
   const handleProcess = () => {
     if (files.length === 0 || isProcessingRef.current) return
+
+    const validationMsg = validateToolOptions(tool.slug, options, files)
+    if (validationMsg) {
+      setValidationError(validationMsg)
+      return
+    }
+
+    setValidationError(null)
     isProcessingRef.current = true
-    process(files, options)
+
+    // Sanitize options before sending network payload (strips trailing/empty commas from dynamic UI)
+    const payloadOptions = { ...options }
+    if (typeof payloadOptions.ranges === "string") {
+      payloadOptions.ranges = payloadOptions.ranges.split(",").filter(Boolean).join(",")
+    }
+    if (typeof payloadOptions.remove_pages === "string") {
+      payloadOptions.remove_pages = payloadOptions.remove_pages.split(",").filter(Boolean).join(",")
+    }
+
+    process(files, payloadOptions)
   }
 
   const handleReset = () => {
     setFiles([])
     setOptions({})
+    setValidationError(null)
     isProcessingRef.current = false
     reset()
   }
@@ -74,7 +95,10 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
                   <ToolOptions
                     toolSlug={tool.slug}
                     options={options}
-                    onChange={setOptions}
+                    onChange={(opts) => {
+                      setOptions(opts)
+                      setValidationError(null)
+                    }}
                   />
                 </motion.div>
               )}
@@ -102,7 +126,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
 
             {/* Error state */}
             <AnimatePresence>
-              {isError && (
+              {(isError || validationError) && (
                 <motion.div
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -111,17 +135,17 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
                 >
                   <AlertCircle className="mx-auto h-8 w-8 text-destructive mb-3" />
                   <p className="text-sm font-medium text-destructive mb-4">
-                    {state.message}
+                    {validationError || (state.status === "error" ? state.message : "")}
                   </p>
                   <div className="flex justify-center gap-3">
-                    {state.retryable && (
+                    {!validationError && state.status === "error" && state.retryable && (
                       <Button variant="outline" size="sm" onClick={handleProcess}>
                         <RotateCw className="mr-2 h-3 w-3" />
                         Retry
                       </Button>
                     )}
                     <Button variant="ghost" size="sm" onClick={handleReset}>
-                      Start Over
+                      {validationError ? "Clear Form" : "Start Over"}
                     </Button>
                   </div>
                 </motion.div>
