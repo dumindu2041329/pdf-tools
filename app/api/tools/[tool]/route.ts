@@ -12,29 +12,40 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ tool: string }> }
 ) {
-  await auth()
-  // Note: we removed the strict 401 check here because free tools can be used without login.
-  // In a robust production environment, you would check if the requested tool requires premium access here.
-
   const { tool } = await params
+
+  const contentType = req.headers.get("content-type")
+  const contentLength = req.headers.get("content-length")
+  console.log("[DEBUG] Content-Type:", contentType, "Content-Length:", contentLength)
 
   let formData: FormData
   try {
-    formData = await req.formData()
-  } catch {
-    // Silently handle upload cancellations without polluting terminal
+    const bodyBuffer = await req.arrayBuffer()
+    const newReq = new Request(req.url, {
+      method: req.method,
+      headers: req.headers,
+      body: bodyBuffer
+    })
+    formData = await newReq.formData()
+  } catch (err) {
+    console.error("FormData parse error:", err)
     return NextResponse.json({ error: "Failed to parse file upload request" }, { status: 400 })
   }
 
   const files: Array<{ buffer: Buffer; filename: string }> = []
-
-  for (const [, value] of formData.entries()) {
-    if (typeof value === "object" && value !== null && "arrayBuffer" in value && "name" in value) {
-      const file = value as File
-      files.push({
-        buffer: Buffer.from(await file.arrayBuffer()),
-        filename: file.name,
-      })
+  
+  const uploadedFiles = formData.getAll("file");
+  for (const value of uploadedFiles) {
+    if (value && typeof value === "object") {
+      const file = value as File;
+      try {
+        files.push({
+          buffer: Buffer.from(await file.arrayBuffer()),
+          filename: file.name || "upload.pdf",
+        })
+      } catch (err) {
+         console.warn("Failed to read file buffer:", err);
+      }
     }
   }
 

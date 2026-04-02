@@ -5,7 +5,7 @@ import { getToolBySlug } from "@/lib/tools-config"
 import { FileUploader } from "@/components/tools/FileUploader"
 import { ProcessingModal } from "@/components/tools/ProcessingModal"
 import { DownloadCard } from "@/components/tools/DownloadCard"
-import { ToolOptions } from "@/components/tools/options/ToolOptions"
+import { ToolOptions, hasToolOptions } from "@/components/tools/options/ToolOptions"
 import { Button } from "@/components/ui/button"
 import { useTool } from "@/hooks/useTool"
 import { Zap, AlertCircle, RotateCw } from "lucide-react"
@@ -17,6 +17,7 @@ interface ToolPageClientProps {
 
 export function ToolPageClient({ slug }: ToolPageClientProps) {
   const tool = getToolBySlug(slug)!
+  const toolHasOptions = hasToolOptions(tool.slug)
   const [files, setFiles] = useState<File[]>([])
   const [options, setOptions] = useState<Record<string, unknown>>({})
   const { state, process, reset } = useTool(tool.iloveapiTool)
@@ -47,7 +48,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
 
       {/* Main content */}
       {!isSuccess && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
+        <div className={`grid grid-cols-1 ${toolHasOptions ? "lg:grid-cols-2" : "max-w-3xl mx-auto"} gap-8 items-start`}>
           {/* LEFT: File uploader */}
           <div>
             <FileUploader

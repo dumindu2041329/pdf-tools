@@ -16,7 +16,13 @@ export async function POST(req: Request) {
   try {
     let formData: FormData
     try {
-      formData = await req.formData()
+      const bodyBuffer = await req.arrayBuffer()
+      const newReq = new Request(req.url, {
+        method: req.method,
+        headers: req.headers,
+        body: bodyBuffer
+      })
+      formData = await newReq.formData()
     } catch (err) {
       console.error("FormData parse error (often due to cancelled XHR or broken upload):", err)
       return NextResponse.json({ error: "Failed to parse file upload request" }, { status: 400 })

@@ -24,28 +24,9 @@ function uploadWithProgress(
   formData: FormData,
   onProgress: (pct: number) => void
 ): Promise<Response> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
-    xhr.open("POST", url)
-
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) {
-        onProgress(Math.round((e.loaded / e.total) * 100))
-      }
-    }
-
-    xhr.onload = () => {
-      const headers = new Headers()
-      xhr.getAllResponseHeaders().trim().split(/[\r\n]+/).forEach((line) => {
-        const parts = line.split(": ")
-        if (parts.length === 2) headers.append(parts[0], parts[1])
-      })
-      resolve(new Response(xhr.response, { status: xhr.status, statusText: xhr.statusText, headers }))
-    }
-
-    xhr.onerror = () => reject(new Error("Network error"))
-    xhr.responseType = "blob"
-    xhr.send(formData)
+  return fetch(url, {
+    method: "POST",
+    body: formData,
   })
 }
 
@@ -57,8 +38,12 @@ export function useTool(toolSlug: string) {
       setState({ status: "processing", step: "start" })
 
       const form = new FormData()
-      for (const file of files) form.append("file", file)
+      for (const file of files) {
+        console.log("[DEBUG] Adding file:", file.name, file.size, file.type)
+        form.append("file", file)
+      }
       form.append("options", JSON.stringify(options))
+      console.log("[DEBUG] FormData entries:", Array.from(form.entries()).map(e => [e[0], typeof e[1]]))
 
       setState({ status: "processing", step: "upload", uploadProgress: 0 })
 

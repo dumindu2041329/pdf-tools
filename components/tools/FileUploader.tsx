@@ -154,34 +154,62 @@ export function FileUploader({
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="space-y-2"
+            className="space-y-4"
           >
-            {files.map((file, i) => (
-              <motion.div
-                key={`${file.name}-${i}`}
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 10 }}
-                className="flex items-center justify-between rounded-xl border border-border bg-card px-4 py-3"
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <FileText className="h-5 w-5 text-primary shrink-0" />
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium truncate">{file.name}</p>
-                    <p className="text-xs text-muted-foreground">{formatSize(file.size)}</p>
-                  </div>
-                </div>
+            {/* File count indicator */}
+            <div className="flex items-center justify-between px-1">
+              <span className="text-sm font-medium text-foreground">
+                {files.length} file{files.length !== 1 ? "s" : ""} selected
+              </span>
+              {files.length > 1 && (
                 <Button
                   variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 shrink-0"
-                  onClick={(e) => { e.stopPropagation(); removeFile(i) }}
+                  size="sm"
+                  className="h-8 text-muted-foreground hover:text-foreground"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setFiles([])
+                    onFilesSelected([])
+                    setError(null)
+                  }}
                   disabled={isDisabled}
                 >
-                  <X className="h-4 w-4" />
+                  Clear all
                 </Button>
-              </motion.div>
-            ))}
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+              {files.map((file, i) => (
+                <motion.div
+                  key={`${file.name}-${i}`}
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.9 }}
+                  className="group relative flex flex-col items-center justify-center rounded-xl border border-border bg-card p-4 transition-all hover:border-primary/50 hover:shadow-sm"
+                >
+                  <FileText className="mb-3 h-8 w-8 text-primary/80 transition-colors group-hover:text-primary" />
+                  <p 
+                    className="w-full truncate text-center text-sm font-medium" 
+                    title={file.name}
+                  >
+                    {file.name}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {formatSize(file.size)}
+                  </p>
+                  <Button
+                    variant="destructive"
+                    size="icon"
+                    className="absolute -right-2 -top-2 h-6 w-6 scale-0 items-center justify-center rounded-full opacity-0 shadow-sm transition-all group-hover:scale-100 group-hover:opacity-100"
+                    onClick={(e) => { e.stopPropagation(); removeFile(i) }}
+                    disabled={isDisabled}
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                </motion.div>
+              ))}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

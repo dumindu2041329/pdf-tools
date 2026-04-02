@@ -51,3 +51,5 @@ export function ToolOptions({ toolSlug, options, onChange }: ToolOptionsProps) {
     </div>
   )
 }
+
+export const hasToolOptions = (slug: string) => slug in optionsMap
