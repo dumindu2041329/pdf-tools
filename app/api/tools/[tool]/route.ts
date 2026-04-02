@@ -2,6 +2,7 @@ import { auth } from "@clerk/nextjs/server"
 import { NextResponse } from "next/server"
 import { runTool } from "@/lib/iloveapi/tools"
 import { ILoveAPIError, mapILoveAPIError } from "@/lib/iloveapi/errors"
+import { convertExtractFormat } from "@/lib/extractFormatConverter"
 
 export const maxDuration = 60; // 60 seconds (useful for Vercel Hobby/Pro)
 
@@ -59,10 +60,20 @@ export async function POST(
   try {
     const result = await runTool({ tool, files, options })
 
-    return new NextResponse(result.buffer, {
+    let { buffer: finalBuffer, downloadFilename } = result;
+
+    if (tool === "extract" && options.detailed) {
+      // By default, pass format parameter so convertExtractFormat maps the CSV output dynamically
+      const format = options.format || "json";
+      const conversion = convertExtractFormat(finalBuffer, format as string, downloadFilename);
+      finalBuffer = conversion.buffer;
+      downloadFilename = conversion.filename;
+    }
+
+    return new NextResponse(finalBuffer, {
       headers: {
         "Content-Type": "application/octet-stream",
-        "Content-Disposition": `attachment; filename="${result.downloadFilename}"`,
+        "Content-Disposition": `attachment; filename="${downloadFilename}"`,
         "X-Processing-Time": result.timer,
         "X-Output-Size": String(result.outputFilesize),
       },

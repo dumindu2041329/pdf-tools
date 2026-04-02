@@ -2,6 +2,7 @@
 
 import { cn } from "@/lib/utils"
 import { Plus, X } from "lucide-react"
+import { useEffect } from "react"
 
 interface Props {
   toolSlug?: string
@@ -17,6 +18,14 @@ const modes = [
 
 export function SplitOptions({ toolSlug, options, onChange }: Props) {
   const isRemovePagesTool = toolSlug === "remove-pages"
+
+  // Ensure split_mode is set correctly for the tool on mount
+  useEffect(() => {
+    if (isRemovePagesTool && options.split_mode !== "remove_pages") {
+      onChange({ ...options, split_mode: "remove_pages" })
+    }
+  }, [isRemovePagesTool, options.split_mode, options, onChange])
+
   const mode = isRemovePagesTool ? "remove_pages" : ((options.split_mode as string) || "ranges")
   const availableModes = modes.filter(m => m.value !== "remove_pages")
 
