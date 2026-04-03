@@ -19,10 +19,11 @@ interface ToolPageClientProps {
 export function ToolPageClient({ slug }: ToolPageClientProps) {
   const tool = getToolBySlug(slug)!
   const toolHasOptions = hasToolOptions(tool.slug)
+  const isOrganize = tool.slug === "organize-pdf"
   const [files, setFiles] = useState<File[]>([])
   const [options, setOptions] = useState<Record<string, unknown>>({})
   const [validationError, setValidationError] = useState<string | null>(null)
-  const { state, process, reset } = useTool(tool.iloveapiTool)
+  const { state, process, reset, forceSuccess } = useTool(tool.iloveapiTool)
   const isProcessingRef = useRef(false)
 
   const handleProcess = () => {
@@ -39,6 +40,23 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
 
     // Sanitize options before sending network payload (strips trailing/empty commas from dynamic UI)
     const payloadOptions = { ...options }
+    
+    // Intercept organize-pdf process
+    const buildOrganizedPdf = options.buildOrganizedPdf as (() => Promise<File>) | undefined;
+    if (tool.slug === "organize-pdf" && typeof buildOrganizedPdf === "function") {
+      const runOrganize = async () => {
+        try {
+          const finalFile = await buildOrganizedPdf()
+          forceSuccess(finalFile)
+        } catch (err) {
+          setValidationError("Failed to organize PDF. Please try again.")
+          isProcessingRef.current = false
+        }
+      }
+      runOrganize()
+      return
+    }
+
     if (typeof payloadOptions.ranges === "string") {
       payloadOptions.ranges = payloadOptions.ranges.split(",").filter(Boolean).join(",")
     }
@@ -69,7 +87,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
 
       {/* Main content */}
       {!isSuccess && (
-        <div className={`grid grid-cols-1 ${toolHasOptions ? "lg:grid-cols-2" : "max-w-3xl mx-auto"} gap-8 items-start`}>
+        <div className={`grid grid-cols-1 ${toolHasOptions && !isOrganize ? "lg:grid-cols-2" : "max-w-3xl mx-auto"} gap-8 items-start`}>
           {/* LEFT: File uploader */}
           <div>
             <FileUploader
@@ -94,6 +112,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
                 >
                   <ToolOptions
                     toolSlug={tool.slug}
+                    files={files}
                     options={options}
                     onChange={(opts) => {
                       setOptions(opts)

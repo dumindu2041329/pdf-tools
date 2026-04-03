@@ -12,16 +12,20 @@ import { HtmlToPdfOptions } from "./HtmlToPdfOptions"
 import { PdfaOptions } from "./PdfaOptions"
 import { OcrOptions } from "./OcrOptions"
 import { ExtractOptions } from "./ExtractOptions"
+import dynamic from "next/dynamic"
+
+const OrganizeOptions = dynamic(() => import("./OrganizeOptions").then(m => m.OrganizeOptions), { ssr: false })
 
 interface ToolOptionsProps {
   toolSlug: string
+  files?: File[]
   options: Record<string, unknown>
   onChange: (options: Record<string, unknown>) => void
 }
 
 const optionsMap: Record<
   string,
-  React.ComponentType<{ toolSlug: string; options: Record<string, unknown>; onChange: (opts: Record<string, unknown>) => void }>
+  React.ComponentType<{ toolSlug: string; files?: File[]; options: Record<string, unknown>; onChange: (opts: Record<string, unknown>) => void }>
 > = {
   "compress-pdf": CompressOptions,
   "split-pdf": SplitOptions,
@@ -38,16 +42,17 @@ const optionsMap: Record<
   "validate-pdfa": PdfaOptions,
   "ocr-pdf": OcrOptions,
   "extract-pages": ExtractOptions,
+  "organize-pdf": OrganizeOptions,
 }
 
-export function ToolOptions({ toolSlug, options, onChange }: ToolOptionsProps) {
+export function ToolOptions({ toolSlug, files, options, onChange }: ToolOptionsProps) {
   const OptionsComponent = optionsMap[toolSlug]
   if (!OptionsComponent) return null
 
   return (
     <div className="rounded-xl border border-border bg-card p-6">
       <h3 className="text-sm font-semibold mb-4">Options</h3>
-      <OptionsComponent toolSlug={toolSlug} options={options} onChange={onChange} />
+      <OptionsComponent toolSlug={toolSlug} files={files} options={options} onChange={onChange} />
     </div>
   )
 }

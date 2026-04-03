@@ -127,7 +127,7 @@ export const toolsConfig: ToolConfig[] = [
     color: "hsl(280, 65%, 55%)",
     access: "free",
     acceptedFileTypes: [".pdf"],
-    maxFiles: 1,
+    maxFiles: 5,
     maxSizeMB: 20,
   },
   {

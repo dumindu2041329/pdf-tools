@@ -95,5 +95,16 @@ export function useTool(toolSlug: string) {
 
   const reset = useCallback(() => setState({ status: "idle" }), [])
 
-  return { state, process, reset }
+  const forceSuccess = useCallback((file: File) => {
+    const downloadUrl = URL.createObjectURL(file)
+    setState({
+      status: "success",
+      downloadUrl,
+      filename: file.name,
+      processingTime: "Instant (Local)",
+      outputSize: file.size,
+    })
+  }, [])
+
+  return { state, process, reset, forceSuccess }
 }

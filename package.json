@@ -10,6 +10,9 @@
   },
   "dependencies": {
     "@clerk/nextjs": "^7.0.7",
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@ilovepdf/ilovepdf-nodejs": "^0.3.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -19,8 +22,10 @@
     "next": "16.2.1",
     "next-themes": "^0.4.6",
     "openai": "^6.33.0",
+    "pdf-lib": "^1.17.1",
     "react": "19.2.4",
     "react-dom": "19.2.4",
+    "react-pdf": "^10.4.1",
     "tailwind-merge": "^3.5.0",
     "three": "^0.183.2"
   },
