@@ -41,12 +41,12 @@ export function OcrOptions({ options, onChange }: Props) {
 
   return (
     <div className="space-y-2">
-      <label className="text-xs text-muted-foreground">OCR Languages</label>
+      <label className="text-sm text-muted-foreground">OCR Languages</label>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-60 overflow-y-auto pr-1">
         {commonLanguages.map((lang) => (
           <label
             key={lang.code}
-            className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm cursor-pointer hover:bg-muted/30 transition-colors"
+            className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-base cursor-pointer hover:bg-muted/30 transition-colors"
           >
             <input
               type="checkbox"
@@ -58,7 +58,6 @@ export function OcrOptions({ options, onChange }: Props) {
           </label>
         ))}
       </div>
-      <p className="text-xs text-muted-foreground">Free users: English only. Upgrade for 80+ languages.</p>
     </div>
   )
 }

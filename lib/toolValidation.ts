@@ -18,7 +18,13 @@ const validateRangesString = (rangesStr: string | undefined): string | null => {
 }
 
 export function validateToolOptions(toolSlug: string, options: Record<string, unknown>, files: File[]): string | null {
-  if (!files || files.length === 0) return "Please select at least one file to process."
+  if (toolSlug === "html-to-pdf") {
+    if ((!files || files.length === 0) && !options.url) {
+      return "Please upload an HTML file or enter a valid URL."
+    }
+  } else if (!files || files.length === 0) {
+    return "Please select at least one file to process."
+  }
 
   switch (toolSlug) {
     case 'split-pdf':

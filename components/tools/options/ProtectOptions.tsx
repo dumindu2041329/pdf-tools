@@ -14,14 +14,14 @@ export function ProtectOptions({ options, onChange }: Props) {
   return (
     <div className="space-y-4">
       <div className="space-y-1">
-        <label className="text-xs text-muted-foreground">New Password</label>
+        <label className="text-sm text-muted-foreground">New Password</label>
         <div className="relative">
           <input
             type={show ? "text" : "password"}
             placeholder="Enter password"
             value={(options.password as string) || ""}
             onChange={(e) => onChange({ ...options, password: e.target.value })}
-            className="w-full rounded-lg border border-input bg-background px-3 py-2 pr-10 text-sm"
+            className="w-full rounded-lg border border-input bg-background px-3 py-2 pr-10 text-base"
           />
           <button
             type="button"

@@ -51,7 +51,7 @@ export function ToolOptions({ toolSlug, files, options, onChange }: ToolOptionsP
 
   return (
     <div className="rounded-xl border border-border bg-card p-6">
-      <h3 className="text-sm font-semibold mb-4">Options</h3>
+      <h3 className="text-base font-semibold mb-4">Options</h3>
       <OptionsComponent toolSlug={toolSlug} files={files} options={options} onChange={onChange} />
     </div>
   )
