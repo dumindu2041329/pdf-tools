@@ -44,7 +44,7 @@ export interface ToolConfig {
   description: string
   seoDescription: string
   category: ToolCategory
-  iloveapiTool: ILoveAPITool
+  iloveapiTool: ILoveAPITool | "local-split"
   icon: LucideIcon
   color: string
   access: "free" | "premium"
@@ -77,7 +77,7 @@ export const toolsConfig: ToolConfig[] = [
     seoDescription:
       "Split PDF files by pages, ranges, or file size. Free online PDF splitter.",
     category: "organize",
-    iloveapiTool: "split",
+    iloveapiTool: "local-split",
     icon: Scissors,
     color: "hsl(200, 80%, 50%)",
     access: "free",
@@ -92,7 +92,7 @@ export const toolsConfig: ToolConfig[] = [
     seoDescription:
       "Remove specific pages from your PDF document. Visual page selector.",
     category: "organize",
-    iloveapiTool: "split",
+    iloveapiTool: "local-split",
     icon: Trash2,
     color: "hsl(0, 70%, 55%)",
     access: "free",
@@ -122,7 +122,7 @@ export const toolsConfig: ToolConfig[] = [
     seoDescription:
       "Drag and drop PDF pages to reorder, rotate, or delete them. Free online organizer.",
     category: "organize",
-    iloveapiTool: "merge",
+    iloveapiTool: "local-split",
     icon: Layers,
     color: "hsl(280, 65%, 55%)",
     access: "free",

@@ -1,4 +1,3 @@
-import { auth } from "@clerk/nextjs/server"
 import { NextResponse } from "next/server"
 import { runTool } from "@/lib/iloveapi/tools"
 import { ILoveAPIError, mapILoveAPIError } from "@/lib/iloveapi/errors"
@@ -21,13 +20,7 @@ export async function POST(
 
   let formData: FormData
   try {
-    const bodyBuffer = await req.arrayBuffer()
-    const newReq = new Request(req.url, {
-      method: req.method,
-      headers: req.headers,
-      body: bodyBuffer
-    })
-    formData = await newReq.formData()
+    formData = await req.formData()
   } catch (err) {
     console.error("FormData parse error:", err)
     return NextResponse.json({ error: "Failed to parse file upload request" }, { status: 400 })
@@ -70,12 +63,13 @@ export async function POST(
       downloadFilename = conversion.filename;
     }
 
-    return new NextResponse(finalBuffer, {
+    return new NextResponse(Buffer.from(finalBuffer), {
       headers: {
-        "Content-Type": "application/octet-stream",
+        "Content-Type": downloadFilename.endsWith(".zip") ? "application/zip" : "application/pdf",
         "Content-Disposition": `attachment; filename="${downloadFilename}"`,
-        "X-Processing-Time": result.timer,
+        "X-Processing-Time": String(result.timer),
         "X-Output-Size": String(result.outputFilesize),
+        "Access-Control-Expose-Headers": "Content-Disposition, X-Processing-Time, X-Output-Size",
       },
     })
   } catch (err) {

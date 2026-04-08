@@ -24,7 +24,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
   const [options, setOptions] = useState<Record<string, unknown>>({})
   const [validationError, setValidationError] = useState<string | null>(null)
   const [htmlTab, setHtmlTab] = useState<"file" | "url">("url")
-  const { state, process, reset, forceSuccess } = useTool(tool.iloveapiTool)
+  const { state, process, reset } = useTool(tool.iloveapiTool)
   const isProcessingRef = useRef(false)
 
   const handleProcess = () => {
@@ -46,20 +46,19 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
     // Sanitize options before sending network payload (strips trailing/empty commas from dynamic UI)
     const payloadOptions = { ...options }
     
-    // Intercept organize-pdf process
-    const buildOrganizedPdf = options.buildOrganizedPdf as (() => Promise<File>) | undefined;
-    if (tool.slug === "organize-pdf" && typeof buildOrganizedPdf === "function") {
-      const runOrganize = async () => {
-        try {
-          const finalFile = await buildOrganizedPdf()
-          forceSuccess(finalFile)
-        } catch (err) {
-          setValidationError("Failed to organize PDF. Please try again.")
-          isProcessingRef.current = false
-        }
+    if (tool.iloveapiTool === "local-split") {
+      const mode = tool.slug === "remove-pages" ? "remove_pages" : (payloadOptions.split_mode || "ranges");
+      payloadOptions.split_mode = mode;
+      if (mode === "ranges") {
+        delete payloadOptions.fixed_range;
+        delete payloadOptions.remove_pages;
+      } else if (mode === "fixed_range") {
+        delete payloadOptions.ranges;
+        delete payloadOptions.remove_pages;
+      } else if (mode === "remove_pages") {
+        delete payloadOptions.ranges;
+        delete payloadOptions.fixed_range;
       }
-      runOrganize()
-      return
     }
 
     if (typeof payloadOptions.ranges === "string") {

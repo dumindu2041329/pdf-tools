@@ -12,7 +12,6 @@ export type ILoveAPITool =
   | "protect"
   | "repair"
   | "rotate"
-  | "split"
   | "unlock"
   | "validatepdfa"
   | "watermark"

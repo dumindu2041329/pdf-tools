@@ -18,7 +18,7 @@ export interface ToolRunInput {
 }
 
 export interface ToolRunResult {
-  buffer: ArrayBuffer
+  buffer: ArrayBuffer | Uint8Array
   downloadFilename: string
   outputFilesize: number
   timer: string
@@ -67,22 +67,24 @@ export async function runTool(input: ToolRunInput): Promise<ToolRunResult> {
   const processResult = await task.process(processOptions)
 
   // Step 4: Download
-  const buffer = await task.download()
+  const buffer = await task.download();
+
+  const downloadFilename = (task as any).downloadFileName || (task as any).download_filename || input.outputFilename || "output.pdf";
+  const outputFilesize = (task as any).outputFileSize || (task as any).output_filesize || buffer.byteLength || (buffer as any).length;
+  const timer = (task as any).timer || "0";
+  const taskId = task.id;
 
   // Cleanup
-  await task.delete()
+  await task.delete();
 
   return {
-    buffer: buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer, // Convert Uint8Array to ArrayBuffer cleanly
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    downloadFilename: (processResult as any).download_filename ?? input.outputFilename ?? "output.pdf",
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    outputFilesize: (processResult as any).output_filesize ?? buffer.byteLength,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    timer: (processResult as any).timer ?? "0",
-    taskId: task.id,
-    server: "api.ilovepdf.com", // Abstracted away in SDK
-  }
+    buffer: buffer,
+    downloadFilename,
+    outputFilesize,
+    timer,
+    taskId,
+    server: "api.ilovepdf.com",
+  };
 }
 
 // ── Workflow Runner (Chained Tools) ──────────────────────────
@@ -97,7 +99,7 @@ export async function runWorkflow(
   initialFiles: Array<{ buffer: Buffer; filename: string }>,
   steps: WorkflowStep[],
   onStepComplete?: (step: number, total: number) => void
-): Promise<{ buffer: ArrayBuffer; downloadFilename: string }> {
+): Promise<{ buffer: ArrayBuffer | Uint8Array; downloadFilename: string }> {
   if (steps.length === 0) throw new Error("No steps defined")
 
   // Start first task
@@ -126,7 +128,7 @@ export async function runWorkflow(
   await currentTask.delete()
 
   return {
-    buffer: buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer,
+    buffer: buffer,
     downloadFilename: "workflow_output.pdf",
   }
 }

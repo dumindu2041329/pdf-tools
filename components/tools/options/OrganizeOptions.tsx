@@ -1,12 +1,11 @@
 "use client"
 
-import { useEffect, useState, useCallback, useRef } from "react"
+import { useEffect, useState, useRef } from "react"
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from "@dnd-kit/core"
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, rectSortingStrategy, useSortable } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
-import { Trash2, RotateCw, Loader2 } from "lucide-react"
+import { Trash2, Loader2, RotateCw } from "lucide-react"
 import * as pdfjsLib from "pdfjs-dist"
-import { PDFDocument, degrees } from "pdf-lib"
 import { cn } from "@/lib/utils"
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`
@@ -59,11 +58,12 @@ function SortableItem({ item, onRemove, onRotate }: { item: PageItem; onRemove: 
         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
           <button
             type="button"
-            className="p-1.5 bg-white/10 hover:bg-white/30 text-white rounded-md backdrop-blur-md transition-colors"
+            className="p-1.5 bg-primary/80 hover:bg-primary text-white rounded-md backdrop-blur-md transition-colors"
             onClick={(e) => {
               e.stopPropagation()
               onRotate(item.id)
             }}
+            title="Rotate Page"
           >
             <RotateCw className="w-4 h-4" />
           </button>
@@ -74,6 +74,7 @@ function SortableItem({ item, onRemove, onRotate }: { item: PageItem; onRemove: 
               e.stopPropagation()
               onRemove(item.id)
             }}
+            title="Remove Page"
           >
             <Trash2 className="w-4 h-4" />
           </button>
@@ -101,41 +102,17 @@ export function OrganizeOptions({ files, options, onChange }: Props) {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   )
 
-  // Expose build function to parent ToolPageClient
-  const buildOrganizedPdf = useCallback(async () => {
-    if (!files || files.length === 0 || itemsRef.current.length === 0) {
-      throw new Error("No pages to process")
-    }
-
-    const finalDoc = await PDFDocument.create()
-    const loadedDocs: Record<number, PDFDocument> = {}
-
-    // Load original PDFDocuments dynamically
-    for (const item of itemsRef.current) {
-      if (!loadedDocs[item.fileIndex]) {
-        const arr = await files[item.fileIndex].arrayBuffer()
-        loadedDocs[item.fileIndex] = await PDFDocument.load(arr)
-      }
-    }
-
-    // Copy pages into final document
-    for (const item of itemsRef.current) {
-      const srcDoc = loadedDocs[item.fileIndex]
-      const [copiedPage] = await finalDoc.copyPages(srcDoc, [item.pageIndex])
-      copiedPage.setRotation(degrees(item.rotation))
-      finalDoc.addPage(copiedPage)
-    }
-
-    const pdfBytes = await finalDoc.save()
-    return new File([pdfBytes as unknown as BlobPart], "organized.pdf", { type: "application/pdf" })
-  }, [files])
-
   // Register the interceptor
   useEffect(() => {
-    if (typeof options.buildOrganizedPdf !== "function") {
-      onChange({ ...options, buildOrganizedPdf })
+    // Pass the ranges and rotations to the splitting logic
+    const ranges = itemsRef.current.map(item => item.pageIndex + 1).join(",")
+    const rotations = itemsRef.current.map(item => item.rotation).join(",")
+    
+    if (options.ranges !== ranges || options.rotations !== rotations || options.split_mode !== 'ranges' || options.merge_after !== true) {
+      onChange({ ...options, ranges, rotations, split_mode: 'ranges', merge_after: true })
     }
-  }, [buildOrganizedPdf, onChange, options])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, onChange, options.ranges, options.rotations, options.split_mode, options.merge_after])
 
   useEffect(() => {
     async function loadThumbnails() {
@@ -231,9 +208,7 @@ export function OrganizeOptions({ files, options, onChange }: Props) {
   }
 
   const rotatePage = (id: string) => {
-    setItems((items) =>
-      items.map((i) => (i.id === id ? { ...i, rotation: (i.rotation + 90) % 360 } : i))
-    )
+    setItems((items) => items.map(i => i.id === id ? { ...i, rotation: (i.rotation + 90) % 360 } : i))
   }
 
   if (isLoading && items.length === 0) {

@@ -21,8 +21,7 @@ function getFilenameFromResponse(res: Response): string {
 
 function uploadWithProgress(
   url: string,
-  formData: FormData,
-  onProgress: (pct: number) => void
+  formData: FormData
 ): Promise<Response> {
   return fetch(url, {
     method: "POST",
@@ -47,13 +46,45 @@ export function useTool(toolSlug: string) {
 
       setState({ status: "processing", step: "upload", uploadProgress: 0 })
 
+      if (toolSlug === "local-split") {
+        try {
+          setState({ status: "processing", step: "process" })
+          
+          if (files.length === 0) throw new Error("No file provided");
+          const file = files[0];
+          const arrayBuffer = await file.arrayBuffer();
+          
+          const start = Date.now();
+          const { processSplitLocal } = await import("@/lib/pdf/split-client");
+          const result = await processSplitLocal(arrayBuffer, options, file.name);
+          const end = Date.now();
+          
+          setState({ status: "processing", step: "download" })
+          
+          const blob = new Blob([result.buffer as unknown as BlobPart], { 
+            type: result.downloadFilename.endsWith(".zip") ? "application/zip" : "application/pdf" 
+          });
+          const downloadUrl = URL.createObjectURL(blob);
+          
+          setState({
+            status: "success",
+            downloadUrl,
+            filename: result.downloadFilename,
+            processingTime: ((end - start) / 1000).toFixed(2),
+            outputSize: blob.size,
+          });
+          return;
+        } catch (err) {
+          console.error("Local split error:", err);
+          setState({ status: "error", message: "Failed to process PDF locally. Error: " + (err as Error).message, retryable: true });
+          return;
+        }
+      }
+
       try {
         const response = await uploadWithProgress(
           `/api/tools/${toolSlug}`,
-          form,
-          (progress) => {
-            setState({ status: "processing", step: "upload", uploadProgress: progress })
-          }
+          form
         )
 
         setState({ status: "processing", step: "process" })
