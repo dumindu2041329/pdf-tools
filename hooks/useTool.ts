@@ -107,17 +107,15 @@ export function useTool(toolSlug: string) {
 
         setState({ status: "processing", step: "download" })
 
-        const blob = await response.blob()
-        const downloadUrl = URL.createObjectURL(blob)
-        const processingTime = response.headers.get("X-Processing-Time") ?? "0"
-        const outputSize = Number(response.headers.get("X-Output-Size") ?? blob.size)
+        const data = await response.json()
+        const downloadUrl = `/api/download/${data.downloadId}`
 
         setState({
           status: "success",
           downloadUrl,
-          filename: getFilenameFromResponse(response),
-          processingTime,
-          outputSize,
+          filename: data.filename || "output.pdf",
+          processingTime: data.processingTime || "0",
+          outputSize: Number(data.outputSize || 0),
         })
       } catch {
         setState({ status: "error", message: "A network error occurred. Please try again.", retryable: true })

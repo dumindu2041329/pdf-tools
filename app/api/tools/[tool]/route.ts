@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { runTool } from "@/lib/iloveapi/tools"
 import { ILoveAPIError, mapILoveAPIError } from "@/lib/iloveapi/errors"
 import { convertExtractFormat } from "@/lib/extractFormatConverter"
+import { storeFile } from "@/lib/fileStore"
 
 export const maxDuration = 60; // 60 seconds (useful for Vercel Hobby/Pro)
 
@@ -56,27 +57,24 @@ export async function POST(
     let { buffer: finalBuffer, downloadFilename } = result;
 
     if (tool === "extract" && options.detailed) {
-      // By default, pass format parameter so convertExtractFormat maps the CSV output dynamically
       const format = options.format || "json";
       const conversion = convertExtractFormat(finalBuffer as ArrayBuffer, format as string, downloadFilename);
       finalBuffer = conversion.buffer;
       downloadFilename = conversion.filename;
     }
 
-    // Ensure we have a concrete ArrayBuffer (not ArrayBufferLike) to satisfy BodyInit types
-    const buf = Buffer.from(
-      finalBuffer instanceof Uint8Array ? finalBuffer : new Uint8Array(finalBuffer as ArrayBuffer)
-    );
-    const responseBody = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
+    // Store the file and return JSON with a download link
+    const fileData = finalBuffer instanceof Uint8Array
+      ? finalBuffer
+      : new Uint8Array(finalBuffer as ArrayBuffer);
+    const mimeType = downloadFilename.endsWith(".zip") ? "application/zip" : "application/pdf";
+    const downloadId = storeFile(fileData, downloadFilename, mimeType);
 
-    return new Response(responseBody, {
-      headers: {
-        "Content-Type": downloadFilename.endsWith(".zip") ? "application/zip" : "application/pdf",
-        "Content-Disposition": `attachment; filename="${downloadFilename}"`,
-        "X-Processing-Time": String(result.timer),
-        "X-Output-Size": String(result.outputFilesize),
-        "Access-Control-Expose-Headers": "Content-Disposition, X-Processing-Time, X-Output-Size",
-      },
+    return NextResponse.json({
+      downloadId,
+      filename: downloadFilename,
+      processingTime: String(result.timer),
+      outputSize: result.outputFilesize,
     })
   } catch (err) {
     if (err instanceof ILoveAPIError) {
