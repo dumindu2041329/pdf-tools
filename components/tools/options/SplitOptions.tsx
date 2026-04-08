@@ -53,7 +53,7 @@ export function SplitOptions({ toolSlug, options, onChange }: Props) {
   // Builder for the dynamic list UI
   const renderSectionList = (listKey: string, currentList: string[], label: string, placeholder: string) => (
     <div className="space-y-3">
-      <label className="text-xs text-muted-foreground">{label}</label>
+      <label className="text-sm text-muted-foreground">{label}</label>
       <div className="space-y-2">
         {currentList.map((val, i) => (
           <div key={i} className="flex items-center gap-2">
@@ -62,7 +62,7 @@ export function SplitOptions({ toolSlug, options, onChange }: Props) {
               placeholder={placeholder}
               value={val}
               onChange={(e) => updateList(listKey, currentList, i, e.target.value)}
-              className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
+              className="w-full rounded-lg border border-input bg-background px-3 py-2 text-base"
             />
             {currentList.length > 1 && (
               <button
@@ -80,7 +80,7 @@ export function SplitOptions({ toolSlug, options, onChange }: Props) {
       <button
         type="button"
         onClick={() => addToList(listKey, currentList)}
-        className="flex items-center gap-1 text-sm font-medium text-primary hover:text-primary/80 transition-colors"
+        className="flex items-center gap-1 text-base font-medium text-primary hover:text-primary/80 transition-colors"
       >
         <Plus className="h-4 w-4" />
         Add Section
@@ -92,7 +92,7 @@ export function SplitOptions({ toolSlug, options, onChange }: Props) {
     <div className="space-y-4">
       {!isRemovePagesTool && (
         <div className="space-y-2">
-          <label className="text-xs text-muted-foreground">Split Mode</label>
+          <label className="text-sm text-muted-foreground">Split Mode</label>
           <div className="grid gap-2 sm:grid-cols-2">
             {availableModes.map((m) => (
               <button
@@ -104,8 +104,8 @@ export function SplitOptions({ toolSlug, options, onChange }: Props) {
                   mode === m.value ? "border-primary bg-primary/5" : "border-border hover:border-primary/30"
                 )}
               >
-                <span className="text-sm font-medium">{m.label}</span>
-                <span className="text-xs text-muted-foreground">{m.desc}</span>
+                <span className="text-base font-medium">{m.label}</span>
+                <span className="text-sm text-muted-foreground">{m.desc}</span>
               </button>
             ))}
           </div>
@@ -116,14 +116,14 @@ export function SplitOptions({ toolSlug, options, onChange }: Props) {
 
       {mode === "fixed_range" && (
         <div className="space-y-1">
-          <label className="text-xs text-muted-foreground">Pages per split</label>
+          <label className="text-sm text-muted-foreground">Pages per split</label>
           <input
             type="number"
             min={1}
             placeholder="e.g. 3"
             value={(options.fixed_range as number) || ""}
             onChange={(e) => onChange({ ...options, fixed_range: Number(e.target.value) })}
-            className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-input bg-background px-3 py-2 text-base"
           />
         </div>
       )}

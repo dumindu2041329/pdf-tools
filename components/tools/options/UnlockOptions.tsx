@@ -13,14 +13,14 @@ export function UnlockOptions({ options, onChange }: Props) {
 
   return (
     <div className="space-y-1">
-      <label className="text-xs text-muted-foreground">Current Password</label>
+      <label className="text-sm text-muted-foreground">Current Password</label>
       <div className="relative">
         <input
           type={show ? "text" : "password"}
           placeholder="Enter file password"
           value={(options.password as string) || ""}
           onChange={(e) => onChange({ ...options, password: e.target.value })}
-          className="w-full rounded-lg border border-input bg-background px-3 py-2 pr-10 text-sm"
+          className="w-full rounded-lg border border-input bg-background px-3 py-2 pr-10 text-base"
         />
         <button
           type="button"

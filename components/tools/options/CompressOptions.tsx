@@ -18,7 +18,7 @@ export function CompressOptions({ options, onChange }: Props) {
 
   return (
     <div className="space-y-2">
-      <label className="text-xs text-muted-foreground">Compression Level</label>
+      <label className="text-sm text-muted-foreground">Compression Level</label>
       <div className="grid gap-2">
         {levels.map((level) => (
           <button
@@ -32,8 +32,8 @@ export function CompressOptions({ options, onChange }: Props) {
                 : "border-border hover:border-primary/30"
             )}
           >
-            <span className="text-sm font-medium">{level.label}</span>
-            <span className="text-xs text-muted-foreground">{level.desc}</span>
+            <span className="text-base font-medium">{level.label}</span>
+            <span className="text-sm text-muted-foreground">{level.desc}</span>
           </button>
         ))}
       </div>

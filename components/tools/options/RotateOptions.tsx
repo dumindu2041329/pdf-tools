@@ -19,7 +19,7 @@ export function RotateOptions({ options, onChange }: Props) {
 
   return (
     <div className="space-y-2">
-      <label className="text-xs text-muted-foreground">Rotation</label>
+      <label className="text-sm text-muted-foreground">Rotation</label>
       <div className="flex gap-3">
         {rotations.map((r) => (
           <button
@@ -32,7 +32,7 @@ export function RotateOptions({ options, onChange }: Props) {
             )}
           >
             <RotateCw className="h-4 w-4" style={{ transform: `rotate(${r.value}deg)` }} />
-            <span className="text-sm font-medium">{r.label}</span>
+            <span className="text-base font-medium">{r.label}</span>
           </button>
         ))}
       </div>

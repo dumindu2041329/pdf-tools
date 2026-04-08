@@ -19,7 +19,7 @@ export function PdfaOptions({ options, onChange }: Props) {
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        <label className="text-xs text-muted-foreground">Conformance Level</label>
+        <label className="text-sm text-muted-foreground">Conformance Level</label>
         <div className="flex gap-2">
           {conformances.map((c) => (
             <button
@@ -27,7 +27,7 @@ export function PdfaOptions({ options, onChange }: Props) {
               type="button"
               onClick={() => onChange({ ...options, conformance: c.value })}
               className={cn(
-                "rounded-lg border px-4 py-2 text-sm font-medium transition-all cursor-pointer",
+                "rounded-lg border px-4 py-2 text-base font-medium transition-all cursor-pointer",
                 selected === c.value ? "border-primary bg-primary/5" : "border-border hover:border-primary/30"
               )}
             >{c.label}</button>
@@ -35,7 +35,7 @@ export function PdfaOptions({ options, onChange }: Props) {
         </div>
       </div>
 
-      <label className="flex items-center gap-2 text-sm cursor-pointer">
+      <label className="flex items-center gap-2 text-base cursor-pointer">
         <input
           type="checkbox"
           checked={options.allow_downgrade !== false}

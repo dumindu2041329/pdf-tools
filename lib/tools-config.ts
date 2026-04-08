@@ -265,9 +265,9 @@ export const toolsConfig: ToolConfig[] = [
     icon: Globe,
     color: "hsl(200, 70%, 50%)",
     access: "free",
-    acceptedFileTypes: [],
-    maxFiles: 0,
-    maxSizeMB: 0,
+    acceptedFileTypes: [".html", ".htm"],
+    maxFiles: 1,
+    maxSizeMB: 20,
   },
 
   // ── Convert from PDF ──────────────────────────────────────

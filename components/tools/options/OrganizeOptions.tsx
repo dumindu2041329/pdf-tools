@@ -79,7 +79,7 @@ function SortableItem({ item, onRemove, onRotate }: { item: PageItem; onRemove: 
           </button>
         </div>
       </div>
-      <div className="mt-2 text-xs font-medium text-muted-foreground w-full text-center truncate">
+      <div className="mt-2 text-sm font-medium text-muted-foreground w-full text-center truncate">
         {item.pageIndex + 1}
       </div>
     </div>
@@ -240,7 +240,7 @@ export function OrganizeOptions({ files, options, onChange }: Props) {
     return (
       <div className="flex flex-col items-center justify-center py-10 space-y-4 text-muted-foreground">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
-        <p className="text-sm">Generating page thumbnails...</p>
+        <p className="text-base">Generating page thumbnails...</p>
       </div>
     )
   }
@@ -248,8 +248,8 @@ export function OrganizeOptions({ files, options, onChange }: Props) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <label className="text-xs text-muted-foreground">Arrange, rotate, or remove pages</label>
-        <span className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded-md">
+        <label className="text-sm text-muted-foreground">Arrange, rotate, or remove pages</label>
+        <span className="text-sm text-muted-foreground bg-muted px-2 py-1 rounded-md">
           {items.length} page{items.length !== 1 ? "s" : ""}
         </span>
       </div>
