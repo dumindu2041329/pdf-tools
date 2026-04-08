@@ -31,35 +31,39 @@ export async function runTool(input: ToolRunInput): Promise<ToolRunResult> {
   const task = ilovepdf.newTask(input.tool as ILoveAPITool)
   await task.start()
 
-  // Step 2: Upload all files or use URL for HTML to PDF
-  if (input.tool === "htmlpdf" && input.options?.url && input.files.length === 0) {
-    const url = input.options.url as string;
-    await task.addFile(url);
+  // Step 2: Upload all files
+  if (input.tool === "htmlpdf" && input.options?.url) {
+    await task.addFile(input.options.url as string)
   } else {
     for (const f of input.files) {
       const file = ILovePDFFile.fromArray(Buffer.from(f.buffer), f.filename)
-      
-      // SDK specific assignments
-      if (f.password) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (file as any).params = (file as any).params || {};
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (file as any).params.password = f.password;
-      }
-      if (f.rotate !== undefined) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (file as any).params = (file as any).params || {};
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (file as any).params.rotate = f.rotate;
-      }
-      
-      await task.addFile(file)
+        
+        // SDK specific assignments
+        if (f.password) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (file as any).params = (file as any).params || {};
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (file as any).params.password = f.password;
+        }
+        if (f.rotate !== undefined) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (file as any).params = (file as any).params || {};
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (file as any).params.rotate = f.rotate;
+        }
+        
+        await task.addFile(file)
     }
   }
 
   // Step 3: Process
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const processOptions: Record<string, any> = { ...input.options }
+  // Ensure we don't pass 'url' property as a standard option which may cause API errors
+  if (input.tool === "htmlpdf") {
+      delete processOptions.url;
+  }
+
   if (input.outputFilename) {
     processOptions.output_filename = input.outputFilename
   }

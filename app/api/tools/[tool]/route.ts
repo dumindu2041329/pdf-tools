@@ -43,12 +43,12 @@ export async function POST(
     }
   }
 
-  if (files.length === 0) {
-    return NextResponse.json({ error: "No files provided" }, { status: 400 })
-  }
-
   const optionsRaw = formData.get("options")
   const options = optionsRaw ? JSON.parse(optionsRaw as string) : {}
+
+  if (files.length === 0 && !(tool === "htmlpdf" && options.url)) {
+    return NextResponse.json({ error: "No files provided" }, { status: 400 })
+  }
 
   try {
     const result = await runTool({ tool, files, options })
@@ -58,12 +58,18 @@ export async function POST(
     if (tool === "extract" && options.detailed) {
       // By default, pass format parameter so convertExtractFormat maps the CSV output dynamically
       const format = options.format || "json";
-      const conversion = convertExtractFormat(finalBuffer, format as string, downloadFilename);
+      const conversion = convertExtractFormat(finalBuffer as ArrayBuffer, format as string, downloadFilename);
       finalBuffer = conversion.buffer;
       downloadFilename = conversion.filename;
     }
 
-    return new NextResponse(Buffer.from(finalBuffer), {
+    // Ensure we have a concrete ArrayBuffer (not ArrayBufferLike) to satisfy BodyInit types
+    const buf = Buffer.from(
+      finalBuffer instanceof Uint8Array ? finalBuffer : new Uint8Array(finalBuffer as ArrayBuffer)
+    );
+    const responseBody = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
+
+    return new Response(responseBody, {
       headers: {
         "Content-Type": downloadFilename.endsWith(".zip") ? "application/zip" : "application/pdf",
         "Content-Disposition": `attachment; filename="${downloadFilename}"`,

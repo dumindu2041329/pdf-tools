@@ -46,6 +46,8 @@ export function useTool(toolSlug: string) {
 
       setState({ status: "processing", step: "upload", uploadProgress: 0 })
 
+
+
       if (toolSlug === "local-split") {
         try {
           setState({ status: "processing", step: "process" })

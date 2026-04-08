@@ -23,16 +23,11 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
   const [files, setFiles] = useState<File[]>([])
   const [options, setOptions] = useState<Record<string, unknown>>({})
   const [validationError, setValidationError] = useState<string | null>(null)
-  const [htmlTab, setHtmlTab] = useState<"file" | "url">("url")
   const { state, process, reset } = useTool(tool.iloveapiTool)
   const isProcessingRef = useRef(false)
 
   const handleProcess = () => {
     if ((files.length === 0 && tool.slug !== "html-to-pdf") || isProcessingRef.current) return
-    if (tool.slug === "html-to-pdf" && htmlTab === "file" && files.length === 0) {
-      setValidationError("Please select at least one file to process.")
-      return
-    }
 
     const validationMsg = validateToolOptions(tool.slug, options, files)
     if (validationMsg) {
@@ -98,34 +93,11 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
       {/* Main content */}
       {!isSuccess && (
         <div className="space-y-8">
-          {tool.slug === "html-to-pdf" && (
-            <div className="flex justify-center">
-              <div className="flex bg-muted/30 p-1 rounded-xl">
-                <button
-                  onClick={() => {
-                    setHtmlTab("url")
-                    setFiles([])
-                  }}
-                  className={`px-6 py-2.5 rounded-lg text-sm font-medium transition-all ${htmlTab === "url" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-                >
-                  Website URL
-                </button>
-                <button
-                  onClick={() => {
-                    setHtmlTab("file")
-                    setOptions({ ...options, url: "" })
-                  }}
-                  className={`px-6 py-2.5 rounded-lg text-sm font-medium transition-all ${htmlTab === "file" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-                >
-                  HTML File
-                </button>
-              </div>
-            </div>
-          )}
 
-          <div className={`grid grid-cols-1 ${toolHasOptions && !isOrganize && !(tool.slug === "html-to-pdf" && htmlTab === "url") ? "lg:grid-cols-2" : "max-w-2xl mx-auto"} gap-8 items-start`}>
+
+          <div className={`grid grid-cols-1 ${toolHasOptions && !isOrganize && tool.slug !== "html-to-pdf" ? "lg:grid-cols-2" : "max-w-2xl mx-auto"} gap-8 items-start`}>
             {/* LEFT: File uploader */}
-            {!(tool.slug === "html-to-pdf" && htmlTab === "url") && (
+            {tool.slug !== "html-to-pdf" && (
               <div>
                 <FileUploader
                   accept={tool.acceptedFileTypes}
@@ -142,7 +114,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
           <div className="flex flex-col gap-6">
             {/* Tool-specific options */}
             <AnimatePresence>
-              {showOptionsAndProcess && !isProcessing && (tool.slug !== "html-to-pdf" || htmlTab === "url") && (
+              {showOptionsAndProcess && !isProcessing && (
                 <motion.div
                   initial={{ opacity: 0, x: 10 }}
                   animate={{ opacity: 1, x: 0 }}

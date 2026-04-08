@@ -25,7 +25,7 @@ export async function POST(req: Request) {
       options: { detailed: false },
     })
 
-    const extractedText = Buffer.from(extractResult.buffer).toString("utf-8")
+    const extractedText = Buffer.from(extractResult.buffer as ArrayBuffer).toString("utf-8")
 
     if (!extractedText.trim()) {
       return NextResponse.json(
