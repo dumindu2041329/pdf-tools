@@ -36,9 +36,9 @@ export function ImageToPdfOptions({ options, onChange }: Props) {
             onChange={(e) => update("pagesize", e.target.value)}
             className="w-full rounded-lg border border-input bg-background px-3 py-2 text-base"
           >
-            <option value="A4">A4</option>
+            <option value="A4">A4 (297x210 mm)</option>
             <option value="fit">Fit to Image</option>
-            <option value="letter">Letter</option>
+            <option value="letter">US Letter (215x279.4 mm)</option>
           </select>
         </div>
       </div>
