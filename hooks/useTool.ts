@@ -10,15 +10,6 @@ export type ToolState =
   | { status: "success"; downloadUrl: string; filename: string; processingTime: string; outputSize: number }
   | { status: "error"; message: string; retryable: boolean; upgradeRequired?: boolean }
 
-function getFilenameFromResponse(res: Response): string {
-  const disposition = res.headers.get("Content-Disposition")
-  if (disposition) {
-    const match = disposition.match(/filename="?([^";\n]+)"?/)
-    if (match) return match[1]
-  }
-  return "output.pdf"
-}
-
 function uploadWithProgress(
   url: string,
   formData: FormData

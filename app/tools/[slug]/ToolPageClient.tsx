@@ -39,7 +39,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
     isProcessingRef.current = true
 
     // Sanitize options before sending network payload (strips trailing/empty commas from dynamic UI)
-    const payloadOptions = { ...options }
+    const payloadOptions: Record<string, unknown> = { ...options, _toolSlug: tool.slug }
     
     if (tool.iloveapiTool === "local-split") {
       const mode = tool.slug === "remove-pages" ? "remove_pages" : (payloadOptions.split_mode || "ranges");

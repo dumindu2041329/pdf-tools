@@ -1,6 +1,7 @@
 import { ilovepdf } from "./client"
 import type { ILoveAPITool } from "./types"
 import ILovePDFFile from "@ilovepdf/ilovepdf-nodejs/ILovePDFFile"
+export type { ILoveAPITool } from "./types"
 
 // ── Single Tool Runner ───────────────────────────────────────
 
@@ -40,16 +41,12 @@ export async function runTool(input: ToolRunInput): Promise<ToolRunResult> {
         
         // SDK specific assignments
         if (f.password) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (file as any).params = (file as any).params || {};
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (file as any).params.password = f.password;
+          (file as unknown as { params?: { password?: string } }).params = (file as unknown as { params?: { password?: string } }).params || {};
+          (file as unknown as { params?: { password?: string } }).params!.password = f.password;
         }
         if (f.rotate !== undefined) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (file as any).params = (file as any).params || {};
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (file as any).params.rotate = f.rotate;
+          (file as unknown as { params?: { rotate?: number } }).params = (file as unknown as { params?: { rotate?: number } }).params || {};
+          (file as unknown as { params?: { rotate?: number } }).params!.rotate = f.rotate;
         }
         
         await task.addFile(file)
@@ -68,14 +65,14 @@ export async function runTool(input: ToolRunInput): Promise<ToolRunResult> {
     processOptions.output_filename = input.outputFilename
   }
   
-  const processResult = await task.process(processOptions)
+  await task.process(processOptions)
 
   // Step 4: Download
   const buffer = await task.download();
 
-  const downloadFilename = (task as any).downloadFileName || (task as any).download_filename || input.outputFilename || "output.pdf";
-  const outputFilesize = (task as any).outputFileSize || (task as any).output_filesize || buffer.byteLength || (buffer as any).length;
-  const timer = (task as any).timer || "0";
+  const downloadFilename = (task as unknown as { downloadFileName?: string }).downloadFileName || (task as unknown as { download_filename?: string }).download_filename || input.outputFilename || "output.pdf";
+  const outputFilesize = (task as unknown as { outputFileSize?: number }).outputFileSize || (task as unknown as { output_filesize?: number }).output_filesize || buffer.byteLength || (buffer as unknown as { length?: number }).length || 0;
+  const timer = (task as unknown as { timer?: string }).timer || "0";
   const taskId = task.id;
 
   // Cleanup
@@ -91,6 +88,27 @@ export async function runTool(input: ToolRunInput): Promise<ToolRunResult> {
   };
 }
 
+// ── OCR Helper (for PDF→Office pipeline) ──────────────────────
+
+export async function runPdfOcrForOffice(
+  pdfBuffer: Buffer,
+  filename: string,
+  ocrLanguages: string[] = ["eng"]
+): Promise<Uint8Array> {
+  const task = ilovepdf.newTask("pdfocr" as ILoveAPITool)
+  await task.start()
+
+  const file = ILovePDFFile.fromArray(pdfBuffer, filename)
+  await task.addFile(file)
+
+  await task.process({ ocr_languages: ocrLanguages })
+
+  const buffer = await task.download()
+  await task.delete()
+
+  return buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer as ArrayBuffer)
+}
+
 // ── Workflow Runner (Chained Tools) ──────────────────────────
 
 export interface WorkflowStep {
@@ -102,8 +120,9 @@ export interface WorkflowStep {
 export async function runWorkflow(
   initialFiles: Array<{ buffer: Buffer; filename: string }>,
   steps: WorkflowStep[],
+  outputFilename?: string,
   onStepComplete?: (step: number, total: number) => void
-): Promise<{ buffer: ArrayBuffer | Uint8Array; downloadFilename: string }> {
+): Promise<ToolRunResult> {
   if (steps.length === 0) throw new Error("No steps defined")
 
   // Start first task
@@ -122,18 +141,36 @@ export async function runWorkflow(
 
   // Chain remaining steps
   for (let i = 1; i < steps.length; i++) {
-    currentTask = await currentTask.connect(steps[i].tool as ILoveAPITool)
-    await currentTask.process(steps[i].options)
+    const stepOptions: Record<string, unknown> = { ...steps[i].options }
+    if (i === steps.length - 1 && outputFilename) {
+      stepOptions.output_filename = outputFilename
+    }
+    // @ts-expect-error SDK connect expects ILovePDFTool, we use ILoveAPITool which is a superset
+    currentTask = await currentTask.connect(steps[i].tool as ILoveAPITool as unknown as string)
+    await currentTask.process(stepOptions)
     onStepComplete?.(i + 1, steps.length)
   }
 
   // Download final result
   const buffer = await currentTask.download()
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const downloadFilename = (currentTask as any).downloadFileName || (currentTask as any).download_filename || outputFilename || "workflow_output.pdf";
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const outputFilesize = (currentTask as any).outputFileSize || (currentTask as any).output_filesize || buffer.byteLength || (buffer as any).length;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const timer = (currentTask as any).timer || "0";
+  const taskId = currentTask.id;
+
   await currentTask.delete()
 
   return {
     buffer: buffer,
-    downloadFilename: "workflow_output.pdf",
+    downloadFilename,
+    outputFilesize,
+    timer,
+    taskId,
+    server: "api.ilovepdf.com",
   }
 }
 

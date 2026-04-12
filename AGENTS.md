@@ -1,244 +1,150 @@
-<!-- BEGIN:nextjs-agent-rules -->
-# This is NOT the Next.js you know
+# AGENTS.md
 
-This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
-<!-- END:nextjs-agent-rules -->
+> Guidance for AI coding agents working in this repository.
 
-# AGENTS.md 
-  
-> This file provides guidance to AI coding agents (Claude, Codex, Copilot, etc.) when working 
-> in this repository. Keep it up to date as the project evolves. 
-  
---- 
-  
-## 📁 Project Overview 
-  
-| Field | Value | 
-|---|---| 
-| **Project Name** | `pdf-tools` | 
-| **Framework** | Next.js 16.2.1 (App Router) | 
-| **Language** | TypeScript | 
-| **Package Manager** | `npm` | 
-| **Node Version** | `>=20.x` | 
-| **Deployment Target** | Vercel | 
-  
-### Purpose 
-This application provides an online PDF productivity platform for users by processing, editing, converting, and managing PDF files using the iLoveAPI integration.
-  
---- 
-  
-## 🗂️ Repository Structure 
-  
-``` 
-. 
-├── app/                    # Next.js App Router pages & layouts 
-│   ├── (auth)/             # Route group – authentication pages (Clerk)
-│   ├── (marketing)/        # Route group – public pages
-│   ├── api/                # Route handlers (REST / AI endpoints)
-│   ├── tools/              # Dynamic tool pages
-│   ├── layout.tsx          # Root layout 
-│   └── sitemap.ts          # Sitemap generator
-│ 
-├── components/             # Shared React components 
-│   ├── layout/             # Layout components (Navbar, Footer, etc.)
-│   ├── shared/             # Shared UI elements
-│   ├── theme/              # Theme management
-│   ├── tools/              # Feature-scoped components for PDF tools
-│   └── ui/                 # Primitive UI components (shadcn/ui, etc.)
-│ 
-├── hooks/                  # Custom React hooks (e.g., useTool.ts)
-├── lib/                    # Utility functions, helpers, constants 
-│   ├── iloveapi/           # iLoveAPI SDK client & helpers
-│   ├── pdf/                # PDF specific helpers
-│   ├── auth.ts             # Auth configuration / helpers
-│   └── utils.ts            # General utilities 
-│ 
-├── public/                 # Static assets 
-├── .gitignore              # Git ignore list
-├── eslint.config.mjs       # ESLint configuration
-├── next.config.ts          # Next.js configuration 
-├── package.json            # Project dependencies and scripts
-├── tsconfig.json           # TypeScript configuration 
-└── AGENTS.md               # ← You are here 
-``` 
-  
---- 
-  
-## ⚙️ Environment Setup 
-  
-```bash 
-# 1. Install dependencies 
-npm install 
-  
-# 2. Start the development server 
-npm run dev            # http://localhost:3000 
-``` 
-  
-### Key Environment Variables 
-  
-| Variable | Description | Required | 
-|---|---|---| 
-| `NEXT_PUBLIC_APP_URL` | Public base URL (exposed to browser) | ✅ | 
-| `ILOVEAPI_PUBLIC_KEY` | iLoveAPI public key for PDF processing | ✅ | 
-| `ILOVEAPI_SECRET_KEY` | iLoveAPI secret key for PDF processing | ✅ | 
-| `CLERK_WEBHOOK_SECRET` | Secret for verifying Clerk webhooks | ⬜ | 
-| `OPENAI_API_KEY` | OpenAI API key for AI features | ⬜ | 
-| `ILOVEAPI_REGION` | iLoveAPI processing region | ⬜ | 
-| `ILOVEAPI_FILE_ENCRYPTION_KEY` | Encryption key for iLoveAPI files | ⬜ | 
-  
-> **Agent rule:** Never read, log, or hard-code values from `.env*` files. 
-> Always reference variables through `process.env.VARIABLE_NAME`. 
-  
---- 
-  
-## 🛠️ Development Commands 
-  
-| Command | Description | 
-|---|---| 
-| `npm run dev` | Start dev server with hot reload | 
-| `npm run build` | Production build | 
-| `npm run start` | Serve the production build | 
-| `npm run lint` | Run ESLint | 
-  
---- 
-  
-## 🧱 Tech Stack 
-  
-### Core 
-- **Next.js 16.2.1** — App Router, Server Components, Server Actions 
-- **TypeScript** — strict mode enabled 
-- **Tailwind CSS v4** — utility-first styling 
-- **shadcn/ui** — accessible component primitives 
-- **next-themes** — dark/light mode
-  
-### Data & Auth 
-- **Clerk** — authentication and user management (`@clerk/nextjs`)
-- **iLoveAPI** — PDF processing engine (`@ilovepdf/ilovepdf-nodejs`)
-  
-### State & Data Fetching 
-- **React Hooks** — Local state (`useState`, custom hooks like `useTool`)
-  
-### Testing 
-- No testing framework currently configured.
-  
-### Tooling 
-- **ESLint** + `eslint-config-next` — linting 
-- **TypeScript** — type checking
-  
---- 
-  
-## 🏛️ Architecture & Conventions 
-  
-### Next.js App Router Patterns 
-- **Server Components** are the default. Add `"use client"` only when you need 
-  browser APIs, event handlers, or React state. 
-- **Route Handlers** live in `app/api/[route]/route.ts`. 
-- Prefer **streaming** (`loading.tsx`, `Suspense`) over blocking data fetches. 
-  
-### File & Folder Naming 
-| Item | Convention | Example | 
-|---|---|---| 
-| Components | PascalCase | `FileUploader.tsx` | 
-| Hooks | camelCase, `use` prefix | `useTool.ts` | 
-| Utilities | camelCase | `utils.ts` | 
-| Route files | lowercase with hyphens | `app/tools/[slug]/page.tsx` | 
-  
-### Component Structure 
-```tsx 
-// 1. Imports (external → internal → types → styles) 
-import { useState } from "react"; 
-import { Button } from "@/components/ui/button"; 
-  
-// 2. Types / interfaces 
-interface Props { 
-  title: string; 
-} 
-  
-// 3. Component (named export preferred over default for non-page files) 
-export function ToolCard({ title }: Props) { 
-  // hooks first 
-  const [active, setActive] = useState(false); 
-  
-  // render 
-  return <div>...</div>; 
-} 
-``` 
-  
---- 
-  
-## 🔒 Security Guidelines 
-  
-> Agents **must** follow these rules without exception. 
-  
-1. **Never trust client input.** Validate all incoming data on the server. 
-2. **No secrets on the client.** Only `NEXT_PUBLIC_*` variables reach the browser. 
-3. **Always check auth in Server Actions and Route Handlers.** Do not rely solely 
-   on middleware for authorization. 
-4. **Rate-limit** all public API routes and auth endpoints. 
-5. **Sanitize** user-generated HTML before rendering. 
-  
---- 
-  
-## 🚫 Agent Rules & Restrictions 
-  
-### Always Do 
-- Prefer editing existing files over creating new ones for small changes. 
-- Keep components small and single-purpose (< 200 lines as a guideline). 
-- Add JSDoc comments to exported functions in `lib/`. 
-- Use absolute imports via the `@/` alias (configured in `tsconfig.json`). 
-  
-### Never Do 
-- Do **not** use `any` in TypeScript — use `unknown` and narrow properly. 
-- Do **not** install new dependencies without noting them in the PR description. 
-- Do **not** commit changes to `.env`, `.env.local`, or any secrets file. 
-- Do **not** disable ESLint rules inline (`// eslint-disable`) without a comment explaining why. 
-- Do **not** use `dangerouslySetInnerHTML` without sanitizing the content first. 
-- Do **not** bypass TypeScript with `@ts-ignore` — use `@ts-expect-error` with a comment if truly necessary. 
-  
-### Proceed with Caution 
-- **Auth flow changes** — test all authentication flows edge cases. 
-- **API route changes** — check for downstream consumers. 
-  
---- 
-  
-## 📦 Adding Dependencies 
-  
-Before adding a new package, ask: 
-1. Is this functionality already achievable with what's installed? 
-2. Is the package actively maintained and well-typed? 
-3. Does it significantly increase bundle size? (check bundlephobia.com) 
-  
-```bash 
-# Runtime dependency 
-npm install package-name 
-  
-# Dev-only dependency 
-npm install -D package-name 
-``` 
-  
-Always commit `package-lock.json` alongside `package.json`. 
-  
---- 
-  
-## 🚀 Deployment 
-  
-### Vercel (Primary) 
-- Pushes to `main` auto-deploy to production. 
-- Environment variables are managed in the Vercel dashboard — never in code. 
-  
---- 
-  
-## 📚 Key References 
-  
-| Resource | URL | 
-|---|---| 
-| Next.js Docs | `https://nextjs.org/docs`  | 
-| TypeScript Handbook | `https://www.typescriptlang.org/docs`  | 
-| Tailwind CSS Docs | `https://tailwindcss.com/docs`  | 
-| shadcn/ui Docs | `https://ui.shadcn.com`  | 
-| Clerk Docs | `https://clerk.com/docs`  | 
-| iLoveAPI Docs | `https://developer.ilovepdf.com/docs`  | 
-  
---- 
-  
-*Last updated: 2026-04-08 | Maintained by: pdf-tools team*
+## Project Overview
+
+| Field | Value |
+|---|---|
+| **Name** | `pdf-tools` |
+| **Framework** | Next.js 16 (App Router) |
+| **Language** | TypeScript (strict) |
+| **Styling** | Tailwind CSS v4 + shadcn/ui |
+| **Auth** | Clerk (`@clerk/nextjs`) |
+| **PDF Engine** | iLoveAPI (`@ilovepdf/ilovepdf-nodejs`) + Python (`pdf2docx` for PDF→Word) |
+| **Animations** | framer-motion |
+| **Package Manager** | npm |
+| **Deployment** | Vercel |
+
+## Build & Lint Commands
+
+| Command | Purpose |
+|---|---|
+| `npm run dev` | Start dev server (http://localhost:3000) |
+| `npm run build` | Production build (also runs TypeScript type checking) |
+| `npm run lint` | Run ESLint (core-web-vitals + typescript configs) |
+
+No test framework is configured. There is no separate `typecheck` script — `npm run build` catches type errors.
+
+## Code Style
+
+### Imports
+- Use the `@/` path alias (configured in `tsconfig.json`) for all project-internal imports.
+- Import order: React/external → internal (`@/`) → types → styles.
+- Use `import type` for type-only imports.
+
+### Formatting
+- **No semicolons** at line endings (project convention).
+- Use double quotes for strings (consistent with existing code).
+- Use template literals for string interpolation.
+
+### Exports
+- **Named exports** for components, hooks, utilities, and lib functions.
+- **Default exports** only for Next.js page/layout files (`page.tsx`, `layout.tsx`).
+
+### Types
+- TypeScript `strict` mode is enabled. Respect it.
+- Prefer `interface` for object shapes; `type` for unions, intersections, and mapped types.
+- Use discriminated unions for state machines (see `ToolState` in `hooks/useTool.ts`).
+- Never use `any` — use `unknown` and narrow. If truly unavoidable, use `@ts-expect-error` with a comment.
+
+### Naming Conventions
+| Item | Convention | Example |
+|---|---|---|
+| Components | PascalCase | `FileUploader.tsx` |
+| Hooks | camelCase, `use` prefix | `useTool.ts` |
+| Utilities / lib | camelCase | `utils.ts`, `toolValidation.ts` |
+| Route directories | lowercase-hyphen | `app/tools/[slug]/` |
+| Type / interface names | PascalCase | `ToolConfig`, `ILoveAPITool` |
+| Constants | camelCase or UPPER_SNAKE | `toolsConfig`, `ILOVEAPI_PUBLIC_KEY` |
+| CSS custom properties | kebab-case | `--font-geist-sans` |
+
+### Component Structure
+```tsx
+"use client"  // only when needed: browser APIs, events, state
+
+import { useState } from "react"              // 1. React / external
+import { Button } from "@/components/ui/button" // 2. Internal
+import type { ToolConfig } from "@/lib/types"    // 3. Types
+
+interface Props {
+  title: string
+}
+
+export function ToolCard({ title }: Props) {  // named export
+  const [active, setActive] = useState(false) // hooks first
+
+  return <div>...</div>
+}
+```
+
+### Error Handling
+- API routes: catch `ILoveAPIError` specifically, then fall back to generic 500.
+- Client-side: use the `ToolState` discriminated union (`status: "error"` with `retryable` flag).
+- Map iLoveAPI error types to user-friendly messages via `mapILoveAPIError()`.
+- Use `withRetry()` for transient iLoveAPI failures (exponential backoff).
+- Never expose raw error messages or stack traces to the client.
+
+## Architecture
+
+### Directory Layout
+```
+app/                    # Next.js App Router
+  (auth)/               # Auth pages (Clerk)
+  (marketing)/          # Public marketing pages
+  api/                  # Route handlers
+    tools/[tool]/       # PDF processing endpoints
+    download/           # File download endpoint
+    ai/                 # AI summarize/translate
+    webhooks/           # Clerk webhooks
+  tools/[slug]/         # Dynamic tool pages
+components/
+  layout/               # Navbar, Footer
+  tools/                # Feature-scoped (FileUploader, ProcessingModal, etc.)
+  tools/options/        # Per-tool option forms
+  shared/               # Cross-feature UI
+  ui/                   # shadcn/ui primitives
+  theme/                # Dark/light theme
+hooks/                  # Custom hooks (useTool)
+lib/
+  iloveapi/             # Client, types, tools runner, errors, signature
+  pdf/                  # Client-side PDF helpers (split-client, pdf_to_docx.py)
+  tools-config.ts       # Tool registry (28+ tools)
+  toolValidation.ts     # Per-tool input validation
+  usage.ts              # Plan limits & usage tracking (stubbed)
+  auth.ts               # Clerk plan helpers
+  utils.ts              # cn() utility
+```
+
+### Key Patterns
+- **Server Components by default.** Add `"use client"` only when necessary.
+- **Route Handlers** at `app/api/[route]/route.ts`. Always validate auth and input server-side.
+- **Tool pipeline**: `FileUploader` → `useTool` hook → `POST /api/tools/[tool]` → `runTool()` → iLoveAPI → store file → return `downloadId`.
+- **Local tools**: `local-split` bypasses iLoveAPI; processed client-side in `lib/pdf/split-client.ts`. `pdf-to-word` is processed locally via Python (`pdf2docx`) in `lib/pdf/pdf_to_docx.py`.
+- **PDF to Word pipeline** (`pdf-to-word`): `convertPdfToOffice()` writes the PDF to a temp file, spawns a Python 3 subprocess running `pdf_to_docx.py`, reads the resulting DOCX, and returns it via the download flow. Set `PDF_TO_WORD_PYTHON_BIN` or `PYTHON_BIN` env vars to override the Python binary used.
+- **Global singletons** in dev: use `global as unknown as { ... }` pattern (see `lib/iloveapi/client.ts`).
+
+## Security Rules
+
+1. Never read, log, or hard-code `.env*` values. Use `process.env.VARIABLE_NAME`.
+2. Only `NEXT_PUBLIC_*` variables reach the browser.
+3. Always check auth in Server Actions and Route Handlers.
+4. Validate all client input on the server (see `toolValidation.ts`).
+5. Never use `dangerouslySetInnerHTML` without sanitization.
+6. Never commit `.env`, `.env.local`, or secrets files.
+
+## Agent Rules
+
+### Always
+- Prefer editing existing files over creating new ones.
+- Keep components focused (< 200 lines guideline).
+- Use `cn()` from `@/lib/utils` for conditional class merging.
+- Run `npm run lint` and `npm run build` after changes to verify correctness.
+- Commit `package-lock.json` alongside `package.json` when adding deps.
+
+### Never
+- Install new dependencies without justification.
+- Disable ESLint rules inline without an explanatory comment.
+- Use `any` in TypeScript.
+- Use `@ts-ignore` — use `@ts-expect-error` with a comment if truly necessary.
+- Commit unless explicitly asked.
