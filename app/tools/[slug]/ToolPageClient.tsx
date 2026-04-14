@@ -95,7 +95,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
         <div className="space-y-8">
 
 
-          <div className={`grid grid-cols-1 ${toolHasOptions && !isOrganize && tool.slug !== "html-to-pdf" ? "lg:grid-cols-2" : "max-w-2xl mx-auto"} gap-8 items-start`}>
+          <div className={`grid grid-cols-1 ${toolHasOptions && files.length > 0 && !isOrganize && tool.slug !== "html-to-pdf" ? "lg:grid-cols-2" : "max-w-2xl mx-auto"} gap-8 items-start`}>
             {/* LEFT: File uploader */}
             {tool.slug !== "html-to-pdf" && (
               <div>
