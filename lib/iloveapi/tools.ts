@@ -68,9 +68,31 @@ export async function runTool(input: ToolRunInput): Promise<ToolRunResult> {
   await task.process(processOptions)
 
   // Step 4: Download
-  const buffer = await task.download();
+  let buffer = await task.download();
 
-  const downloadFilename = (task as unknown as { downloadFileName?: string }).downloadFileName || (task as unknown as { download_filename?: string }).download_filename || input.outputFilename || "output.pdf";
+  // If pdfjpg and the buffer is a single JPG (not a ZIP), wrap it in a zip
+  if (input.tool === "pdfjpg" && buffer.byteLength >= 2) {
+    const view = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer as ArrayBuffer);
+    const isZip = view[0] === 0x50 && view[1] === 0x4B && view[2] === 0x03 && view[3] === 0x04;
+    
+    if (!isZip) {
+      try {
+        const JSZip = (await import("jszip")).default;
+        const zip = new JSZip();
+        // Determine the image name
+        const imgName = input.outputFilename ? input.outputFilename.replace(/\.zip$/i, "") + ".jpg" : "image.jpg";
+        zip.file(imgName, buffer);
+        buffer = await zip.generateAsync({ type: "uint8array" });
+      } catch (err) {
+        console.error("Failed to wrap single JPG in ZIP:", err);
+      }
+    }
+  }
+
+  let downloadFilename = (task as unknown as { downloadFileName?: string }).downloadFileName || (task as unknown as { download_filename?: string }).download_filename || input.outputFilename || (input.tool === "pdfjpg" ? "output.zip" : "output.pdf");
+  if (input.tool === "pdfjpg" && !downloadFilename.toLowerCase().endsWith(".zip")) {
+    downloadFilename = downloadFilename.replace(/\.jpg$/i, "") + ".zip";
+  }
   const outputFilesize = (task as unknown as { outputFileSize?: number }).outputFileSize || (task as unknown as { output_filesize?: number }).output_filesize || buffer.byteLength || (buffer as unknown as { length?: number }).length || 0;
   const timer = (task as unknown as { timer?: string }).timer || "0";
   const taskId = task.id;

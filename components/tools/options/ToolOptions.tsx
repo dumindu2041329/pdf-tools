@@ -12,6 +12,7 @@ import { HtmlToPdfOptions } from "./HtmlToPdfOptions"
 import { PdfaOptions } from "./PdfaOptions"
 import { OcrOptions } from "./OcrOptions"
 import { ExtractOptions } from "./ExtractOptions"
+import { PdfToJpgOptions } from "./PdfToJpgOptions"
 import dynamic from "next/dynamic"
 
 const OrganizeOptions = dynamic(() => import("./OrganizeOptions").then(m => m.OrganizeOptions), { ssr: false })
@@ -43,6 +44,7 @@ const optionsMap: Record<
   "ocr-pdf": OcrOptions,
   "extract-pages": ExtractOptions,
   "organize-pdf": OrganizeOptions,
+  "pdf-to-jpg": PdfToJpgOptions,
 }
 
 export function ToolOptions({ toolSlug, files, options, onChange }: ToolOptionsProps) {

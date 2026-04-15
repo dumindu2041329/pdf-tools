@@ -58,6 +58,17 @@ export function validateToolOptions(toolSlug: string, options: Record<string, un
       // Basic fallback since it has defaults, but verify nothing is obviously broken
       break
     }
+    case 'pdf-to-jpg': {
+      const mode = (options.pdfjpg_mode as string) || "pages"
+      const quality = (options.jpg_quality as string) || "normal"
+      if (mode !== "pages" && mode !== "extract") {
+        return "Invalid conversion mode. Please select 'Page to JPG' or 'Extract Images'."
+      }
+      if (quality !== "normal" && quality !== "high") {
+        return "Invalid image quality. Please select 'Normal' or 'High'."
+      }
+      break
+    }
     default:
       break
   }
