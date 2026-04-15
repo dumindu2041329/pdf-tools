@@ -28,12 +28,12 @@ function getPythonCandidates(): CommandSpec[] {
   ]
 }
 
-function getSafeBaseName(sourceFilename: string) {
+export function getSafeBaseName(sourceFilename: string) {
   const rawName = path.parse(sourceFilename || "converted.pdf").name || "converted"
   return rawName.replace(/[<>:"/\\|?*\x00-\x1f]+/g, "-").trim() || "converted"
 }
 
-function execFile(file: string, args: string[], timeout = 120_000, cwd?: string): Promise<void> {
+export function execFile(file: string, args: string[], timeout = 120_000, cwd?: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const proc = spawn(file, args, { timeout, windowsHide: true, env: process.env, cwd })
     let stdout = ""
@@ -50,7 +50,7 @@ function execFile(file: string, args: string[], timeout = 120_000, cwd?: string)
 
 let resolvedPythonCommandPromise: Promise<CommandSpec> | undefined
 
-async function resolvePythonCommand() {
+export async function resolvePythonCommand() {
   if (!resolvedPythonCommandPromise) {
     resolvedPythonCommandPromise = (async () => {
       for (const candidate of getPythonCandidates()) {
@@ -67,7 +67,7 @@ async function resolvePythonCommand() {
   return resolvedPythonCommandPromise
 }
 
-function cleanupPath(targetPath: string) {
+export function cleanupPath(targetPath: string) {
   fs.rmSync(targetPath, { recursive: true, force: true })
 }
 

@@ -11,7 +11,7 @@
 | **Language** | TypeScript (strict) |
 | **Styling** | Tailwind CSS v4 + shadcn/ui |
 | **Auth** | Clerk (`@clerk/nextjs`) |
-| **PDF Engine** | iLoveAPI (`@ilovepdf/ilovepdf-nodejs`) + Python (`pdf2docx` for PDF→Word) |
+| **PDF Engine** | iLoveAPI (`@ilovepdf/ilovepdf-nodejs`) + Python (`pdf2docx` for PDF→Word, `PyMuPDF`/`pytesseract` for OCR) |
 | **Animations** | framer-motion |
 | **Package Manager** | npm |
 | **Deployment** | Vercel |
@@ -108,7 +108,7 @@ components/
 hooks/                  # Custom hooks (useTool)
 lib/
   iloveapi/             # Client, types, tools runner, errors, signature
-  pdf/                  # Client-side PDF helpers (split-client, pdf_to_docx.py)
+  pdf/                  # Client-side PDF helpers (split-client, pdf_to_docx.py, pdf_ocr.py)
   tools-config.ts       # Tool registry (28+ tools)
   toolValidation.ts     # Per-tool input validation
   usage.ts              # Plan limits & usage tracking (stubbed)
@@ -120,8 +120,9 @@ lib/
 - **Server Components by default.** Add `"use client"` only when necessary.
 - **Route Handlers** at `app/api/[route]/route.ts`. Always validate auth and input server-side.
 - **Tool pipeline**: `FileUploader` → `useTool` hook → `POST /api/tools/[tool]` → `runTool()` → iLoveAPI → store file → return `downloadId`.
-- **Local tools**: `local-split` bypasses iLoveAPI; processed client-side in `lib/pdf/split-client.ts`. `pdf-to-word` is processed locally via Python (`pdf2docx`) in `lib/pdf/pdf_to_docx.py`.
+- **Local tools**: `local-split` bypasses iLoveAPI; processed client-side in `lib/pdf/split-client.ts`. `pdf-to-word` and `ocr-pdf` are processed locally using Python (`pdf_to_docx.py` and `pdf_ocr.py`).
 - **PDF to Word pipeline** (`pdf-to-word`): `convertPdfToOffice()` writes the PDF to a temp file, spawns a Python 3 subprocess running `pdf_to_docx.py`, reads the resulting DOCX, and returns it via the download flow. Set `PDF_TO_WORD_PYTHON_BIN` or `PYTHON_BIN` env vars to override the Python binary used.
+- **OCR pipeline** (`ocr-pdf`): `processOcrLocal()` writes the PDF to a temp file, spawns a Python subprocess running `pdf_ocr.py` (which uses `fitz` and `pytesseract`), reads the resulting searchable PDF, and returns it. Requires `tesseract.exe` to be installed.
 - **Global singletons** in dev: use `global as unknown as { ... }` pattern (see `lib/iloveapi/client.ts`).
 
 ## Security Rules

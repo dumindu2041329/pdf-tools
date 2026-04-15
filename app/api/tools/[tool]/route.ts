@@ -4,6 +4,7 @@ import { ILoveAPIError, mapILoveAPIError } from "@/lib/iloveapi/errors"
 import { convertExtractFormat } from "@/lib/extractFormatConverter"
 import { storeFile } from "@/lib/fileStore"
 import { convertPdfToOffice } from "@/lib/pdf/office-converter"
+import { processOcrLocal } from "@/lib/pdf/ocr-local"
 
 const localOfficeSlugs = new Set([
   "pdf-to-word",
@@ -95,11 +96,40 @@ export async function POST(
     }
   }
 
+  if (tool === "pdfocr") {
+    try {
+      const start = Date.now()
+      const ocrLanguages = (options.ocr_languages as string[]) || ["eng"]
+      
+      const result = await processOcrLocal(
+        files[0].buffer,
+        files[0].filename,
+        ocrLanguages
+      )
+      
+      const elapsed = ((Date.now() - start) / 1000).toFixed(2)
+      const downloadId = storeFile(result.buffer, result.filename, "application/pdf")
+
+      return NextResponse.json({
+        downloadId,
+        filename: result.filename,
+        processingTime: elapsed,
+        outputSize: result.buffer.byteLength,
+      })
+    } catch (err) {
+      console.error("Local OCR processing error:", err)
+      return NextResponse.json({ error: "Failed to process PDF with local OCR" }, { status: 500 })
+    }
+  }
+
   try {
     const cleanOptions = { ...options }
-    delete cleanOptions.mode
-    delete cleanOptions.ocr_languages
     delete cleanOptions._toolSlug
+    // Only strip mode/ocr_languages for non-OCR tools (officepdf conversion pipeline uses these)
+    if (tool !== "pdfocr") {
+      delete cleanOptions.mode
+      delete cleanOptions.ocr_languages
+    }
 
     const result = await runTool({ tool, files, options: cleanOptions })
 
@@ -143,7 +173,16 @@ export async function POST(
         { status: 402 }
       )
     }
-    console.error("Tool processing error:", err)
-    return NextResponse.json({ error: "Processing failed" }, { status: 500 })
+    // Log the full error including iLoveAPI response body for diagnosis
+    const axiosErr = err as { response?: { data?: unknown; status?: number } }
+    if (axiosErr?.response) {
+      console.error("Tool processing error (iLoveAPI response):", JSON.stringify(axiosErr.response.data, null, 2), "status:", axiosErr.response.status)
+    } else {
+      console.error("Tool processing error:", err)
+    }
+    const errMessage = axiosErr?.response?.data && typeof axiosErr.response.data === "object"
+      ? JSON.stringify(axiosErr.response.data)
+      : "Processing failed"
+    return NextResponse.json({ error: errMessage }, { status: 500 })
   }
 }
