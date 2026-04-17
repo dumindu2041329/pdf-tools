@@ -23,7 +23,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
   const [files, setFiles] = useState<File[]>([])
   const [options, setOptions] = useState<Record<string, unknown>>({})
   const [validationError, setValidationError] = useState<string | null>(null)
-  const { state, process, reset } = useTool(tool.iloveapiTool)
+  const { state, process, reset } = useTool(tool.slug)
   const isProcessingRef = useRef(false)
 
   const handleProcess = () => {

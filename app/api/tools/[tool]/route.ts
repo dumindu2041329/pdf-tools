@@ -3,12 +3,11 @@ import { runTool, runPdfOcrForOffice } from "@/lib/iloveapi/tools"
 import { ILoveAPIError, mapILoveAPIError } from "@/lib/iloveapi/errors"
 import { convertExtractFormat } from "@/lib/extractFormatConverter"
 import { storeFile } from "@/lib/fileStore"
-import { convertPdfToOffice } from "@/lib/pdf/office-converter"
+import { convertPdfToOffice, convertPdfToExcel } from "@/lib/pdf/office-converter"
 import { processOcrLocal } from "@/lib/pdf/ocr-local"
 
 const localOfficeSlugs = new Set([
   "pdf-to-word",
-  "pdf-to-excel",
   "pdf-to-powerpoint",
 ])
 
@@ -100,13 +99,13 @@ export async function POST(
     try {
       const start = Date.now()
       const ocrLanguages = (options.ocr_languages as string[]) || ["eng"]
-      
+
       const result = await processOcrLocal(
         files[0].buffer,
         files[0].filename,
         ocrLanguages
       )
-      
+
       const elapsed = ((Date.now() - start) / 1000).toFixed(2)
       const downloadId = storeFile(result.buffer, result.filename, "application/pdf")
 
@@ -119,6 +118,36 @@ export async function POST(
     } catch (err) {
       console.error("Local OCR processing error:", err)
       return NextResponse.json({ error: "Failed to process PDF with local OCR" }, { status: 500 })
+    }
+  }
+
+  if (tool === "pdf-to-excel") {
+    try {
+      const start = Date.now()
+      const excelLayout = (options.excel_layout as "single" | "multiple") || "single"
+
+      const result = await convertPdfToExcel(
+        files[0].buffer,
+        files[0].filename,
+        excelLayout
+      )
+      const elapsed = ((Date.now() - start) / 1000).toFixed(2)
+
+      const downloadId = storeFile(
+        result.buffer,
+        result.filename,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      )
+
+      return NextResponse.json({
+        downloadId,
+        filename: result.filename,
+        processingTime: elapsed,
+        outputSize: result.buffer.byteLength,
+      })
+    } catch (err) {
+      console.error("Local Excel conversion error:", err)
+      return NextResponse.json({ error: "Failed to convert PDF to Excel format" }, { status: 500 })
     }
   }
 

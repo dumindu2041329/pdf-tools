@@ -44,7 +44,7 @@ export interface ToolConfig {
   description: string
   seoDescription: string
   category: ToolCategory
-  iloveapiTool: ILoveAPITool | "local-split"
+  iloveapiTool: ILoveAPITool | "local-split" | "local-excel"
   icon: LucideIcon
   color: string
   access: "free" | "premium"
@@ -308,7 +308,7 @@ export const toolsConfig: ToolConfig[] = [
     seoDescription:
       "Convert PDF files to Excel spreadsheets. Extract tabular data from PDFs.",
     category: "convert-from",
-    iloveapiTool: "officepdf",
+    iloveapiTool: "local-excel",
     icon: FileSpreadsheet,
     color: "hsl(140, 75%, 40%)",
     access: "free",

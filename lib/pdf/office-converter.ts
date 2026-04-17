@@ -122,3 +122,38 @@ export async function convertPdfToOffice(
     cleanupPath(tempDir)
   }
 }
+
+export async function convertPdfToExcel(
+  pdfBuffer: Buffer,
+  sourceFilename: string,
+  excelLayout: "single" | "multiple" = "single"
+): Promise<{ buffer: Uint8Array; filename: string }> {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pdf-to-excel-"))
+  const inputPath = path.join(tempDir, "input.pdf")
+  const outputFilename = `${getSafeBaseName(sourceFilename)}.xlsx`
+  const outputPath = path.join(tempDir, outputFilename)
+  const pythonScriptPath = path.join(process.cwd(), "lib", "pdf", "pdf_to_xlsx.py")
+
+  try {
+    fs.writeFileSync(inputPath, pdfBuffer)
+
+    const pythonCommand = await resolvePythonCommand()
+    await execFile(
+      pythonCommand.command,
+      [...pythonCommand.args, pythonScriptPath, inputPath, outputPath, excelLayout],
+      300_000,
+      process.cwd()
+    )
+
+    if (!fs.existsSync(outputPath)) {
+      throw new Error("Python converter did not produce an XLSX file")
+    }
+
+    return {
+      buffer: new Uint8Array(fs.readFileSync(outputPath)),
+      filename: outputFilename,
+    }
+  } finally {
+    cleanupPath(tempDir)
+  }
+}
