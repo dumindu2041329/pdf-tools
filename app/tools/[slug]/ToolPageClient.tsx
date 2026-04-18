@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect } from "react"
 import { getToolBySlug } from "@/lib/tools-config"
 import { FileUploader } from "@/components/tools/FileUploader"
 import { ProcessingModal } from "@/components/tools/ProcessingModal"
@@ -9,8 +9,9 @@ import { ToolOptions, hasToolOptions } from "@/components/tools/options/ToolOpti
 import { Button } from "@/components/ui/button"
 import { useTool } from "@/hooks/useTool"
 import { validateToolOptions } from "@/lib/toolValidation"
-import { Zap, AlertCircle, RotateCw } from "lucide-react"
+import { Zap } from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
+import { toast } from "sonner"
 
 interface ToolPageClientProps {
   slug: string
@@ -38,21 +39,20 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
     setValidationError(null)
     isProcessingRef.current = true
 
-    // Sanitize options before sending network payload (strips trailing/empty commas from dynamic UI)
     const payloadOptions: Record<string, unknown> = { ...options, _toolSlug: tool.slug }
-    
+
     if (tool.iloveapiTool === "local-split") {
-      const mode = tool.slug === "remove-pages" ? "remove_pages" : (payloadOptions.split_mode || "ranges");
-      payloadOptions.split_mode = mode;
+      const mode = tool.slug === "remove-pages" ? "remove_pages" : (payloadOptions.split_mode || "ranges")
+      payloadOptions.split_mode = mode
       if (mode === "ranges") {
-        delete payloadOptions.fixed_range;
-        delete payloadOptions.remove_pages;
+        delete payloadOptions.fixed_range
+        delete payloadOptions.remove_pages
       } else if (mode === "fixed_range") {
-        delete payloadOptions.ranges;
-        delete payloadOptions.remove_pages;
+        delete payloadOptions.ranges
+        delete payloadOptions.remove_pages
       } else if (mode === "remove_pages") {
-        delete payloadOptions.ranges;
-        delete payloadOptions.fixed_range;
+        delete payloadOptions.ranges
+        delete payloadOptions.fixed_range
       }
     }
 
@@ -82,6 +82,15 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
   const isProcessing = state.status === "processing"
   const isSuccess = state.status === "success"
   const isError = state.status === "error"
+
+  useEffect(() => {
+    if (isError && "message" in state && state.message) {
+      toast.error(state.message)
+      isProcessingRef.current = false
+      reset()
+    }
+  }, [isError, state, reset])
+
   const showOptionsAndProcess = files.length > 0 || tool.slug === "html-to-pdf"
 
   return (
@@ -90,13 +99,9 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
         {tool.title}
       </h1>
 
-      {/* Main content */}
       {!isSuccess && (
         <div className="space-y-8">
-
-
           <div className={`grid grid-cols-1 ${toolHasOptions && files.length > 0 && !isOrganize && tool.slug !== "html-to-pdf" ? "lg:grid-cols-2" : "max-w-2xl mx-auto"} gap-8 items-start`}>
-            {/* LEFT: File uploader */}
             {tool.slug !== "html-to-pdf" && (
               <div>
                 <FileUploader
@@ -110,82 +115,50 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
               </div>
             )}
 
-          {/* RIGHT: Tool options + Process button */}
-          <div className="flex flex-col gap-6">
-            {/* Tool-specific options */}
-            <AnimatePresence>
-              {showOptionsAndProcess && !isProcessing && (
-                <motion.div
-                  initial={{ opacity: 0, x: 10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: 10 }}
-                >
-                  <ToolOptions
-                    toolSlug={tool.slug}
-                    files={files}
-                    options={options}
-                    onChange={(opts) => {
-                      setOptions(opts)
-                      setValidationError(null)
-                    }}
-                  />
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            {/* Process button */}
-            <AnimatePresence>
-              {showOptionsAndProcess && !isProcessing && (
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 10 }}
-                >
-                  <Button
-                    size="lg"
-                    onClick={handleProcess}
-                    className="w-full shadow-lg shadow-primary/25 text-base"
+            <div className="flex flex-col gap-6">
+              <AnimatePresence>
+                {showOptionsAndProcess && !isProcessing && (
+                  <motion.div
+                    initial={{ opacity: 0, x: 10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 10 }}
                   >
-                    <Zap className="mr-2 h-4 w-4" />
-                    {tool.title}
-                  </Button>
-                </motion.div>
-              )}
-            </AnimatePresence>
+                    <ToolOptions
+                      toolSlug={tool.slug}
+                      files={files}
+                      options={options}
+                      onChange={(opts) => {
+                        setOptions(opts)
+                        setValidationError(null)
+                      }}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
-            {/* Error state */}
-            <AnimatePresence>
-              {(isError || validationError) && (
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  className="rounded-xl border border-destructive/30 bg-destructive/5 p-6 text-center"
-                >
-                  <AlertCircle className="mx-auto h-8 w-8 text-destructive mb-3" />
-                  <p className="text-sm font-medium text-destructive mb-4">
-                    {validationError || (state.status === "error" ? state.message : "")}
-                  </p>
-                  <div className="flex justify-center gap-3">
-                    {!validationError && state.status === "error" && state.retryable && (
-                      <Button variant="outline" size="sm" onClick={handleProcess}>
-                        <RotateCw className="mr-2 h-3 w-3" />
-                        Retry
-                      </Button>
-                    )}
-                    <Button variant="ghost" size="sm" onClick={handleReset}>
-                      {validationError ? "Clear Form" : "Start Over"}
+              <AnimatePresence>
+                {showOptionsAndProcess && !isProcessing && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 10 }}
+                  >
+                    <Button
+                      size="lg"
+                      onClick={handleProcess}
+                      className="w-full shadow-lg shadow-primary/25 text-base"
+                    >
+                      <Zap className="mr-2 h-4 w-4" />
+                      {tool.title}
                     </Button>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
-        </div>
         </div>
       )}
 
-      {/* Success state */}
       {isSuccess && (
         <DownloadCard
           downloadUrl={state.downloadUrl}
@@ -196,7 +169,6 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
         />
       )}
 
-      {/* Processing modal */}
       <ProcessingModal
         currentStep={isProcessing ? state.step : "start"}
         uploadProgress={isProcessing ? state.uploadProgress : undefined}

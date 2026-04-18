@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import { ClerkProvider } from "@clerk/nextjs"
 import { Geist, Geist_Mono, Noto_Serif_Display } from "next/font/google"
 import { ThemeProvider } from "@/components/theme/ThemeProvider"
+import { Toaster } from "@/components/theme/Toaster"
 import "./globals.css"
 
 const geistSans = Geist({
@@ -62,6 +63,7 @@ export default function RootLayout({
           >
             {children}
           </ThemeProvider>
+          <Toaster />
         </body>
       </html>
     </ClerkProvider>
