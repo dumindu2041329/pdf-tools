@@ -124,12 +124,10 @@ export async function POST(
   if (tool === "pdf-to-excel") {
     try {
       const start = Date.now()
-      const excelLayout = (options.excel_layout as "single" | "multiple") || "single"
 
       const result = await convertPdfToExcel(
         files[0].buffer,
-        files[0].filename,
-        excelLayout
+        files[0].filename
       )
       const elapsed = ((Date.now() - start) / 1000).toFixed(2)
 
@@ -146,7 +144,7 @@ export async function POST(
         outputSize: result.buffer.byteLength,
       })
     } catch (err) {
-      console.error("Local Excel conversion error:", err)
+      console.error("Adobe Excel conversion error:", err)
       return NextResponse.json({ error: "Failed to convert PDF to Excel format" }, { status: 500 })
     }
   }
