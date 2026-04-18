@@ -1,10 +1,8 @@
 import { spawn } from "child_process"
-import { randomUUID } from "crypto"
 import fs from "fs"
-import os from "os"
 import path from "path"
 
-import { convertPdfToExcelAdobe } from "./adobe-excel-converter"
+import { convertPdfToExcelAdobe } from "./adobe-export-converter"
 
 interface CommandSpec {
   command: string
@@ -71,58 +69,6 @@ export async function resolvePythonCommand() {
 
 export function cleanupPath(targetPath: string) {
   fs.rmSync(targetPath, { recursive: true, force: true })
-}
-
-export async function convertPdfToOffice(
-  pdfBuffer: Buffer,
-  sourceFilename: string,
-  toolSlug: string,
-  ocrMode: boolean = false,
-  ocrLanguages: string[] = ["eng"],
-  runOcr: (buffer: Buffer, filename: string, langs: string[]) => Promise<Uint8Array> = async () => {
-    throw new Error("OCR handler not provided")
-  }
-): Promise<{ buffer: Uint8Array; filename: string }> {
-  if (toolSlug !== "pdf-to-word") {
-    throw new Error(`Unsupported tool slug for office conversion: ${toolSlug}`)
-  }
-
-  const inputId = randomUUID()
-  let workingBuffer = pdfBuffer
-
-  if (ocrMode) {
-    const ocrResult = await runOcr(pdfBuffer, `${inputId}.pdf`, ocrLanguages)
-    workingBuffer = Buffer.from(ocrResult)
-  }
-
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pdf-to-word-"))
-  const inputPath = path.join(tempDir, "input.pdf")
-  const outputFilename = `${getSafeBaseName(sourceFilename)}.docx`
-  const outputPath = path.join(tempDir, outputFilename)
-  const pythonScriptPath = path.join(process.cwd(), "lib", "pdf", "pdf_to_docx.py")
-
-  try {
-    fs.writeFileSync(inputPath, workingBuffer)
-
-    const pythonCommand = await resolvePythonCommand()
-    await execFile(
-      pythonCommand.command,
-      [...pythonCommand.args, pythonScriptPath, inputPath, outputPath],
-      300_000,
-      process.cwd()
-    )
-
-    if (!fs.existsSync(outputPath)) {
-      throw new Error("Python converter did not produce a DOCX file")
-    }
-
-    return {
-      buffer: new Uint8Array(fs.readFileSync(outputPath)),
-      filename: outputFilename,
-    }
-  } finally {
-    cleanupPath(tempDir)
-  }
 }
 
 export async function convertPdfToExcel(

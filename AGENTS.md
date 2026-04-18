@@ -11,8 +11,9 @@
 | **Language** | TypeScript (strict) |
 | **Styling** | Tailwind CSS v4 + shadcn/ui |
 | **Auth** | Clerk (`@clerk/nextjs`) |
-| **PDF Engine** | iLoveAPI (`@ilovepdf/ilovepdf-nodejs`) + Python (`pdf2docx` for PDF→Word, `PyMuPDF`/`pytesseract` for OCR) |
-| **Animations** | framer-motion |
+| **PDF Engine** | iLoveAPI (`@ilovepdf/ilovepdf-nodejs`) + Adobe Node SDK (`@adobe/pdfservices-node-sdk`) + Python (`PyMuPDF`/`pytesseract`) + `pdf-lib` / `pdfjs-dist` |
+| **AI Services** | OpenAI (`openai`) |
+| **UI/UX** | framer-motion, three.js (`three`), @dnd-kit (drag & drop), sonner (toasts) |
 | **Package Manager** | npm |
 | **Deployment** | Vercel |
 
@@ -96,22 +97,24 @@ app/                    # Next.js App Router
     tools/[tool]/       # PDF processing endpoints
     download/           # File download endpoint
     ai/                 # AI summarize/translate
-    webhooks/           # Clerk webhooks
+    webhooks/           # iLoveAPI webhooks
   tools/[slug]/         # Dynamic tool pages
 components/
   layout/               # Navbar, Footer
   tools/                # Feature-scoped (FileUploader, ProcessingModal, etc.)
   tools/options/        # Per-tool option forms
   shared/               # Cross-feature UI
-  ui/                   # shadcn/ui primitives
-  theme/                # Dark/light theme
+  ui/                   # shadcn/ui primitives + glsl-hills (Three.js)
+  theme/                # Dark/light theme + Toaster (sonner)
 hooks/                  # Custom hooks (useTool)
 lib/
   iloveapi/             # Client, types, tools runner, errors, signature
-  pdf/                  # Client-side PDF helpers (split-client, pdf_to_docx.py, pdf_ocr.py)
+  pdf/                  # Client-side PDF helpers, Adobe export converter, OCR local
   tools-config.ts       # Tool registry (28+ tools)
   toolValidation.ts     # Per-tool input validation
-  usage.ts              # Plan limits & usage tracking (stubbed)
+  usage.ts              # Plan limits & usage tracking
+  fileStore.ts          # File handling utilities
+  extractFormatConverter.ts # Format conversion utilities
   auth.ts               # Clerk plan helpers
   utils.ts              # cn() utility
 ```
@@ -120,8 +123,8 @@ lib/
 - **Server Components by default.** Add `"use client"` only when necessary.
 - **Route Handlers** at `app/api/[route]/route.ts`. Always validate auth and input server-side.
 - **Tool pipeline**: `FileUploader` → `useTool` hook → `POST /api/tools/[tool]` → `runTool()` → iLoveAPI → store file → return `downloadId`.
-- **Local tools**: `local-split` bypasses iLoveAPI; processed client-side in `lib/pdf/split-client.ts`. `pdf-to-word` and `ocr-pdf` are processed locally using Python (`pdf_to_docx.py` and `pdf_ocr.py`).
-- **PDF to Word pipeline** (`pdf-to-word`): `convertPdfToOffice()` writes the PDF to a temp file, spawns a Python 3 subprocess running `pdf_to_docx.py`, reads the resulting DOCX, and returns it via the download flow. Set `PDF_TO_WORD_PYTHON_BIN` or `PYTHON_BIN` env vars to override the Python binary used.
+- **Local tools**: `local-split` bypasses iLoveAPI; processed client-side in `lib/pdf/split-client.ts`. `ocr-pdf` is processed locally using Python (`pdf_ocr.py`).
+- **Adobe PDF Services pipeline** (`pdf-to-word`, `pdf-to-excel`): Uses `@adobe/pdfservices-node-sdk` to upload the PDF to Adobe PDF Services API, run an `ExportPDFJob` (DOCX or XLSX), and stream the converted file back to the client. Requires `PDF_SERVICES_CLIENT_ID` and `PDF_SERVICES_CLIENT_SECRET` environment variables.
 - **OCR pipeline** (`ocr-pdf`): `processOcrLocal()` writes the PDF to a temp file, spawns a Python subprocess running `pdf_ocr.py` (which uses `fitz` and `pytesseract`), reads the resulting searchable PDF, and returns it. Requires `tesseract.exe` to be installed.
 - **Global singletons** in dev: use `global as unknown as { ... }` pattern (see `lib/iloveapi/client.ts`).
 

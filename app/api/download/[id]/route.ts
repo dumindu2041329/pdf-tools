@@ -1,6 +1,10 @@
 import { getFile } from "@/lib/fileStore";
 import { NextResponse } from "next/server";
 
+function encodeRFC5987(value: string): string {
+  return encodeURIComponent(value).replace(/['()]/g, (c) => `%${c.charCodeAt(0).toString(16)}`)
+}
+
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -17,7 +21,7 @@ export async function GET(
   return new NextResponse(buffer as unknown as BodyInit, {
     headers: {
       "Content-Type": contentType,
-      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Content-Disposition": `attachment; filename="${encodeRFC5987(filename)}"; filename*=UTF-8''${encodeRFC5987(filename)}`,
       "Content-Length": String(buffer.byteLength),
       "Cache-Control": "no-store",
     },

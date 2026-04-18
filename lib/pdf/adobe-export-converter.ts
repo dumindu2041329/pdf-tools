@@ -26,8 +26,9 @@ function getPDFServices(): PDFServices {
   return globalForPDFServices.pdfServices
 }
 
-export async function convertPdfToExcelAdobe(
+async function runExportPDF(
   pdfBuffer: Buffer,
+  targetFormat: ExportPDFTargetFormat,
   sourceFilename: string
 ): Promise<{ buffer: Uint8Array; filename: string }> {
   const pdfServices = getPDFServices()
@@ -36,10 +37,7 @@ export async function convertPdfToExcelAdobe(
     mimeType: "application/pdf",
   })
 
-  const exportParams = new ExportPDFParams({
-    targetFormat: ExportPDFTargetFormat.XLSX,
-  })
-
+  const exportParams = new ExportPDFParams({ targetFormat })
   const job = new ExportPDFJob({ inputAsset, params: exportParams })
   const pollingURL = await pdfServices.submit({ job })
 
@@ -55,7 +53,8 @@ export async function convertPdfToExcelAdobe(
   const resultAsset = pdfServicesResponse.result.asset
   const streamAsset: StreamAsset = await pdfServices.getContent({ asset: resultAsset })
 
-  const outputFilename = `${getSafeBaseName(sourceFilename)}.xlsx`
+  const ext = targetFormat === ExportPDFTargetFormat.DOCX ? "docx" : "xlsx"
+  const outputFilename = `${getSafeBaseName(sourceFilename)}.${ext}`
   const chunks: Uint8Array[] = []
 
   for await (const chunk of streamAsset.readStream) {
@@ -64,4 +63,18 @@ export async function convertPdfToExcelAdobe(
 
   const buffer = Buffer.concat(chunks)
   return { buffer: new Uint8Array(buffer), filename: outputFilename }
+}
+
+export async function convertPdfToWordAdobe(
+  pdfBuffer: Buffer,
+  sourceFilename: string
+): Promise<{ buffer: Uint8Array; filename: string }> {
+  return runExportPDF(pdfBuffer, ExportPDFTargetFormat.DOCX, sourceFilename)
+}
+
+export async function convertPdfToExcelAdobe(
+  pdfBuffer: Buffer,
+  sourceFilename: string
+): Promise<{ buffer: Uint8Array; filename: string }> {
+  return runExportPDF(pdfBuffer, ExportPDFTargetFormat.XLSX, sourceFilename)
 }

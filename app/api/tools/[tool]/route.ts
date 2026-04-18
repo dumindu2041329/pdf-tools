@@ -1,15 +1,11 @@
 import { NextResponse } from "next/server"
-import { runTool, runPdfOcrForOffice } from "@/lib/iloveapi/tools"
+import { runTool } from "@/lib/iloveapi/tools"
 import { ILoveAPIError, mapILoveAPIError } from "@/lib/iloveapi/errors"
 import { convertExtractFormat } from "@/lib/extractFormatConverter"
 import { storeFile } from "@/lib/fileStore"
-import { convertPdfToOffice, convertPdfToExcel } from "@/lib/pdf/office-converter"
+import { convertPdfToExcel } from "@/lib/pdf/office-converter"
+import { convertPdfToWordAdobe } from "@/lib/pdf/adobe-export-converter"
 import { processOcrLocal } from "@/lib/pdf/ocr-local"
-
-const localOfficeSlugs = new Set([
-  "pdf-to-word",
-  "pdf-to-powerpoint",
-])
 
 export const maxDuration = 60
 
@@ -57,42 +53,6 @@ export async function POST(
 
   if (files.length === 0) {
     return NextResponse.json({ error: "No files provided" }, { status: 400 })
-  }
-
-  if (tool === "officepdf" && toolSlug && localOfficeSlugs.has(toolSlug)) {
-    try {
-      const start = Date.now()
-      const mode = (options.mode as string) || "no-ocr"
-      const ocrLanguages = (options.ocr_languages as string[]) || ["eng"]
-
-      const result = await convertPdfToOffice(
-        files[0].buffer,
-        files[0].filename,
-        toolSlug,
-        mode === "ocr",
-        ocrLanguages,
-        (buf, name, langs) => runPdfOcrForOffice(buf, name, langs)
-      )
-      const elapsed = ((Date.now() - start) / 1000).toFixed(2)
-
-      const mimeMap: Record<string, string> = {
-        docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-      }
-      const mimeType = mimeMap[result.filename.split(".").pop() ?? ""] ?? "application/octet-stream"
-      const downloadId = storeFile(result.buffer, result.filename, mimeType)
-
-      return NextResponse.json({
-        downloadId,
-        filename: result.filename,
-        processingTime: elapsed,
-        outputSize: result.buffer.byteLength,
-      })
-    } catch (err) {
-      console.error("Office conversion error:", err)
-      return NextResponse.json({ error: "Failed to convert PDF to Office format" }, { status: 500 })
-    }
   }
 
   if (tool === "pdfocr") {
@@ -146,6 +106,34 @@ export async function POST(
     } catch (err) {
       console.error("Adobe Excel conversion error:", err)
       return NextResponse.json({ error: "Failed to convert PDF to Excel format" }, { status: 500 })
+    }
+  }
+
+  if (tool === "pdf-to-word") {
+    try {
+      const start = Date.now()
+
+      const result = await convertPdfToWordAdobe(
+        files[0].buffer,
+        files[0].filename
+      )
+      const elapsed = ((Date.now() - start) / 1000).toFixed(2)
+
+      const downloadId = storeFile(
+        result.buffer,
+        result.filename,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      )
+
+      return NextResponse.json({
+        downloadId,
+        filename: result.filename,
+        processingTime: elapsed,
+        outputSize: result.buffer.byteLength,
+      })
+    } catch (err) {
+      console.error("Adobe Word conversion error:", err)
+      return NextResponse.json({ error: "Failed to convert PDF to Word format" }, { status: 500 })
     }
   }
 
