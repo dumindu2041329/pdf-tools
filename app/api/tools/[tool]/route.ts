@@ -4,7 +4,7 @@ import { ILoveAPIError, mapILoveAPIError } from "@/lib/iloveapi/errors"
 import { convertExtractFormat } from "@/lib/extractFormatConverter"
 import { storeFile } from "@/lib/fileStore"
 import { convertPdfToExcel } from "@/lib/pdf/office-converter"
-import { convertPdfToWordAdobe } from "@/lib/pdf/adobe-export-converter"
+import { convertPdfToWordAdobe, convertPdfToPowerpointAdobe } from "@/lib/pdf/adobe-export-converter"
 import { processOcrLocal } from "@/lib/pdf/ocr-local"
 
 export const maxDuration = 60
@@ -134,6 +134,34 @@ export async function POST(
     } catch (err) {
       console.error("Adobe Word conversion error:", err)
       return NextResponse.json({ error: "Failed to convert PDF to Word format" }, { status: 500 })
+    }
+  }
+
+  if (tool === "pdf-to-powerpoint") {
+    try {
+      const start = Date.now()
+
+      const result = await convertPdfToPowerpointAdobe(
+        files[0].buffer,
+        files[0].filename
+      )
+      const elapsed = ((Date.now() - start) / 1000).toFixed(2)
+
+      const downloadId = storeFile(
+        result.buffer,
+        result.filename,
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+      )
+
+      return NextResponse.json({
+        downloadId,
+        filename: result.filename,
+        processingTime: elapsed,
+        outputSize: result.buffer.byteLength,
+      })
+    } catch (err) {
+      console.error("Adobe PowerPoint conversion error:", err)
+      return NextResponse.json({ error: "Failed to convert PDF to PowerPoint format" }, { status: 500 })
     }
   }
 

@@ -53,7 +53,14 @@ async function runExportPDF(
   const resultAsset = pdfServicesResponse.result.asset
   const streamAsset: StreamAsset = await pdfServices.getContent({ asset: resultAsset })
 
-  const ext = targetFormat === ExportPDFTargetFormat.DOCX ? "docx" : "xlsx"
+  let ext: string
+  if (targetFormat === ExportPDFTargetFormat.DOCX) {
+    ext = "docx"
+  } else if (targetFormat === ExportPDFTargetFormat.XLSX) {
+    ext = "xlsx"
+  } else {
+    ext = "pptx"
+  }
   const outputFilename = `${getSafeBaseName(sourceFilename)}.${ext}`
   const chunks: Uint8Array[] = []
 
@@ -77,4 +84,11 @@ export async function convertPdfToExcelAdobe(
   sourceFilename: string
 ): Promise<{ buffer: Uint8Array; filename: string }> {
   return runExportPDF(pdfBuffer, ExportPDFTargetFormat.XLSX, sourceFilename)
+}
+
+export async function convertPdfToPowerpointAdobe(
+  pdfBuffer: Buffer,
+  sourceFilename: string
+): Promise<{ buffer: Uint8Array; filename: string }> {
+  return runExportPDF(pdfBuffer, ExportPDFTargetFormat.PPTX, sourceFilename)
 }

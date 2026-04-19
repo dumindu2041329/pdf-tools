@@ -44,7 +44,7 @@ export interface ToolConfig {
   description: string
   seoDescription: string
   category: ToolCategory
-  iloveapiTool: ILoveAPITool | "local-split" | "local-excel"
+  iloveapiTool: ILoveAPITool | "local-split" | "local-excel" | "local-powerpoint"
   icon: LucideIcon
   color: string
   access: "free" | "premium"
@@ -323,7 +323,7 @@ export const toolsConfig: ToolConfig[] = [
     seoDescription:
       "Convert PDF files to editable PowerPoint presentations.",
     category: "convert-from",
-    iloveapiTool: "officepdf",
+    iloveapiTool: "local-powerpoint",
     icon: Presentation,
     color: "hsl(15, 85%, 55%)",
     access: "free",
