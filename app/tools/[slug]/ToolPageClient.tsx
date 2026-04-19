@@ -23,7 +23,6 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
   const isOrganize = tool.slug === "organize-pdf"
   const [files, setFiles] = useState<File[]>([])
   const [options, setOptions] = useState<Record<string, unknown>>({})
-  const [validationError, setValidationError] = useState<string | null>(null)
   const { state, process, reset } = useTool(tool.slug)
   const isProcessingRef = useRef(false)
 
@@ -32,11 +31,8 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
 
     const validationMsg = validateToolOptions(tool.slug, options, files)
     if (validationMsg) {
-      setValidationError(validationMsg)
       return
     }
-
-    setValidationError(null)
     isProcessingRef.current = true
 
     const payloadOptions: Record<string, unknown> = { ...options, _toolSlug: tool.slug }
@@ -74,7 +70,6 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
   const handleReset = () => {
     setFiles([])
     setOptions({})
-    setValidationError(null)
     isProcessingRef.current = false
     reset()
   }
@@ -129,7 +124,6 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
                       options={options}
                       onChange={(opts) => {
                         setOptions(opts)
-                        setValidationError(null)
                       }}
                     />
                   </motion.div>

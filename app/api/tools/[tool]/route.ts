@@ -4,8 +4,8 @@ import { ILoveAPIError, mapILoveAPIError } from "@/lib/iloveapi/errors"
 import { convertExtractFormat } from "@/lib/extractFormatConverter"
 import { storeFile } from "@/lib/fileStore"
 import { convertPdfToExcel } from "@/lib/pdf/office-converter"
-import { convertPdfToWordAdobe, convertPdfToPowerpointAdobe } from "@/lib/pdf/adobe-export-converter"
-import { processOcrLocal } from "@/lib/pdf/ocr-local"
+import { convertPdfToWordAdobe, convertPdfToPowerpointAdobe, ocrPdfAdobe } from "@/lib/pdf/adobe-export-converter"
+import { OCRSupportedLocale } from "@adobe/pdfservices-node-sdk"
 
 export const maxDuration = 60
 
@@ -49,21 +49,21 @@ export async function POST(
   const optionsRaw = formData.get("options")
   const options = optionsRaw ? JSON.parse(optionsRaw as string) : {}
 
-  const toolSlug = typeof options._toolSlug === "string" ? options._toolSlug : undefined
-
   if (files.length === 0) {
     return NextResponse.json({ error: "No files provided" }, { status: 400 })
   }
 
-  if (tool === "pdfocr") {
+  if (tool === "ocr-pdf") {
     try {
       const start = Date.now()
-      const ocrLanguages = (options.ocr_languages as string[]) || ["eng"]
 
-      const result = await processOcrLocal(
+      const ocrLanguages = (options.ocr_languages as string[]) || ["eng"]
+      const locale = ocrLanguages[0] === "eng" ? OCRSupportedLocale.EN_US : undefined
+
+      const result = await ocrPdfAdobe(
         files[0].buffer,
         files[0].filename,
-        ocrLanguages
+        locale
       )
 
       const elapsed = ((Date.now() - start) / 1000).toFixed(2)
@@ -76,8 +76,8 @@ export async function POST(
         outputSize: result.buffer.byteLength,
       })
     } catch (err) {
-      console.error("Local OCR processing error:", err)
-      return NextResponse.json({ error: "Failed to process PDF with local OCR" }, { status: 500 })
+      console.error("Adobe OCR processing error:", err)
+      return NextResponse.json({ error: "Failed to process PDF with OCR" }, { status: 500 })
     }
   }
 
@@ -169,7 +169,7 @@ export async function POST(
     const cleanOptions = { ...options }
     delete cleanOptions._toolSlug
     // Only strip mode/ocr_languages for non-OCR tools (officepdf conversion pipeline uses these)
-    if (tool !== "pdfocr") {
+    if (tool !== "ocr-pdf") {
       delete cleanOptions.mode
       delete cleanOptions.ocr_languages
     }

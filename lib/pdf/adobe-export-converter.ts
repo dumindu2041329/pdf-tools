@@ -6,6 +6,11 @@ import {
   ExportPDFTargetFormat,
   ExportPDFResult,
   StreamAsset,
+  OCRJob,
+  OCRParams,
+  OCRResult,
+  OCRSupportedLocale,
+  OCRSupportedType,
 } from "@adobe/pdfservices-node-sdk"
 import { Readable } from "stream"
 import { getSafeBaseName } from "./office-converter"
@@ -91,4 +96,57 @@ export async function convertPdfToPowerpointAdobe(
   sourceFilename: string
 ): Promise<{ buffer: Uint8Array; filename: string }> {
   return runExportPDF(pdfBuffer, ExportPDFTargetFormat.PPTX, sourceFilename)
+}
+
+async function runOCR(
+  pdfBuffer: Buffer,
+  sourceFilename: string,
+  locale?: OCRSupportedLocale
+): Promise<{ buffer: Uint8Array; filename: string }> {
+  const pdfServices = getPDFServices()
+  const inputAsset = await pdfServices.upload({
+    readStream: Readable.from(Buffer.from(pdfBuffer)),
+    mimeType: "application/pdf",
+  })
+
+  let ocrParams: OCRParams | undefined
+  if (locale) {
+    ocrParams = new OCRParams({
+      ocrLocale: locale,
+      ocrType: OCRSupportedType.SEARCHABLE_IMAGE_EXACT,
+    })
+  }
+
+  const job = new OCRJob({ inputAsset, params: ocrParams })
+  const pollingURL = await pdfServices.submit({ job })
+
+  const pdfServicesResponse = await pdfServices.getJobResult({
+    pollingURL,
+    resultType: OCRResult,
+  })
+
+  if (!pdfServicesResponse.result) {
+    throw new Error("Adobe OCR job returned no result")
+  }
+
+  const resultAsset = pdfServicesResponse.result.asset
+  const streamAsset: StreamAsset = await pdfServices.getContent({ asset: resultAsset })
+
+  const outputFilename = `${getSafeBaseName(sourceFilename)}-ocr.pdf`
+  const chunks: Uint8Array[] = []
+
+  for await (const chunk of streamAsset.readStream) {
+    chunks.push(chunk as Uint8Array)
+  }
+
+  const buffer = Buffer.concat(chunks)
+  return { buffer: new Uint8Array(buffer), filename: outputFilename }
+}
+
+export async function ocrPdfAdobe(
+  pdfBuffer: Buffer,
+  sourceFilename: string,
+  locale?: OCRSupportedLocale
+): Promise<{ buffer: Uint8Array; filename: string }> {
+  return runOCR(pdfBuffer, sourceFilename, locale)
 }

@@ -44,7 +44,7 @@ export interface ToolConfig {
   description: string
   seoDescription: string
   category: ToolCategory
-  iloveapiTool: ILoveAPITool | "local-split" | "local-excel" | "local-powerpoint"
+  iloveapiTool: ILoveAPITool | "local-split" | "local-excel" | "local-powerpoint" | "adobe-ocr"
   icon: LucideIcon
   color: string
   access: "free" | "premium"
@@ -184,7 +184,7 @@ export const toolsConfig: ToolConfig[] = [
     seoDescription:
       "Convert scanned PDFs into searchable text using OCR. 80+ languages supported.",
     category: "optimize",
-    iloveapiTool: "pdfocr",
+    iloveapiTool: "adobe-ocr",
     icon: Eye,
     color: "hsl(220, 70%, 55%)",
     access: "free",
