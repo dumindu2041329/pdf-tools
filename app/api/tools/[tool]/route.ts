@@ -6,6 +6,7 @@ import { storeFile } from "@/lib/fileStore"
 import { convertPdfToExcel } from "@/lib/pdf/office-converter"
 import { convertPdfToWordAdobe, convertPdfToPowerpointAdobe, ocrPdfAdobe } from "@/lib/pdf/adobe-export-converter"
 import { OCRSupportedLocale } from "@adobe/pdfservices-node-sdk"
+import { getToolBySlug } from "@/lib/tools-config"
 
 export const maxDuration = 60
 
@@ -165,7 +166,16 @@ export async function POST(
     }
   }
 
+
   try {
+    const toolConfig = getToolBySlug(tool)
+    if (!toolConfig) {
+      return NextResponse.json({ error: "Tool not found" }, { status: 404 })
+    }
+
+    // Map slug to iLoveAPI tool name (e.g., "pdf-to-pdfa" -> "pdfa")
+    const iloveapiTool = typeof toolConfig.iloveapiTool === "string" ? toolConfig.iloveapiTool : tool
+
     const cleanOptions = { ...options }
     delete cleanOptions._toolSlug
     // Only strip mode/ocr_languages for non-OCR tools (officepdf conversion pipeline uses these)
@@ -174,7 +184,7 @@ export async function POST(
       delete cleanOptions.ocr_languages
     }
 
-    const result = await runTool({ tool, files, options: cleanOptions })
+    const result = await runTool({ tool: iloveapiTool, files, options: cleanOptions })
 
     let { buffer: finalBuffer, downloadFilename } = result
 

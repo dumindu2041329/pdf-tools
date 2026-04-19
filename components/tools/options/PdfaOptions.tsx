@@ -9,8 +9,13 @@ interface Props {
 
 const conformances = [
   { value: "pdfa-1b", label: "PDF/A-1b" },
+  { value: "pdfa-1a", label: "PDF/A-1a" },
   { value: "pdfa-2b", label: "PDF/A-2b" },
+  { value: "pdfa-2u", label: "PDF/A-2u" },
+  { value: "pdfa-2a", label: "PDF/A-2a" },
   { value: "pdfa-3b", label: "PDF/A-3b" },
+  { value: "pdfa-3u", label: "PDF/A-3u" },
+  { value: "pdfa-3a", label: "PDF/A-3a" },
 ]
 
 export function PdfaOptions({ options, onChange }: Props) {
@@ -20,7 +25,7 @@ export function PdfaOptions({ options, onChange }: Props) {
     <div className="space-y-4">
       <div className="space-y-2">
         <label className="text-sm text-muted-foreground">Conformance Level</label>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {conformances.map((c) => (
             <button
               key={c.value}
