@@ -39,6 +39,12 @@ No test framework is configured. There is no separate `typecheck` script — `np
 - Use double quotes for strings (consistent with existing code).
 - Use template literals for string interpolation.
 
+### Styling Conventions
+- Text selection (`::selection`) uses `bg-primary` and `text-primary-foreground`.
+- Scrollbars are customized globally:
+  - Firefox: `scrollbar-width: thin` with muted-foreground color.
+  - WebKit (Chrome/Safari/Edge): 8px width/height, transparent track, rounded semi-transparent muted-foreground thumb with hover state.
+
 ### Exports
 - **Named exports** for components, hooks, utilities, and lib functions.
 - **Default exports** only for Next.js page/layout files (`page.tsx`, `layout.tsx`).
