@@ -11,7 +11,7 @@
 | **Language** | TypeScript (strict) |
 | **Styling** | Tailwind CSS v4 + shadcn/ui |
 | **Auth** | Clerk (`@clerk/nextjs`) |
-| **PDF Engine** | iLoveAPI (`@ilovepdf/ilovepdf-nodejs`) + Adobe Node SDK (`@adobe/pdfservices-node-sdk`) + Python (`PyMuPDF`/`pytesseract`) + `pdf-lib` / `pdfjs-dist` |
+| **PDF Engine** | iLoveAPI (`@ilovepdf/ilovepdf-nodejs`) + Adobe Node SDK (`@adobe/pdfservices-node-sdk`) + `pdf-lib` / `pdfjs-dist` |
 | **AI Services** | OpenAI (`openai`) |
 | **UI/UX** | framer-motion, three.js (`three`), @dnd-kit (drag & drop), sonner (toasts) |
 | **Package Manager** | npm |
@@ -115,7 +115,7 @@ components/
 hooks/                  # Custom hooks (useTool)
 lib/
   iloveapi/             # Client, types, tools runner, errors, signature
-  pdf/                  # Client-side PDF helpers, Adobe export converter, OCR local
+  pdf/                  # Client-side PDF helpers, Adobe export converter, office converter
   tools-config.ts       # Tool registry (28+ tools)
   toolValidation.ts     # Per-tool input validation
   usage.ts              # Plan limits & usage tracking
@@ -129,9 +129,8 @@ lib/
 - **Server Components by default.** Add `"use client"` only when necessary.
 - **Route Handlers** at `app/api/[route]/route.ts`. Always validate auth and input server-side.
 - **Tool pipeline**: `FileUploader` → `useTool` hook → `POST /api/tools/[tool]` → `runTool()` → iLoveAPI → store file → return `downloadId`.
-- **Local tools**: `local-split` bypasses iLoveAPI; processed client-side in `lib/pdf/split-client.ts`. `ocr-pdf` is processed locally using Python (`pdf_ocr.py`).
-- **Adobe PDF Services pipeline** (`pdf-to-word`, `pdf-to-excel`): Uses `@adobe/pdfservices-node-sdk` to upload the PDF to Adobe PDF Services API, run an `ExportPDFJob` (DOCX or XLSX), and stream the converted file back to the client. Requires `PDF_SERVICES_CLIENT_ID` and `PDF_SERVICES_CLIENT_SECRET` environment variables.
-- **OCR pipeline** (`ocr-pdf`): `processOcrLocal()` writes the PDF to a temp file, spawns a Python subprocess running `pdf_ocr.py` (which uses `fitz` and `pytesseract`), reads the resulting searchable PDF, and returns it. Requires `tesseract.exe` to be installed.
+- **Local tools**: `local-split` and `local-rotate` bypass iLoveAPI; processed client-side in `lib/pdf/split-client.ts` and `lib/pdf/rotate-client.ts` respectively using `pdf-lib`.
+- **Adobe PDF Services pipeline** (`pdf-to-word`, `pdf-to-excel`, `pdf-to-powerpoint`, `ocr-pdf`): Uses `@adobe/pdfservices-node-sdk` to process PDFs via Adobe PDF Services API. Runs `ExportPDFJob` for Office conversions (DOCX, XLSX, PPTX) and `OCRJob` for OCR (Searchable PDF), streaming the result back to the client. Requires `PDF_SERVICES_CLIENT_ID` and `PDF_SERVICES_CLIENT_SECRET` environment variables.
 - **Global singletons** in dev: use `global as unknown as { ... }` pattern (see `lib/iloveapi/client.ts`).
 
 ## Security Rules

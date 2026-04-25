@@ -6,6 +6,7 @@ import { storeFile } from "@/lib/fileStore"
 import { convertPdfToExcel } from "@/lib/pdf/office-converter"
 import { convertPdfToWordAdobe, convertPdfToPowerpointAdobe, ocrPdfAdobe } from "@/lib/pdf/adobe-export-converter"
 import { OCRSupportedLocale } from "@adobe/pdfservices-node-sdk"
+import { processRotateLocal } from "@/lib/pdf/rotate-client"
 import { getToolBySlug } from "@/lib/tools-config"
 
 export const maxDuration = 60
@@ -194,6 +195,30 @@ export async function POST(
       }
       const errMessage = (err as Error).message || "PDF validation failed"
       return NextResponse.json({ validationSuccess: false, message: errMessage, error: errMessage }, { status: 200 })
+    }
+  }
+
+  if (tool === "rotate-pdf") {
+    try {
+      const start = Date.now()
+
+      const result = await processRotateLocal(
+        files,
+        options
+      )
+
+      const elapsed = ((Date.now() - start) / 1000).toFixed(2)
+      const downloadId = storeFile(result.buffer, result.downloadFilename, "application/pdf")
+
+      return NextResponse.json({
+        downloadId,
+        filename: result.downloadFilename,
+        processingTime: elapsed,
+        outputSize: result.buffer.byteLength,
+      })
+    } catch (err) {
+      console.error("Rotate PDF processing error:", err)
+      return NextResponse.json({ error: "Failed to rotate PDF" }, { status: 500 })
     }
   }
 

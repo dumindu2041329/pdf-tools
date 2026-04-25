@@ -44,7 +44,7 @@ export interface ToolConfig {
   description: string
   seoDescription: string
   category: ToolCategory
-  iloveapiTool: ILoveAPITool | "local-split" | "local-excel" | "local-powerpoint" | "adobe-ocr"
+  iloveapiTool: ILoveAPITool | "local-split" | "local-excel" | "local-powerpoint" | "adobe-ocr" | "local-rotate"
   icon: LucideIcon
   color: string
   access: "free" | "premium"
@@ -370,12 +370,12 @@ export const toolsConfig: ToolConfig[] = [
     seoDescription:
       "Rotate PDF pages 90°, 180°, or 270°. Free online PDF rotator.",
     category: "edit",
-    iloveapiTool: "rotate",
+    iloveapiTool: "local-rotate",
     icon: RotateCw,
     color: "hsl(180, 60%, 45%)",
     access: "free",
     acceptedFileTypes: [".pdf"],
-    maxFiles: 1,
+    maxFiles: 30,
     maxSizeMB: 20,
   },
   {
