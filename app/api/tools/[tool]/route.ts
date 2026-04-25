@@ -166,6 +166,36 @@ export async function POST(
     }
   }
 
+  if (tool === "validate-pdfa") {
+    try {
+      const start = Date.now()
+      const toolConfig = getToolBySlug(tool)
+      const iloveapiTool = typeof toolConfig?.iloveapiTool === "string" ? toolConfig.iloveapiTool : tool
+
+      const cleanOptions = { ...options }
+      delete cleanOptions._toolSlug
+
+      const result = await runTool({ tool: iloveapiTool, files, options: cleanOptions })
+      const elapsed = ((Date.now() - start) / 1000).toFixed(2)
+
+      const resultText = new TextDecoder().decode(result.buffer as ArrayBuffer)
+
+      return NextResponse.json({
+        validationSuccess: true,
+        message: "PDF validation is success",
+        result: resultText,
+        processingTime: elapsed,
+      })
+    } catch (err) {
+      console.error("PDF/A validation error:", err)
+      if (err instanceof ILoveAPIError) {
+        const { userMessage } = mapILoveAPIError(err)
+        return NextResponse.json({ validationSuccess: false, message: userMessage, error: userMessage }, { status: 200 })
+      }
+      const errMessage = (err as Error).message || "PDF validation failed"
+      return NextResponse.json({ validationSuccess: false, message: errMessage, error: errMessage }, { status: 200 })
+    }
+  }
 
   try {
     const toolConfig = getToolBySlug(tool)

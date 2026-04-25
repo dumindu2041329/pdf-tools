@@ -9,7 +9,7 @@ import { ToolOptions, hasToolOptions } from "@/components/tools/options/ToolOpti
 import { Button } from "@/components/ui/button"
 import { useTool } from "@/hooks/useTool"
 import { validateToolOptions } from "@/lib/toolValidation"
-import { Zap } from "lucide-react"
+import { Zap, CheckCircle, Clock, ArrowRight } from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
 import { toast } from "sonner"
 
@@ -76,6 +76,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
 
   const isProcessing = state.status === "processing"
   const isSuccess = state.status === "success"
+  const isValidationSuccess = state.status === "validation-success"
   const isError = state.status === "error"
 
   useEffect(() => {
@@ -94,7 +95,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
         {tool.title}
       </h1>
 
-      {!isSuccess && (
+      {!isSuccess && !isValidationSuccess && (
         <div className="space-y-8">
           <div className={`grid grid-cols-1 ${toolHasOptions && files.length > 0 && !isOrganize && tool.slug !== "html-to-pdf" ? "lg:grid-cols-2" : "max-w-2xl mx-auto"} gap-8 items-start`}>
             {tool.slug !== "html-to-pdf" && (
@@ -161,6 +162,34 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
           outputSize={state.outputSize}
           onReset={handleReset}
         />
+      )}
+
+      {isValidationSuccess && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-2xl border border-green-500/30 bg-green-500/5 p-8"
+        >
+          <div className="flex flex-col items-center text-center">
+            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-green-500/20 text-green-500 mb-4">
+              <CheckCircle className="h-8 w-8" />
+            </div>
+            <h3 className="text-xl font-bold mb-1">PDF validation is success</h3>
+            <p className="text-sm text-muted-foreground mb-6">
+              Your PDF file has been validated and conforms to the selected PDF/A standard.
+            </p>
+            <div className="flex items-center justify-center gap-6 mb-8">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Clock className="h-4 w-4" />
+                {state.processingTime}s
+              </div>
+            </div>
+            <Button size="lg" variant="outline" onClick={handleReset}>
+              Validate Another File
+              <ArrowRight className="ml-2 h-4 w-4" />
+            </Button>
+          </div>
+        </motion.div>
       )}
 
       <ProcessingModal

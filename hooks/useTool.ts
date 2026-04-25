@@ -8,6 +8,7 @@ export type ToolState =
   | { status: "files-selected"; files: File[] }
   | { status: "processing"; step: ProcessingStep; uploadProgress?: number }
   | { status: "success"; downloadUrl: string; filename: string; processingTime: string; outputSize: number }
+  | { status: "validation-success"; message: string; result?: string; processingTime: string }
   | { status: "error"; message: string; retryable: boolean; upgradeRequired?: boolean }
 
 function uploadWithProgress(
@@ -99,6 +100,17 @@ export function useTool(toolSlug: string) {
         setState({ status: "processing", step: "download" })
 
         const data = await response.json()
+
+        if (data.validationSuccess !== undefined) {
+          setState({
+            status: "validation-success",
+            message: data.message || "PDF validation is success",
+            result: data.result,
+            processingTime: data.processingTime || "0",
+          })
+          return
+        }
+
         const downloadUrl = `/api/download/${data.downloadId}`
 
         setState({
