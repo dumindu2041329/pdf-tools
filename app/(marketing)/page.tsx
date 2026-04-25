@@ -76,7 +76,7 @@ function HeroSection({ onGetStarted }: { onGetStarted: () => void }) {
             className="mt-6 text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto font-serif"
           >
             Merge, split, compress, convert, and edit your PDF files.
-            Fast, secure, and completely free. No registration needed for basic tools.
+            Fast, secure, and completely free. No registration needed.
           </motion.p>
 
           {/* CTA buttons */}
@@ -164,7 +164,7 @@ function HowItWorksSection() {
       icon: Upload,
       title: "Upload Your File",
       description:
-        "Drag and drop your PDF or choose from your device. We support files up to 20MB on the free plan.",
+        "Drag and drop your PDF or choose from your device. We support files up to 20MB.",
       color: "hsl(262, 83%, 58%)",
     },
     {
@@ -260,9 +260,9 @@ function FeaturesSection() {
     },
     {
       icon: Star,
-      title: "100% Free Core Tools",
+      title: "100% Free Tools",
       description:
-        "Merge, split, compress, convert, and more — completely free. No account needed for basic tools.",
+        "Merge, split, compress, convert, and more — completely free. No account needed.",
     },
   ]
 

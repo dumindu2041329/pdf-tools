@@ -2,7 +2,6 @@
 
 import Link from "next/link"
 import { motion } from "framer-motion"
-import { Crown } from "lucide-react"
 import type { ToolConfig } from "@/lib/tools-config"
 import { cn } from "@/lib/utils"
 
@@ -28,14 +27,6 @@ export function ToolCard({ tool, index = 0 }: ToolCardProps) {
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         )}
       >
-        {/* Premium badge */}
-        {tool.access === "premium" && (
-          <div className="absolute top-3 right-3 flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-            <Crown className="h-3 w-3" />
-            PRO
-          </div>
-        )}
-
         {/* Icon */}
         <div
           className="flex h-14 w-14 items-center justify-center rounded-xl transition-transform duration-300 group-hover:scale-110"

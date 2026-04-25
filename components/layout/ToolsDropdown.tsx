@@ -60,11 +60,6 @@ export function ToolsDropdown({ isOpen, onMouseEnter, onMouseLeave }: ToolsDropd
                           <tool.icon className="h-3 w-3" />
                         </div>
                         <span className="flex-1 truncate">{tool.title}</span>
-                        {tool.access === "premium" && (
-                          <span className="text-[9px] font-medium text-primary bg-primary/10 px-1 py-0.5 rounded">
-                            PRO
-                          </span>
-                        )}
                       </Link>
                     </li>
                   ))}

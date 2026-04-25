@@ -1,5 +1,5 @@
 import Link from "next/link"
-import { ChevronRight, Crown } from "lucide-react"
+import { ChevronRight } from "lucide-react"
 import type { ToolConfig } from "@/lib/tools-config"
 
 interface ToolHeroProps {
@@ -34,12 +34,6 @@ export function ToolHero({ tool }: ToolHeroProps) {
       {/* Description + badge */}
       <div className="mt-3 flex items-center justify-center gap-3">
         <p className="text-lg text-muted-foreground">{tool.description}</p>
-        {tool.access === "premium" && (
-          <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
-            <Crown className="h-3 w-3" />
-            Premium
-          </span>
-        )}
       </div>
     </div>
   )
