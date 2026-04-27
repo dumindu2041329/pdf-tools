@@ -7,6 +7,7 @@ import { ProcessingModal } from "@/components/tools/ProcessingModal"
 import { DownloadCard } from "@/components/tools/DownloadCard"
 import { ToolOptions, hasToolOptions } from "@/components/tools/options/ToolOptions"
 import { RotatePreview } from "@/components/tools/options/RotatePreview"
+import { WatermarkPreview } from "@/components/tools/options/WatermarkPreview"
 import { Button } from "@/components/ui/button"
 import { useTool } from "@/hooks/useTool"
 import { validateToolOptions } from "@/lib/toolValidation"
@@ -92,13 +93,13 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
 
   return (
     <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 pt-10 pb-20">
-      <h1 className="text-3xl sm:text-4xl font-serif font-bold text-center text-white mb-10">
+      <h1 className="text-3xl sm:text-4xl font-serif font-bold text-center text-foreground mb-10">
         {tool.title}
       </h1>
 
       {!isSuccess && !isValidationSuccess && (
         <div className="space-y-8">
-          <div className={`grid grid-cols-1 ${tool.slug === "rotate-pdf" && files.length > 0 ? "lg:grid-cols-3" : toolHasOptions && files.length > 0 && !isOrganize && tool.slug !== "html-to-pdf" ? "lg:grid-cols-2" : "max-w-2xl mx-auto"} gap-8 items-start`}>
+          <div className={`grid grid-cols-1 ${(tool.slug === "rotate-pdf" || tool.slug === "watermark-pdf") && files.length > 0 ? "lg:grid-cols-3" : toolHasOptions && files.length > 0 && !isOrganize && tool.slug !== "html-to-pdf" ? "lg:grid-cols-2" : "max-w-2xl mx-auto"} gap-8 items-start`}>
             {tool.slug !== "html-to-pdf" && (
               <FileUploader
                 accept={tool.acceptedFileTypes}
@@ -197,6 +198,13 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
                   )}
                 </AnimatePresence>
               </div>
+            )}
+
+            {tool.slug === "watermark-pdf" && files.length > 0 && (
+              <WatermarkPreview
+                files={files}
+                options={options}
+              />
             )}
           </div>
         </div>

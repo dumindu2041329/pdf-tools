@@ -29,7 +29,7 @@ export function ToolHero({ tool }: ToolHeroProps) {
       </div>
 
       {/* Title */}
-      <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight">{tool.title}</h1>
+      <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-foreground">{tool.title}</h1>
 
       {/* Description + badge */}
       <div className="mt-3 flex items-center justify-center gap-3">
