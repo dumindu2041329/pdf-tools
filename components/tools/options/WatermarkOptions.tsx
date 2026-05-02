@@ -2,10 +2,17 @@
 
 import { cn } from "@/lib/utils"
 import { Image as ImageIcon, CheckCircle2, Layers } from "lucide-react"
-import { useRef, useEffect } from "react"
-import * as pdfjsLib from "pdfjs-dist"
+import { useRef, useEffect, useCallback } from "react"
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`
+let pdfjsLib: typeof import("pdfjs-dist") | null = null
+
+async function getPdfJs() {
+  if (!pdfjsLib) {
+    pdfjsLib = await import("pdfjs-dist")
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/legacy/build/pdf.worker.min.mjs`
+  }
+  return pdfjsLib
+}
 
 interface Props {
   options: Record<string, unknown>
@@ -17,7 +24,7 @@ const fonts = ["Arial", "Arial Unicode MS", "Verdana", "Courier", "Times New Rom
 
 export function WatermarkOptions({ options, onChange, files }: Props) {
   const mode = (options.mode as string) || "text"
-  const update = (key: string, val: unknown) => onChange({ ...options, [key]: val })
+  const update = useCallback((key: string, val: unknown) => onChange({ ...options, [key]: val }), [options, onChange])
   
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -25,14 +32,16 @@ export function WatermarkOptions({ options, onChange, files }: Props) {
     if (!files || files.length === 0) return
     const file = files[0]
     const objUrl = URL.createObjectURL(file)
-    pdfjsLib
-      .getDocument(objUrl)
-      .promise.then((pdf) => {
-        if (!options.pages) {
-          update("pages", `1-${pdf.numPages}`)
-        }
-      })
-      .finally(() => URL.revokeObjectURL(objUrl))
+    getPdfJs().then((pdfjs) => {
+      pdfjs
+        .getDocument(objUrl)
+        .promise.then((pdf) => {
+          if (!options.pages) {
+            update("pages", `1-${pdf.numPages}`)
+          }
+        })
+        .finally(() => URL.revokeObjectURL(objUrl))
+    })
   }, [files, options.pages, update])
 
   // Derive current position for the 3x3 grid

@@ -5,10 +5,17 @@ import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, us
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, rectSortingStrategy, useSortable } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
 import { Trash2, Loader2, RotateCw } from "lucide-react"
-import * as pdfjsLib from "pdfjs-dist"
 import { cn } from "@/lib/utils"
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`
+let pdfjsLib: typeof import("pdfjs-dist") | null = null
+
+async function getPdfJs() {
+  if (!pdfjsLib) {
+    pdfjsLib = await import("pdfjs-dist")
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/legacy/build/pdf.worker.min.mjs`
+  }
+  return pdfjsLib
+}
 
 interface PageItem {
   id: string
@@ -122,12 +129,13 @@ export function OrganizeOptions({ files, options, onChange }: Props) {
       }
       setIsLoading(true)
 
+      const pdfjs = await getPdfJs()
       const newItems: PageItem[] = []
       try {
         for (let fileIdx = 0; fileIdx < files.length; fileIdx++) {
           const file = files[fileIdx]
           const objUrl = URL.createObjectURL(file)
-          const pdf = await pdfjsLib.getDocument(objUrl).promise
+          const pdf = await pdfjs.getDocument(objUrl).promise
 
           for (let i = 1; i <= pdf.numPages; i++) {
             const page = await pdf.getPage(i)

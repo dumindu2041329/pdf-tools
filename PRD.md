@@ -82,7 +82,7 @@ This document specifies the complete requirements for building a modern, web-bas
 | Theme Management | next-themes | Latest |
 | Icons | Lucide React | Latest |
 | Animations | Framer Motion | 11.x |
-| Fonts | Geist Sans + Geist Mono | Built-in |
+| Fonts | Geist Sans, Geist Mono, Noto Serif Display | next/font/google |
 
 ### Authentication
 | Layer | Choice |
@@ -96,12 +96,10 @@ This document specifies the complete requirements for building a modern, web-bas
 ### PDF Processing Engine
 | Layer | Choice |
 |-------|--------|
-| **Processing** | **iLoveAPI REST API** (api.ilovepdf.com) |
-| **Node.js SDK** | `@ilovepdf/ilovepdf-nodejs` |
-| Auth Method | JWT — self-signed (server-side) |
-| Regions | EU, US, FR, DE, PL (configurable) |
-| Webhooks | iLoveAPI task webhooks → `/api/webhooks/iloveapi` |
-| Signature | iLoveAPI Signature REST API |
+| **Core Cloud Processing** | **iLoveAPI REST API** (`@ilovepdf/ilovepdf-nodejs`) |
+| **Local Browser Processing** | `pdf-lib` (Split, Rotate) |
+| **Advanced Office/OCR** | Adobe PDF Services SDK (`@adobe/pdfservices-node-sdk`) |
+| **AI Features** | OpenAI (`openai`) |
 
 ### Backend Infrastructure
 | Layer | Choice |
@@ -531,7 +529,7 @@ export function ThemeToggle() {
 
 | Role | Font | Weight | Size |
 |------|------|--------|------|
-| Display / Hero | Geist Sans | 800 | 4xl–7xl |
+| Display / Hero | Noto Serif Display | 800 | 4xl–7xl |
 | Headings | Geist Sans | 700 | 2xl–3xl |
 | Body | Geist Sans | 400 | base |
 | Labels | Geist Sans | 500 | sm |

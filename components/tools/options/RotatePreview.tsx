@@ -3,10 +3,17 @@
 import { useEffect, useState } from "react"
 import Image from "next/image"
 import { Loader2 } from "lucide-react"
-import * as pdfjsLib from "pdfjs-dist"
 import { cn } from "@/lib/utils"
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`
+let pdfjsLib: typeof import("pdfjs-dist") | null = null
+
+async function getPdfJs() {
+  if (!pdfjsLib) {
+    pdfjsLib = await import("pdfjs-dist")
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/legacy/build/pdf.worker.min.mjs`
+  }
+  return pdfjsLib
+}
 
 interface PageItem {
   id: string
@@ -40,42 +47,44 @@ export function RotatePreview({ files, rotation, className }: Props) {
     files.forEach((file, fileIdx) => {
       const objUrl = URL.createObjectURL(file)
 
-      pdfjsLib
-        .getDocument(objUrl)
-        .promise.then(async (pdf) => {
-          for (let pageIdx = 1; pageIdx <= 1; pageIdx++) {
-            const page = await pdf.getPage(pageIdx)
-            const viewport = page.getViewport({ scale: 1 })
+      getPdfJs().then((pdfjs) => {
+        pdfjs
+          .getDocument(objUrl)
+          .promise.then(async (pdf) => {
+            for (let pageIdx = 1; pageIdx <= 1; pageIdx++) {
+              const page = await pdf.getPage(pageIdx)
+              const viewport = page.getViewport({ scale: 1 })
 
-            const canvas = document.createElement("canvas")
-            canvas.width = viewport.width
-            canvas.height = viewport.height
-            const ctx = canvas.getContext("2d")
-            if (!ctx) continue
+              const canvas = document.createElement("canvas")
+              canvas.width = viewport.width
+              canvas.height = viewport.height
+              const ctx = canvas.getContext("2d")
+              if (!ctx) continue
 
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            await page.render({ canvasContext: ctx, viewport } as any).promise
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              await page.render({ canvasContext: ctx, viewport } as any).promise
 
-            newItems.push({
-              id: `${fileIdx}-${pageIdx}`,
-              fileIndex: fileIdx,
-              pageIndex: pageIdx,
-              file,
-              dataUrl: canvas.toDataURL("image/jpeg", 0.6),
-            })
-          }
-        })
-        .catch((err) => {
-          console.error("Failed to load PDF preview", err)
-        })
-        .finally(() => {
-          URL.revokeObjectURL(objUrl)
-          completed++
-          if (completed === files.length) {
-            setItems(newItems)
-            setIsLoading(false)
-          }
-        })
+              newItems.push({
+                id: `${fileIdx}-${pageIdx}`,
+                fileIndex: fileIdx,
+                pageIndex: pageIdx,
+                file,
+                dataUrl: canvas.toDataURL("image/jpeg", 0.6),
+              })
+            }
+          })
+          .catch((err) => {
+            console.error("Failed to load PDF preview", err)
+          })
+          .finally(() => {
+            URL.revokeObjectURL(objUrl)
+            completed++
+            if (completed === files.length) {
+              setItems(newItems)
+              setIsLoading(false)
+            }
+          })
+      })
     })
   }, [files])
 

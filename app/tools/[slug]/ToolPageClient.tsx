@@ -116,6 +116,11 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
                 files={files}
                 rotation={(options.rotate as number) || 0}
               />
+            ) : tool.slug === "watermark-pdf" && files.length > 0 ? (
+              <WatermarkPreview
+                files={files}
+                options={options}
+              />
             ) : (
               <div className="flex flex-col gap-6">
                 <AnimatePresence>
@@ -201,10 +206,45 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
             )}
 
             {tool.slug === "watermark-pdf" && files.length > 0 && (
-              <WatermarkPreview
-                files={files}
-                options={options}
-              />
+              <div className="flex flex-col gap-6">
+                <AnimatePresence>
+                  {showOptionsAndProcess && !isProcessing && (
+                    <motion.div
+                      initial={{ opacity: 0, x: 10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 10 }}
+                    >
+                      <ToolOptions
+                        toolSlug={tool.slug}
+                        files={files}
+                        options={options}
+                        onChange={(opts) => {
+                          setOptions(opts)
+                        }}
+                      />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                <AnimatePresence>
+                  {showOptionsAndProcess && !isProcessing && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 10 }}
+                    >
+                      <Button
+                        size="lg"
+                        onClick={handleProcess}
+                        className="w-full shadow-lg shadow-primary/25 text-base"
+                      >
+                        <Zap className="mr-2 h-4 w-4" />
+                        {tool.title}
+                      </Button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
             )}
           </div>
         </div>
