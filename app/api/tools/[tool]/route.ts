@@ -8,6 +8,7 @@ import { convertPdfToWordAdobe, convertPdfToPowerpointAdobe, ocrPdfAdobe } from 
 import { OCRSupportedLocale } from "@adobe/pdfservices-node-sdk"
 import { processRotateLocal } from "@/lib/pdf/rotate-client"
 import { getToolBySlug } from "@/lib/tools-config"
+import { mapWatermarkOptions } from "@/lib/iloveapi/watermark-mapper"
 
 export const maxDuration = 60
 
@@ -229,10 +230,16 @@ export async function POST(
     }
 
     // Map slug to iLoveAPI tool name (e.g., "pdf-to-pdfa" -> "pdfa")
-    const iloveapiTool = typeof toolConfig.iloveapiTool === "string" ? toolConfig.iloveapiTool : tool
+    const iloveapiTool = typeof toolConfig?.iloveapiTool === "string" ? toolConfig.iloveapiTool : tool
 
-    const cleanOptions = { ...options }
+    let cleanOptions = { ...options }
     delete cleanOptions._toolSlug
+    
+    // Apply tool-specific parameter mapping
+    if (tool === "watermark-pdf") {
+      cleanOptions = mapWatermarkOptions(cleanOptions)
+    }
+    
     // Only strip mode/ocr_languages for non-OCR tools (officepdf conversion pipeline uses these)
     if (tool !== "ocr-pdf") {
       delete cleanOptions.mode

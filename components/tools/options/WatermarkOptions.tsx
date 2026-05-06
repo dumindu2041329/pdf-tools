@@ -20,7 +20,7 @@ interface Props {
   files?: File[]
 }
 
-const fonts = ["Arial", "Arial Unicode MS", "Verdana", "Courier", "Times New Roman", "Comic Sans MS", "Georgia", "WenQuanYi Zen Hei", "Lohit Marathi"] as const
+const fonts = ["Arial", "Arial Unicode MS", "Verdana", "Courier", "Times New Roman", "Comic Sans MS", "WenQuanYi Zen Hei", "Lohit Marathi"] as const
 
 export function WatermarkOptions({ options, onChange, files }: Props) {
   const mode = (options.mode as string) || "text"
