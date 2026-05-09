@@ -9,9 +9,7 @@ const SUPPORTED_FONTS = [
   "Verdana",
   "Courier",
   "Times New Roman",
-  "Comic Sans MS",
-  "WenQuanYi Zen Hei",
-  "Lohit Marathi"
+  "Comic Sans MS"
 ] as const
 
 export function mapWatermarkOptions(options: Record<string, unknown>): Record<string, unknown> {
@@ -25,22 +23,19 @@ export function mapWatermarkOptions(options: Record<string, unknown>): Record<st
   }
 
   // Handle font styling - iLoveAPI expects font_style to be a single value
-  // Priority: Bold > Italic > null (regular)
-  if (options.font_weight === "bold") {
+  // Accepted values: null (Regular), Bold, Italic
+  // Note: Bold Italic combination is NOT supported by iLoveAPI watermark
+  const isBold = options.font_weight === "bold"
+  const isItalic = options.font_style === "italic"
+
+  if (isBold) {
     mapped.font_style = "Bold"
-  } else if (options.font_style === "italic") {
+  } else if (isItalic) {
     mapped.font_style = "Italic"
   } else {
-    // Default to null (regular) if no styling
     mapped.font_style = null
   }
-  
-  // Note: iLoveAPI doesn't support underline decoration
-  if (options.font_decoration === "underline") {
-    console.warn("iLoveAPI watermark doesn't support underline decoration. Style will be applied without underline.")
-  }
 
-  // Map other font properties
   if (options.font_family) {
     // Validate font family is supported
     const fontFamily = options.font_family as string
@@ -65,17 +60,17 @@ export function mapWatermarkOptions(options: Record<string, unknown>): Record<st
     mapped.transparency = options.transparency
   }
 
+  if (options.mosaic) {
+    mapped.mosaic = true
+  }
+
+  if (options.layer) {
+    mapped.layer = options.layer
+  }
+
   // Handle image mode
   if (options.mode === "image" && options.image) {
     mapped.image = options.image
-  }
-
-  // Handle layer - iLoveAPI doesn't have a direct layer parameter
-  // "above" is the default behavior, "below" might not be supported
-  if (options.layer === "below") {
-    // Note: iLoveAPI watermark doesn't support "below" layer
-    // This would need to be handled differently or documented as a limitation
-    console.warn("iLoveAPI watermark doesn't support 'below' layer. Using default 'above'.")
   }
 
   return mapped

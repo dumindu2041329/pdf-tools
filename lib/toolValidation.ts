@@ -52,6 +52,9 @@ export function validateToolOptions(toolSlug: string, options: Record<string, un
       if (mode === "text" && !options.text) {
         return "Please enter the watermark text"
       }
+      if (mode === "text" && options.font_weight === "bold" && options.font_style === "italic") {
+        return "Bold Italic combination is not supported. Please select only Bold or only Italic."
+      }
       break
     }
     case 'add-page-numbers': {

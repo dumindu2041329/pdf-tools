@@ -3,6 +3,7 @@
 import { cn } from "@/lib/utils"
 import { Image as ImageIcon, CheckCircle2, Layers } from "lucide-react"
 import { useRef, useEffect, useCallback } from "react"
+import { toast } from "sonner"
 
 let pdfjsLib: typeof import("pdfjs-dist") | null = null
 
@@ -20,7 +21,7 @@ interface Props {
   files?: File[]
 }
 
-const fonts = ["Arial", "Arial Unicode MS", "Verdana", "Courier", "Times New Roman", "Comic Sans MS", "WenQuanYi Zen Hei", "Lohit Marathi"] as const
+const fonts = ["Arial", "Arial Unicode MS", "Verdana", "Courier", "Times New Roman", "Comic Sans MS"] as const
 
 export function WatermarkOptions({ options, onChange, files }: Props) {
   const mode = (options.mode as string) || "text"
@@ -142,7 +143,25 @@ export function WatermarkOptions({ options, onChange, files }: Props) {
                     min={8}
                     max={200}
                     value={(options.font_size as number) || 14}
-                    onChange={(e) => update("font_size", Number(e.target.value))}
+                    onChange={(e) => {
+                      const val = Number(e.target.value)
+                      if (e.target.value === "") {
+                        onChange({ ...options, _fontSizeInvalid: false, font_size: options.font_size || 14 })
+                        return
+                      }
+                      if (isNaN(val)) return
+                      if (val < 8) {
+                        toast.error("Font size must be at least 8px")
+                        onChange({ ...options, font_size: val, _fontSizeInvalid: true })
+                        return
+                      }
+                      if (val > 200) {
+                        toast.error("Font size cannot exceed 200px")
+                        onChange({ ...options, font_size: val, _fontSizeInvalid: true })
+                        return
+                      }
+                      onChange({ ...options, font_size: val, _fontSizeInvalid: false })
+                    }}
                     className="w-16 bg-transparent outline-none text-base"
                   />
                   <span className="text-sm text-muted-foreground">px</span>
@@ -163,13 +182,6 @@ export function WatermarkOptions({ options, onChange, files }: Props) {
                   className={cn("p-1.5 rounded hover:bg-muted transition-colors", options.font_style === "italic" && "bg-muted")}
                 >
                   <em className="font-serif text-lg px-1">I</em>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => update("font_decoration", options.font_decoration === "underline" ? "none" : "underline")}
-                  className={cn("p-1.5 rounded hover:bg-muted transition-colors", options.font_decoration === "underline" && "bg-muted")}
-                >
-                  <u className="font-serif text-lg px-1">U</u>
                 </button>
 
                 <div className="relative ml-2 p-1.5 rounded hover:bg-muted transition-colors cursor-pointer flex flex-col items-center">

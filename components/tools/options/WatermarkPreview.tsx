@@ -47,7 +47,6 @@ function drawWatermark(
   const fontColor = (opts.font_color as string) || "#000000"
   const fontWeight = (opts.font_weight as string) || "normal"
   const fontStyle = (opts.font_style as string) || "normal"
-  const fontDecoration = (opts.font_decoration as string) || "none"
   const rotation = (opts.rotation as number) || 0
   const transparency = (opts.transparency as number) ?? 100
   const verticalPos = (opts.vertical_position as string) || "middle"
@@ -78,20 +77,9 @@ function drawWatermark(
   const drawSingleText = (x: number, y: number) => {
     ctx.save()
     ctx.translate(x, y)
-    ctx.rotate((rotation * Math.PI) / 180)
+    ctx.rotate((-rotation * Math.PI) / 180)
     ctx.translate(-x, -y)
     ctx.fillText(text, x, y)
-
-    if (fontDecoration === "underline") {
-      const metrics = ctx.measureText(text)
-      const lineY = y + fontSize * 0.4
-      ctx.beginPath()
-      ctx.moveTo(x - metrics.width / 2, lineY)
-      ctx.lineTo(x + metrics.width / 2, lineY)
-      ctx.strokeStyle = fontColor
-      ctx.lineWidth = fontSize * 0.05
-      ctx.stroke()
-    }
     ctx.restore()
   }
 
@@ -150,7 +138,7 @@ function drawImageWatermark(
     const drawSingleImage = (x: number, y: number) => {
       ctx.save()
       ctx.translate(x + imgWidth / 2, y + imgHeight / 2)
-      ctx.rotate((rotation * Math.PI) / 180)
+      ctx.rotate((-rotation * Math.PI) / 180)
       ctx.translate(-(x + imgWidth / 2), -(y + imgHeight / 2))
       ctx.drawImage(img, x, y, imgWidth, imgHeight)
       ctx.restore()
@@ -291,7 +279,7 @@ export function WatermarkPreview({ files, options, className }: Props) {
   useEffect(() => {
     if (items.length === 0) return
     drawAllWatermarks()
-  }, [drawAllWatermarks, items.length])
+  }, [drawAllWatermarks, items.length, options])
 
   if (isLoading) {
     return (
