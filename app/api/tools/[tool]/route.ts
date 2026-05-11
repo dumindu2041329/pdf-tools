@@ -252,11 +252,7 @@ export async function POST(
 
     // Apply tool-specific parameter mapping
     if (tool === "watermark-pdf") {
-      console.log("[route] options.mode:", options.mode)
-      console.log("[route] options before mapWatermarkOptions:", JSON.stringify(Object.keys(options)))
       cleanOptions = mapWatermarkOptions(cleanOptions)
-      console.log("[route] cleanOptions after mapWatermarkOptions:", JSON.stringify(Object.keys(cleanOptions)))
-      console.log("[route] cleanOptions.mode:", cleanOptions.mode)
     }
 
     // Only strip mode/ocr_languages for non-OCR tools (officepdf conversion pipeline uses these)

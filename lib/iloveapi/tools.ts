@@ -60,15 +60,12 @@ export async function runTool(input: ToolRunInput): Promise<ToolRunResult> {
   // Step 3: Process
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const processOptions: Record<string, any> = { ...input.options }
-  console.log("[tools] processOptions.mode:", processOptions.mode)
-  console.log("[tools] processOptions keys:", Object.keys(processOptions))
   // Ensure we don't pass 'url' property as a standard option which may cause API errors
   if (input.tool === "htmlpdf") {
       delete processOptions.url;
   }
 
   // Upload watermark image if provided (for watermark tool in image mode)
-  console.log("[tools] watermarkImage check:", input.watermarkImage ? "present" : "undefined", "| tool:", input.tool)
   if (input.watermarkImage) {
     const imageFile = ILovePDFFile.fromArray(
       Buffer.from(input.watermarkImage.buffer),
@@ -76,7 +73,6 @@ export async function runTool(input: ToolRunInput): Promise<ToolRunResult> {
     )
     const addedFile = await task.addFile(imageFile)
     const serverFilename = (addedFile as { serverFilename?: string }).serverFilename
-    console.log("[tools] watermarkImage serverFilename from addFile:", serverFilename)
     if (serverFilename) {
       processOptions.image = serverFilename
     }

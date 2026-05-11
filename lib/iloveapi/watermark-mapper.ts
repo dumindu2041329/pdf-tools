@@ -31,7 +31,6 @@ export interface WatermarkMappedOptions {
 
 export function mapWatermarkOptions(options: Record<string, unknown>): WatermarkMappedOptions {
   const mode = (options.mode as string) || "text"
-  console.log("[watermark-mapper] Input options.mode:", mode, "| keys:", Object.keys(options))
 
   const mapped: WatermarkMappedOptions = {
     mode: mode,

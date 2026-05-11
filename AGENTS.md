@@ -7,13 +7,13 @@
 | Field | Value |
 |---|---|
 | **Name** | `pdf-tools` |
-| **Framework** | Next.js 16 (App Router) |
+| **Framework** | Next.js ^16.2.3 (App Router) |
 | **Language** | TypeScript (strict) |
 | **Styling** | Tailwind CSS v4 + shadcn/ui |
-| **Auth** | Clerk (`@clerk/nextjs`) |
-| **PDF Engine** | iLoveAPI (`@ilovepdf/ilovepdf-nodejs`) + Adobe Node SDK (`@adobe/pdfservices-node-sdk`) + `pdf-lib` / `pdfjs-dist` |
-| **AI Services** | OpenAI (`openai`) |
-| **UI/UX** | framer-motion, three.js (`three`), @dnd-kit (drag & drop), sonner (toasts) |
+| **Auth** | Clerk (`@clerk/nextjs` ^7.0.7) |
+| **PDF Engine** | iLoveAPI (`@ilovepdf/ilovepdf-nodejs`) + Adobe Node SDK (`@adobe/pdfservices-node-sdk` ^4.1.0) + `pdf-lib` / `pdfjs-dist` |
+| **AI Services** | OpenAI (`openai` ^6.33.0) |
+| **UI/UX** | framer-motion ^12.38.0, three.js ^0.183.2, @dnd-kit (drag & drop), sonner ^2.0.7 |
 | **Package Manager** | npm |
 | **Deployment** | Vercel |
 
@@ -101,22 +101,25 @@ app/                    # Next.js App Router
   (marketing)/          # Public marketing pages
   api/                  # Route handlers
     tools/[tool]/       # PDF processing endpoints
-    download/           # File download endpoint
-    ai/                 # AI summarize/translate
-    webhooks/           # iLoveAPI webhooks
+    download/[id]/      # File download endpoint
+    ai/summarize/       # AI summarize endpoint
+    ai/translate/       # AI translate endpoint
+    usage/              # Usage tracking endpoint
+    webhooks/iloveapi/  # iLoveAPI webhooks
+    tools/sign/         # PDF signing endpoint
   tools/[slug]/         # Dynamic tool pages
 components/
-  layout/               # Navbar, Footer
-  tools/                # Feature-scoped (FileUploader, ProcessingModal, etc.)
-  tools/options/        # Per-tool option forms
-  shared/               # Cross-feature UI
+  layout/               # Navbar, Footer, ToolsDropdown
+  shared/               # UsageMeter
+  theme/                # ThemeProvider, ThemeToggle, Toaster
+  tools/options/        # Per-tool option forms (WatermarkOptions, etc.)
+  tools/                # FileUploader, ProcessingModal, ToolCard, etc.
   ui/                   # shadcn/ui primitives + glsl-hills (Three.js)
-  theme/                # Dark/light theme + Toaster (sonner)
 hooks/                  # Custom hooks (useTool)
 lib/
-  iloveapi/             # Client, types, tools runner, errors, signature
-  pdf/                  # Client-side PDF helpers, Adobe export converter, office converter
-  tools-config.ts       # Tool registry (28+ tools)
+  iloveapi/             # Client, types, tools runner, errors, signature, watermark-mapper
+  pdf/                  # Client-side PDF helpers, Adobe export converter, office converter, rotate-client, split-client
+  tools-config.ts       # Tool registry (29 tools)
   toolValidation.ts     # Per-tool input validation
   usage.ts              # Plan limits & usage tracking
   fileStore.ts          # File handling utilities
@@ -125,13 +128,68 @@ lib/
   utils.ts              # cn() utility
 ```
 
-### Key Patterns
-- **Server Components by default.** Add `"use client"` only when necessary.
-- **Route Handlers** at `app/api/[route]/route.ts`. Always validate auth and input server-side.
-- **Tool pipeline**: `FileUploader` → `useTool` hook → `POST /api/tools/[tool]` → `runTool()` → iLoveAPI → store file → return `downloadId`.
-- **Local tools**: `local-split` and `local-rotate` bypass iLoveAPI; processed client-side in `lib/pdf/split-client.ts` and `lib/pdf/rotate-client.ts` respectively using `pdf-lib`.
-- **Adobe PDF Services pipeline** (`pdf-to-word`, `pdf-to-excel`, `pdf-to-powerpoint`, `ocr-pdf`): Uses `@adobe/pdfservices-node-sdk` to process PDFs via Adobe PDF Services API. Runs `ExportPDFJob` for Office conversions (DOCX, XLSX, PPTX) and `OCRJob` for OCR (Searchable PDF), streaming the result back to the client. Requires `PDF_SERVICES_CLIENT_ID` and `PDF_SERVICES_CLIENT_SECRET` environment variables.
-- **Global singletons** in dev: use `global as unknown as { ... }` pattern (see `lib/iloveapi/client.ts`).
+### Tool Pipeline
+1. `FileUploader` component accepts user files
+2. `useTool` hook manages state and calls `POST /api/tools/[tool]`
+3. API handler routes to appropriate processor:
+   - **iLoveAPI tools**: `runTool()` handles the API call and returns processed file
+   - **Adobe tools** (`pdf-to-word`, `pdf-to-excel`, `pdf-to-powerpoint`, `ocr-pdf`): Adobe PDF Services SDK
+   - **Local tools** (`local-split`, `local-rotate`): pdf-lib processed client-side or server-side
+4. Result file is stored and `downloadId` returned to client
+
+### PDF Processing Strategies
+
+| Tool Slug | Processing | Engine |
+|---|---|---|
+| `merge-pdf` | Server | iLoveAPI |
+| `split-pdf`, `remove-pages`, `organize-pdf` | Client-side | pdf-lib (`split-client.ts`) |
+| `rotate-pdf` | Server | pdf-lib (`rotate-client.ts`) |
+| `compress-pdf`, `repair-pdf`, `watermark-pdf`, `add-page-numbers`, `edit-pdf` | Server | iLoveAPI |
+| `pdf-to-word` | Server | Adobe PDF Services (`ExportPDFJob`) |
+| `pdf-to-excel` | Server | Adobe PDF Services (`ExportPDFJob`) |
+| `pdf-to-powerpoint` | Server | Adobe PDF Services (`ExportPDFJob`) |
+| `ocr-pdf` | Server | Adobe PDF Services (`OCRJob`) |
+| `pdf-to-jpg`, `pdf-to-pdfa`, `validate-pdfa` | Server | iLoveAPI |
+| `ai-summarizer`, `translate-pdf` | Server | OpenAI (via `/api/ai/*`) |
+
+### API Routes
+- `POST /api/tools/[tool]` — Main PDF processing endpoint (60s max duration)
+- `GET /api/download/[id]` — File download endpoint
+- `POST /api/tools/sign` — PDF signing endpoint (iLoveAPI sign tool)
+- `POST /api/ai/summarize` — AI PDF summarization
+- `POST /api/ai/translate` — AI PDF translation
+- `GET /api/usage` — Usage tracking
+- `POST /api/webhooks/iloveapi` — iLoveAPI webhook handler
+
+### Local Tools Processing
+- **local-split** (`split-pdf`, `remove-pages`, `organize-pdf`): Uses `pdf-lib` to process PDFs entirely client-side. Handled in `useTool` hook via dynamic import of `processSplitLocal()`.
+- **local-rotate** (`rotate-pdf`): Uses `pdf-lib` server-side via `processRotateLocal()` in `rotate-client.ts`.
+
+### Adobe PDF Services Pipeline
+Tools configured with `local-excel`/`local-powerpoint`/`adobe-ocr` in `tools-config.ts` route to Adobe services:
+- `pdf-to-word` → `convertPdfToWordAdobe()` from `adobe-export-converter.ts`
+- `pdf-to-excel` → `convertPdfToExcel()` from `office-converter.ts`
+- `pdf-to-powerpoint` → `convertPdfToPowerpointAdobe()` from `adobe-export-converter.ts`
+- `ocr-pdf` → `ocrPdfAdobe()` from `adobe-export-converter.ts`
+
+Requires `PDF_SERVICES_CLIENT_ID` and `PDF_SERVICES_CLIENT_SECRET` environment variables.
+
+### Global Singletons
+Use `global as unknown as { ... }` pattern for dev-mode singletons (see `lib/iloveapi/client.ts`).
+
+### Watermark-pdf Tool
+This tool requires `mode` to be preserved in the API call to distinguish between text and image watermark modes. The `watermarkImage` file is uploaded separately via `runToolInput.watermarkImage` and the resulting `serverFilename` is obtained from `task.addFile()` return value. The `mapWatermarkOptions()` function in `lib/iloveapi/watermark-mapper.ts` handles parameter mapping and removes text-related fields when in image mode.
+
+### Tool Categories (29 tools total)
+| Category | Tools |
+|---|---|
+| organize (6) | merge-pdf, split-pdf, remove-pages, extract-pages, organize-pdf, scan-to-pdf |
+| optimize (3) | compress-pdf, repair-pdf, ocr-pdf |
+| convert-to (5) | word-to-pdf, excel-to-pdf, powerpoint-to-pdf, jpg-to-pdf, html-to-pdf |
+| convert-from (6) | pdf-to-word, pdf-to-jpg, pdf-to-excel, pdf-to-powerpoint, pdf-to-pdfa, validate-pdfa |
+| edit (4) | rotate-pdf, watermark-pdf, add-page-numbers, edit-pdf |
+| security (3) | unlock-pdf, protect-pdf, sign-pdf |
+| ai (2) | ai-summarizer, translate-pdf |
 
 ## Security Rules
 
@@ -150,6 +208,7 @@ lib/
 - Use `cn()` from `@/lib/utils` for conditional class merging.
 - Run `npm run lint` and `npm run build` after changes to verify correctness.
 - Commit `package-lock.json` alongside `package.json` when adding deps.
+- Use `;` as the command separator instead of `&&` (Windows-compatible batch style).
 
 ### Never
 - Install new dependencies without justification.
