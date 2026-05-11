@@ -16,6 +16,10 @@ export interface ToolRunInput {
   options?: Record<string, unknown>
   outputFilename?: string
   useWebhook?: boolean
+  watermarkImage?: {
+    buffer: Buffer
+    filename: string
+  }
 }
 
 export interface ToolRunResult {
@@ -38,7 +42,7 @@ export async function runTool(input: ToolRunInput): Promise<ToolRunResult> {
   } else {
     for (const f of input.files) {
       const file = ILovePDFFile.fromArray(Buffer.from(f.buffer), f.filename)
-        
+
         // SDK specific assignments
         if (f.password) {
           (file as unknown as { params?: { password?: string } }).params = (file as unknown as { params?: { password?: string } }).params || {};
@@ -48,7 +52,7 @@ export async function runTool(input: ToolRunInput): Promise<ToolRunResult> {
           (file as unknown as { params?: { rotate?: number } }).params = (file as unknown as { params?: { rotate?: number } }).params || {};
           (file as unknown as { params?: { rotate?: number } }).params!.rotate = f.rotate;
         }
-        
+
         await task.addFile(file)
     }
   }
@@ -56,15 +60,32 @@ export async function runTool(input: ToolRunInput): Promise<ToolRunResult> {
   // Step 3: Process
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const processOptions: Record<string, any> = { ...input.options }
+  console.log("[tools] processOptions.mode:", processOptions.mode)
+  console.log("[tools] processOptions keys:", Object.keys(processOptions))
   // Ensure we don't pass 'url' property as a standard option which may cause API errors
   if (input.tool === "htmlpdf") {
       delete processOptions.url;
   }
 
+  // Upload watermark image if provided (for watermark tool in image mode)
+  console.log("[tools] watermarkImage check:", input.watermarkImage ? "present" : "undefined", "| tool:", input.tool)
+  if (input.watermarkImage) {
+    const imageFile = ILovePDFFile.fromArray(
+      Buffer.from(input.watermarkImage.buffer),
+      input.watermarkImage.filename
+    )
+    const addedFile = await task.addFile(imageFile)
+    const serverFilename = (addedFile as { serverFilename?: string }).serverFilename
+    console.log("[tools] watermarkImage serverFilename from addFile:", serverFilename)
+    if (serverFilename) {
+      processOptions.image = serverFilename
+    }
+  }
+
   if (input.outputFilename) {
     processOptions.output_filename = input.outputFilename
   }
-  
+
   await task.process(processOptions)
 
   // Step 4: Download

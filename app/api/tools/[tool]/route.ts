@@ -33,6 +33,7 @@ export async function POST(
   }
 
   const files: Array<{ buffer: Buffer; filename: string }> = []
+  let watermarkImage: { buffer: Buffer; filename: string } | undefined
 
   const uploadedFiles = formData.getAll("file")
   for (const value of uploadedFiles) {
@@ -46,6 +47,20 @@ export async function POST(
       } catch (err) {
         console.warn("Failed to read file buffer:", err)
       }
+    }
+  }
+
+  // Extract watermark image if provided
+  const watermarkImageFile = formData.get("watermark_image")
+  if (watermarkImageFile && typeof watermarkImageFile === "object") {
+    const file = watermarkImageFile as File
+    try {
+      watermarkImage = {
+        buffer: Buffer.from(await file.arrayBuffer()),
+        filename: file.name || "watermark.png",
+      }
+    } catch (err) {
+      console.warn("Failed to read watermark image buffer:", err)
     }
   }
 
@@ -234,19 +249,29 @@ export async function POST(
 
     let cleanOptions = { ...options }
     delete cleanOptions._toolSlug
-    
+
     // Apply tool-specific parameter mapping
     if (tool === "watermark-pdf") {
+      console.log("[route] options.mode:", options.mode)
+      console.log("[route] options before mapWatermarkOptions:", JSON.stringify(Object.keys(options)))
       cleanOptions = mapWatermarkOptions(cleanOptions)
-    }
-    
-    // Only strip mode/ocr_languages for non-OCR tools (officepdf conversion pipeline uses these)
-    if (tool !== "ocr-pdf") {
-      delete cleanOptions.mode
-      delete cleanOptions.ocr_languages
+      console.log("[route] cleanOptions after mapWatermarkOptions:", JSON.stringify(Object.keys(cleanOptions)))
+      console.log("[route] cleanOptions.mode:", cleanOptions.mode)
     }
 
-    const result = await runTool({ tool: iloveapiTool, files, options: cleanOptions })
+    // Only strip mode/ocr_languages for non-OCR tools (officepdf conversion pipeline uses these)
+    // Note: watermark-pdf needs mode preserved for its image/text mode handling
+    if (tool !== "ocr-pdf" && tool !== "watermark-pdf") {
+      delete cleanOptions.mode
+    }
+    delete cleanOptions.ocr_languages
+
+    const runToolInput: Parameters<typeof runTool>[0] = { tool: iloveapiTool, files, options: cleanOptions }
+    if (tool === "watermark-pdf" && watermarkImage) {
+      runToolInput.watermarkImage = watermarkImage
+    }
+
+    const result = await runTool(runToolInput)
 
     let { buffer: finalBuffer, downloadFilename } = result
 

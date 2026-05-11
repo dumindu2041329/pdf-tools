@@ -55,6 +55,9 @@ export function validateToolOptions(toolSlug: string, options: Record<string, un
       if (mode === "text" && options.font_weight === "bold" && options.font_style === "italic") {
         return "Bold Italic combination is not supported. Please select only Bold or only Italic."
       }
+      if (mode === "image" && !(options.image instanceof File)) {
+        return "Please upload an image for the watermark"
+      }
       break
     }
     case 'add-page-numbers': {

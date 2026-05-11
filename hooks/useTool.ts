@@ -33,7 +33,23 @@ export function useTool(toolSlug: string) {
         console.log("[DEBUG] Adding file:", file.name, file.size, file.type)
         form.append("file", file)
       }
-      form.append("options", JSON.stringify(options))
+
+      // Handle watermark image separately since File objects can't be JSON stringified
+      let watermarkImage: File | undefined
+      if (toolSlug === "watermark-pdf" && options.mode === "image" && options.image instanceof File) {
+        watermarkImage = options.image
+        // Remove image from options since we'll send it separately
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { image, ...optionsWithoutImage } = options
+        form.append("options", JSON.stringify(optionsWithoutImage))
+      } else {
+        form.append("options", JSON.stringify(options))
+      }
+
+      if (watermarkImage) {
+        form.append("watermark_image", watermarkImage)
+      }
+
       console.log("[DEBUG] FormData entries:", Array.from(form.entries()).map(e => [e[0], typeof e[1]]))
 
       setState({ status: "processing", step: "upload", uploadProgress: 0 })
