@@ -32,7 +32,7 @@ export async function POST(
     return NextResponse.json({ error: "Failed to parse file upload request" }, { status: 400 })
   }
 
-  const files: Array<{ buffer: Buffer; filename: string }> = []
+  const files: Array<{ buffer: Buffer; filename: string; password?: string }> = []
   let watermarkImage: { buffer: Buffer; filename: string } | undefined
 
   const uploadedFiles = formData.getAll("file")
@@ -250,6 +250,17 @@ export async function POST(
     let cleanOptions = { ...options }
     delete cleanOptions._toolSlug
 
+    // Handle unlock-pdf specially: password goes in file object, not options
+    if (tool === "unlock-pdf") {
+      const password = options.password as string
+      if (password) {
+        for (const file of files) {
+          file.password = password
+        }
+        delete options.password
+      }
+    }
+
     // Apply tool-specific parameter mapping
     if (tool === "watermark-pdf") {
       cleanOptions = mapWatermarkOptions(cleanOptions)
@@ -316,9 +327,23 @@ export async function POST(
     } else {
       console.error("Tool processing error:", err)
     }
-    const errMessage = axiosErr?.response?.data && typeof axiosErr.response.data === "object"
-      ? JSON.stringify(axiosErr.response.data)
-      : "Processing failed"
+    let errMessage = "Processing failed. Please try again."
+    if (axiosErr?.response?.data) {
+      const data = axiosErr.response.data
+      if (typeof data === "object" && data !== null) {
+        const errorObj = data as Record<string, unknown>
+        if (typeof errorObj.message === "string" && errorObj.message.length > 0) {
+          errMessage = errorObj.message
+        } else if (typeof errorObj.error === "string" && errorObj.error.length > 0) {
+          errMessage = errorObj.error
+        } else if (typeof errorObj.error === "object" && errorObj.error !== null) {
+          const nestedError = errorObj.error as Record<string, unknown>
+          errMessage = (nestedError.message as string) || (nestedError.error as string) || errMessage
+        }
+      } else if (typeof data === "string" && data.length > 0 && data.length < 200) {
+        errMessage = data
+      }
+    }
     return NextResponse.json({ error: errMessage }, { status: 500 })
   }
 }
