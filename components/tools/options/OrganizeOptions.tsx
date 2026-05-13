@@ -239,7 +239,7 @@ export function OrganizeOptions({ files, options, onChange }: Props) {
 
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         <SortableContext items={items.map((i) => i.id)} strategy={rectSortingStrategy}>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 overflow-y-auto max-h-[500px] p-2 pr-4 custom-scrollbar">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 custom-scrollbar">
             {items.map((item) => (
               <SortableItem key={item.id} item={item} onRemove={removePage} onRotate={rotatePage} />
             ))}

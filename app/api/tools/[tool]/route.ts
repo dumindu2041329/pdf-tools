@@ -68,7 +68,69 @@ export async function POST(
   const options = optionsRaw ? JSON.parse(optionsRaw as string) : {}
 
   if (files.length === 0) {
+    if (tool === "html-to-pdf" && options.url) {
+      try {
+        const start = Date.now()
+        const result = await runTool({
+          tool: "htmlpdf",
+          files: [],
+          options: { url: options.url },
+        })
+        const elapsed = ((Date.now() - start) / 1000).toFixed(2)
+        const fileData =
+          result.buffer instanceof Uint8Array
+            ? result.buffer
+            : new Uint8Array(result.buffer as ArrayBuffer)
+        const downloadId = storeFile(fileData, result.downloadFilename, "application/pdf")
+
+        return NextResponse.json({
+          downloadId,
+          filename: result.downloadFilename,
+          processingTime: elapsed,
+          outputSize: result.outputFilesize,
+        })
+      } catch (err) {
+        console.error("HTML to PDF processing error:", err)
+        return NextResponse.json({ error: "Failed to convert HTML to PDF" }, { status: 500 })
+      }
+    }
     return NextResponse.json({ error: "No files provided" }, { status: 400 })
+  }
+
+  if (tool === "jpg-to-pdf" && options.merge_after === false) {
+    try {
+      const start = Date.now()
+      const JSZip = (await import("jszip")).default
+      const zip = new JSZip()
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        const singleResult = await runTool({
+          tool: "imagepdf",
+          files: [file],
+          options: { ...options },
+        })
+        const pdfBuffer = singleResult.buffer instanceof Uint8Array
+          ? singleResult.buffer
+          : new Uint8Array(singleResult.buffer as ArrayBuffer)
+        const pdfFilename = file.filename.replace(/\.[^.]+$/, ".pdf")
+        zip.file(pdfFilename, pdfBuffer)
+      }
+
+      const zipBuffer = await zip.generateAsync({ type: "uint8array" })
+      const elapsed = ((Date.now() - start) / 1000).toFixed(2)
+      const downloadId = storeFile(zipBuffer, "converted-pdfs.zip", "application/zip")
+
+      return NextResponse.json({
+        downloadId,
+        filename: "converted-pdfs.zip",
+        processingTime: elapsed,
+        outputSize: zipBuffer.byteLength,
+      })
+    } catch (err) {
+      console.error("JPG to PDF (no merge) processing error:", err)
+      return NextResponse.json({ error: "Failed to convert images to PDF" }, { status: 500 })
+    }
   }
 
   if (tool === "ocr-pdf") {
@@ -244,8 +306,11 @@ export async function POST(
       return NextResponse.json({ error: "Tool not found" }, { status: 404 })
     }
 
-    // Map slug to iLoveAPI tool name (e.g., "pdf-to-pdfa" -> "pdfa")
     const iloveapiTool = typeof toolConfig?.iloveapiTool === "string" ? toolConfig.iloveapiTool : tool
+
+    if (iloveapiTool.startsWith("local-")) {
+      return NextResponse.json({ error: "This tool is processed client-side" }, { status: 400 })
+    }
 
     let cleanOptions = { ...options }
     delete cleanOptions._toolSlug
@@ -282,11 +347,17 @@ export async function POST(
 
     let { buffer: finalBuffer, downloadFilename } = result
 
-    if (tool === "extract" && options.detailed) {
-      const format = (options.format as string) || "json"
-      const conversion = convertExtractFormat(finalBuffer as ArrayBuffer, format, downloadFilename)
-      finalBuffer = conversion.buffer
-      downloadFilename = conversion.filename
+    if (iloveapiTool === "extract") {
+      if (options.detailed) {
+        const format = (options.format as string) || "json"
+        const conversion = convertExtractFormat(finalBuffer as ArrayBuffer, format, downloadFilename)
+        finalBuffer = conversion.buffer
+        downloadFilename = conversion.filename
+      } else {
+        // Standard mode returns plain text directly from iLovePDF
+        downloadFilename = downloadFilename.replace(/\.pdf$/i, ".txt").replace(/\.csv$/i, ".txt")
+        if (!downloadFilename.endsWith(".txt")) downloadFilename += ".txt"
+      }
     }
 
     const fileData =
@@ -299,7 +370,15 @@ export async function POST(
           ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           : downloadFilename.endsWith(".pptx")
             ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-            : "application/pdf"
+            : downloadFilename.endsWith(".txt")
+              ? "text/plain"
+              : downloadFilename.endsWith(".json")
+                ? "application/json"
+                : downloadFilename.endsWith(".csv")
+                  ? "text/csv"
+                  : downloadFilename.endsWith(".md")
+                    ? "text/markdown"
+                    : "application/pdf"
     const downloadId = storeFile(fileData, downloadFilename, mimeType)
 
     return NextResponse.json({

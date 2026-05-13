@@ -52,9 +52,8 @@ export function convertExtractFormat(buffer: ArrayBuffer, format: string, output
 
     if (format === "json") {
       const jsonStr = JSON.stringify(extractData, null, 2)
-      const newBuffer = Buffer.from(jsonStr, "utf-8")
       return { 
-        buffer: newBuffer.buffer.slice(newBuffer.byteOffset, newBuffer.byteOffset + newBuffer.byteLength) as ArrayBuffer, 
+        buffer: Buffer.from(jsonStr, "utf-8") as unknown as ArrayBuffer, 
         filename: outputFilename.replace(/\.pdf$/, ".json").replace(/\.csv$/, ".json") 
       }
     }
@@ -76,8 +75,23 @@ export function convertExtractFormat(buffer: ArrayBuffer, format: string, output
       }
       const newBuffer = Buffer.from(mdStr.trim(), "utf-8")
       return { 
-        buffer: newBuffer.buffer.slice(newBuffer.byteOffset, newBuffer.byteOffset + newBuffer.byteLength) as ArrayBuffer, 
+        buffer: newBuffer as unknown as ArrayBuffer, 
         filename: outputFilename.replace(/\.pdf$/, ".md").replace(/\.json$/, ".md").replace(/\.csv$/, ".md") 
+      }
+    }
+
+    if (format === "txt") {
+      let txtStr = ""
+      for (const row of extractData) {
+        const textVal = String(row.Text || row.text || "")
+        if (textVal) {
+          txtStr += textVal + "\n"
+        }
+      }
+      const txtBuffer = Buffer.from(txtStr.trim(), "utf-8")
+      return { 
+        buffer: txtBuffer as unknown as ArrayBuffer, 
+        filename: outputFilename.replace(/\.pdf$/, ".txt").replace(/\.csv$/, ".txt").replace(/\.json$/, ".txt").replace(/\.md$/, ".txt") 
       }
     }
     

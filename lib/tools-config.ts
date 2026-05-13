@@ -44,7 +44,7 @@ export interface ToolConfig {
   description: string
   seoDescription: string
   category: ToolCategory
-  iloveapiTool: ILoveAPITool | "local-split" | "local-excel" | "local-powerpoint" | "adobe-ocr" | "local-rotate"
+  iloveapiTool: ILoveAPITool | "local-split" | "local-excel" | "local-powerpoint" | "adobe-ocr" | "local-rotate" | "local-merge"
   icon: LucideIcon
   color: string
   access: "free" | "premium"
@@ -62,7 +62,7 @@ export const toolsConfig: ToolConfig[] = [
     seoDescription:
       "Merge multiple PDF files into a single document. Free online tool — fast and secure.",
     category: "organize",
-    iloveapiTool: "merge",
+    iloveapiTool: "local-merge",
     icon: Merge,
     color: "hsl(262, 83%, 58%)",
     access: "free",
