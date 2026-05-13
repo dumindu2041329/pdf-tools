@@ -45,6 +45,9 @@ export function validateToolOptions(toolSlug: string, options: Record<string, un
       if (!options.password) {
         return "Please enter a password to protect the PDF"
       }
+      if (options.password !== options.confirmPassword) {
+        return "Passwords do not match. Please make sure both passwords are the same."
+      }
       break
     }
     case 'watermark-pdf': {

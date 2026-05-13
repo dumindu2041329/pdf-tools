@@ -13,9 +13,9 @@ export function Toaster() {
       toastOptions={{
         unstyled: true,
         classNames: {
-          toast: "flex items-center gap-3 w-full p-4 rounded-lg border bg-background text-foreground shadow-lg",
-          title: "text-sm font-medium",
-          description: "text-sm text-muted-foreground",
+          toast: "flex items-center gap-3 w-full p-4 rounded-lg border bg-background text-foreground shadow-lg font-sans",
+          title: "text-sm font-medium font-sans",
+          description: "text-sm text-muted-foreground font-sans",
           success: "border-green-500/20 bg-green-50 dark:bg-green-950/20",
           error: "border-destructive/20 bg-destructive/5",
           warning: "border-yellow-500/20 bg-yellow-50 dark:bg-yellow-950/20",

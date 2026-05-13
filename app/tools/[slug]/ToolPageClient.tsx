@@ -33,6 +33,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
 
     const validationMsg = validateToolOptions(tool.slug, options, files)
     if (validationMsg) {
+      toast.error(validationMsg)
       return
     }
     isProcessingRef.current = true

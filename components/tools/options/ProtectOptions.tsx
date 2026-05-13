@@ -32,6 +32,26 @@ export function ProtectOptions({ options, onChange }: Props) {
           </button>
         </div>
       </div>
+
+      <div className="space-y-1">
+        <label className="text-sm text-muted-foreground">Confirm Password</label>
+        <div className="relative">
+          <input
+            type={show ? "text" : "password"}
+            placeholder="Confirm password"
+            value={(options.confirmPassword as string) || ""}
+            onChange={(e) => onChange({ ...options, confirmPassword: e.target.value })}
+            className="w-full rounded-lg border border-input bg-background px-3 py-2 pr-10 text-base"
+          />
+          <button
+            type="button"
+            onClick={() => setShow(!show)}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+          >
+            {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
