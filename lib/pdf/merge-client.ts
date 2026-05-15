@@ -2,6 +2,7 @@ import { PDFDocument } from "pdf-lib"
 
 export async function processMergeLocal(
   files: Array<{ buffer: Uint8Array | ArrayBuffer; filename: string }>,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _options: Record<string, unknown>
 ) {
   const mergedPdf = await PDFDocument.create()

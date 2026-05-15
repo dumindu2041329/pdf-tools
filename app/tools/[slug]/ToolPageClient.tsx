@@ -8,6 +8,7 @@ import { DownloadCard } from "@/components/tools/DownloadCard"
 import { ToolOptions, hasToolOptions } from "@/components/tools/options/ToolOptions"
 import { RotatePreview } from "@/components/tools/options/RotatePreview"
 import { WatermarkPreview } from "@/components/tools/options/WatermarkPreview"
+import { PageNumberPreview } from "@/components/tools/options/PageNumberPreview"
 import { Button } from "@/components/ui/button"
 import { useTool } from "@/hooks/useTool"
 import { validateToolOptions } from "@/lib/toolValidation"
@@ -109,7 +110,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
 
       {!isSuccess && !isValidationSuccess && (
         <div className="space-y-8">
-          <div className={`grid grid-cols-1 ${(tool.slug === "rotate-pdf" || tool.slug === "watermark-pdf") && files.length > 0 ? "lg:grid-cols-3" : toolHasOptions && files.length > 0 && !isOrganize && tool.slug !== "html-to-pdf" ? "lg:grid-cols-2" : "max-w-2xl mx-auto"} gap-8 items-start`}>
+          <div className={`grid grid-cols-1 ${(tool.slug === "rotate-pdf" || tool.slug === "watermark-pdf" || tool.slug === "add-page-numbers") && files.length > 0 ? "lg:grid-cols-3" : toolHasOptions && files.length > 0 && !isOrganize && tool.slug !== "html-to-pdf" ? "lg:grid-cols-2" : "max-w-2xl mx-auto"} gap-8 items-start`}>
             {tool.slug !== "html-to-pdf" && (
               <FileUploader
                 accept={tool.acceptedFileTypes}
@@ -128,6 +129,11 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
               />
             ) : tool.slug === "watermark-pdf" && files.length > 0 ? (
               <WatermarkPreview
+                files={files}
+                options={options}
+              />
+            ) : tool.slug === "add-page-numbers" && files.length > 0 ? (
+              <PageNumberPreview
                 files={files}
                 options={options}
               />
@@ -238,6 +244,48 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
 
                 <AnimatePresence>
                   {showOptionsAndProcess && !isProcessing && !isBoldItalicSelected && !isFontSizeInvalid && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 10 }}
+                    >
+                      <Button
+                        size="lg"
+                        onClick={handleProcess}
+                        className="w-full shadow-lg shadow-primary/25 text-base"
+                      >
+                        <Zap className="mr-2 h-4 w-4" />
+                        {tool.title}
+                      </Button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
+
+            {tool.slug === "add-page-numbers" && files.length > 0 && (
+              <div className="flex flex-col gap-6">
+                <AnimatePresence>
+                  {showOptionsAndProcess && !isProcessing && (
+                    <motion.div
+                      initial={{ opacity: 0, x: 10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 10 }}
+                    >
+                      <ToolOptions
+                        toolSlug={tool.slug}
+                        files={files}
+                        options={options}
+                        onChange={(opts) => {
+                          setOptions(opts)
+                        }}
+                      />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                <AnimatePresence>
+                  {showOptionsAndProcess && !isProcessing && (
                     <motion.div
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
