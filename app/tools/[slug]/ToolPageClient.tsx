@@ -83,7 +83,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
   const isValidationSuccess = state.status === "validation-success"
   const isError = state.status === "error"
 
-  const isBoldItalicSelected = tool.slug === "watermark-pdf" && options.mode !== "image" && options.font_weight === "bold" && options.font_style === "italic"
+  const isBoldItalicSelected = (tool.slug === "watermark-pdf" || tool.slug === "add-page-numbers") && options.font_weight === "bold" && options.font_style === "italic"
   const isFontSizeInvalid = tool.slug === "watermark-pdf" && options.mode !== "image" && !!(options._fontSizeInvalid)
 
   useEffect(() => {
@@ -285,7 +285,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
                 </AnimatePresence>
 
                 <AnimatePresence>
-                  {showOptionsAndProcess && !isProcessing && (
+                  {showOptionsAndProcess && !isProcessing && !isBoldItalicSelected && (
                     <motion.div
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}

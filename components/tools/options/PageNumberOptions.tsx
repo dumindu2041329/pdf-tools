@@ -20,12 +20,12 @@ interface Props {
   files?: File[]
 }
 
-const fonts = ["Arial", "Impact", "Arial Unicode MS", "Verdana", "Courier", "Comic Sans MS", "Times New Roman"] as const
+const fonts = ["Arial", "Arial Unicode MS", "Verdana", "Courier", "Comic Sans MS", "Times New Roman"] as const
 
-const marginPresets: Record<string, { top: number; bottom: number; left: number; right: number }> = {
-  small: { top: 10, bottom: 10, left: 10, right: 10 },
-  recommended: { top: 20, bottom: 20, left: 20, right: 20 },
-  big: { top: 30, bottom: 30, left: 30, right: 30 },
+const marginPresets: Record<string, { vertical: number; horizontal: number }> = {
+  small: { vertical: 5, horizontal: 0 },
+  recommended: { vertical: 10, horizontal: 0 },
+  big: { vertical: 15, horizontal: 0 },
 }
 
 const textFormats = [
@@ -85,6 +85,7 @@ export function PageNumberOptions({ options, onChange, files }: Props) {
   const margin = (options.margin as string) || "recommended"
   const textFormat = (options.text_format as string) || "{n}"
   const customText = (options.custom_text as string) || ""
+  const currentText = customText || textFormat
 
   const currentV = (options.vertical_position as string) || "bottom"
   const currentH = (options.horizontal_position as string) || "center"
@@ -197,7 +198,7 @@ export function PageNumberOptions({ options, onChange, files }: Props) {
               onClick={() => {
                 update("margin", m)
                 const preset = marginPresets[m]
-                onChange({ ...options, margin: m, margin_top: preset.top, margin_bottom: preset.bottom, margin_left: preset.left, margin_right: preset.right })
+                onChange({ ...options, margin: m, vertical_position_adjustment: preset.vertical, horizontal_position_adjustment: preset.horizontal })
               }}
               className={cn(
                 "flex-1 py-2 px-3 rounded-md border text-sm transition-colors capitalize",
@@ -243,8 +244,8 @@ export function PageNumberOptions({ options, onChange, files }: Props) {
         <input
           type="number"
           min={1}
-          value={(options.first_number as number) || 1}
-          onChange={(e) => update("first_number", Number(e.target.value))}
+          value={(options.starting_number as number) || 1}
+          onChange={(e) => update("starting_number", Number(e.target.value))}
           className="w-full rounded-lg border border-input bg-background px-3 py-2 text-base"
         />
       </div>
@@ -255,8 +256,10 @@ export function PageNumberOptions({ options, onChange, files }: Props) {
           value={customText ? "custom" : textFormat}
           onChange={(e) => {
             if (e.target.value === "custom") {
-              update("text_format", "custom")
+              // Switch to custom mode, keep current text as starting point
+              onChange({ ...options, text_format: "custom", custom_text: currentText })
             } else {
+              // Use predefined format, clear custom text
               onChange({ ...options, text_format: e.target.value, custom_text: "" })
             }
           }}
@@ -272,8 +275,8 @@ export function PageNumberOptions({ options, onChange, files }: Props) {
             <span className="text-xs text-muted-foreground">Custom text (use {"{n}"} for page number, {"{p}"} for total pages)</span>
             <input
               type="text"
-              value={customText || textFormat}
-              onChange={(e) => onChange({ ...options, text_format: e.target.value, custom_text: e.target.value })}
+              value={customText}
+              onChange={(e) => onChange({ ...options, custom_text: e.target.value })}
               className="w-full rounded-lg border border-input bg-background px-3 py-2 text-base"
               placeholder="Page {n} of {p}"
             />
@@ -323,13 +326,7 @@ export function PageNumberOptions({ options, onChange, files }: Props) {
             >
               <em className="font-serif text-lg px-1">I</em>
             </button>
-            <button
-              type="button"
-              onClick={() => update("text_decoration", options.text_decoration === "underline" ? "none" : "underline")}
-              className={cn("p-1.5 rounded hover:bg-muted transition-colors", options.text_decoration === "underline" && "bg-muted")}
-            >
-              <span className="font-serif text-lg px-1 underline">U</span>
-            </button>
+
 
             <div className="relative ml-2 p-1.5 rounded hover:bg-muted transition-colors cursor-pointer flex flex-col items-center">
               <span className="font-serif font-bold text-lg leading-none">A</span>

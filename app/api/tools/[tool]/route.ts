@@ -9,6 +9,7 @@ import { OCRSupportedLocale } from "@adobe/pdfservices-node-sdk"
 import { processRotateLocal } from "@/lib/pdf/rotate-client"
 import { getToolBySlug } from "@/lib/tools-config"
 import { mapWatermarkOptions } from "@/lib/iloveapi/watermark-mapper"
+import { mapPageNumberOptions } from "@/lib/iloveapi/page-number-mapper"
 
 export const maxDuration = 60
 
@@ -329,6 +330,9 @@ export async function POST(
     // Apply tool-specific parameter mapping
     if (tool === "watermark-pdf") {
       cleanOptions = mapWatermarkOptions(cleanOptions)
+    }
+    if (tool === "add-page-numbers") {
+      cleanOptions = mapPageNumberOptions(cleanOptions)
     }
 
     // Only strip mode/ocr_languages for non-OCR tools (officepdf conversion pipeline uses these)

@@ -38,10 +38,8 @@ function drawPageNumber(
 ) {
   const verticalPos = (opts.vertical_position as string) || "bottom"
   let horizontalPos = (opts.horizontal_position as string) || "center"
-  const marginTop = (opts.margin_top as number) || 20
-  const marginBottom = (opts.margin_bottom as number) || 20
-  const marginLeft = (opts.margin_left as number) || 20
-  const marginRight = (opts.margin_right as number) || 20
+  const verticalAdjustment = (opts.vertical_position_adjustment as number) || 0
+  const horizontalAdjustment = (opts.horizontal_position_adjustment as number) || 0
 
   const pageMode = (opts.page_mode as string) || "single"
 
@@ -54,13 +52,12 @@ function drawPageNumber(
 
   const radius = 24
 
-  let x = width / 2
-  if (horizontalPos === "left") x = marginLeft + radius
-  if (horizontalPos === "right") x = width - marginRight - radius
+  let x = width / 2 + horizontalAdjustment
+  if (horizontalPos === "left") x = 20 + horizontalAdjustment
+  if (horizontalPos === "right") x = width - 20 - horizontalAdjustment
 
-  let y = height - marginBottom - radius
-  if (verticalPos === "top") y = marginTop + radius
-  if (verticalPos === "middle") y = height / 2
+  let y = height - 20 - verticalAdjustment
+  if (verticalPos === "top") y = 20 + verticalAdjustment
 
   // Draw the red circle
   ctx.fillStyle = "#ef4444"
@@ -197,17 +194,15 @@ export function PageNumberPreview({ files, options, className }: Props) {
           const isCoverPage = firstCover && globalIndex === 0
           const pageMode = (options.page_mode as string) || "single"
 
-          if (pageMode !== "facing" || (pageMode === "facing" && !isCoverPage)) {
-            let isLeftPage = false
-            if (pageMode === "facing") {
-              if (firstCover) {
-                isLeftPage = globalIndex % 2 !== 0
-              } else {
-                isLeftPage = globalIndex % 2 === 0
-              }
+          let isLeftPage = false
+          if (pageMode === "facing") {
+            if (firstCover) {
+              isLeftPage = globalIndex % 2 !== 0
+            } else {
+              isLeftPage = globalIndex % 2 === 0
             }
-            drawPageNumber(ctx, canvas.width, canvas.height, options, isLeftPage)
           }
+          drawPageNumber(ctx, canvas.width, canvas.height, options, isLeftPage)
         }
       }
 
