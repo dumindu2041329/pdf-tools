@@ -5,7 +5,6 @@ import { useState } from "react"
 import { usePathname } from "next/navigation"
 import {
   SignInButton,
-  UserButton,
   useAuth,
   useClerk,
 } from "@clerk/nextjs"
@@ -15,6 +14,7 @@ import { motion, AnimatePresence } from "framer-motion"
 import { Button } from "@/components/ui/button"
 import { ThemeToggle } from "@/components/theme/ThemeToggle"
 import { ToolsDropdown } from "@/components/layout/ToolsDropdown"
+import { UserMenu } from "@/components/layout/UserMenu"
 import { cn } from "@/lib/utils"
 
 const navLinks = [
@@ -118,15 +118,7 @@ export function Navbar() {
         <div className="hidden md:flex items-center gap-2">
           <ThemeToggle />
           {isSignedIn ? (
-            <>
-              <UserButton
-                appearance={{
-                  elements: {
-                    avatarBox: "w-9 h-9 ring-2 ring-primary/20",
-                  },
-                }}
-              />
-            </>
+            <UserMenu />
           ) : (
             <>
               <SignInButton mode="modal">
@@ -201,15 +193,9 @@ export function Navbar() {
               </Link>
               <div className="pt-2 border-t border-border/40 space-y-2">
                 {isSignedIn ? (
-                  <>
-                    <UserButton
-                      appearance={{
-                        elements: {
-                          avatarBox: "w-9 h-9 ring-2 ring-primary/20",
-                        },
-                      }}
-                    />
-                  </>
+                  <div className="px-3">
+                    <UserMenu />
+                  </div>
                 ) : (
                   <div className="flex flex-col gap-2 px-3">
                     <SignInButton mode="modal">
