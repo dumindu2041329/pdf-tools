@@ -191,7 +191,6 @@ export function PageNumberPreview({ files, options, className }: Props) {
         if (shouldDraw) {
           const firstCover = !!options.first_cover
           const globalIndex = items.findIndex((i) => i.id === item.id)
-          const isCoverPage = firstCover && globalIndex === 0
           const pageMode = (options.page_mode as string) || "single"
 
           let isLeftPage = false
