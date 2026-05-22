@@ -63,6 +63,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
 
   const [files, setFiles] = useState<File[]>([])
   const [filesLoaded, setFilesLoaded] = useState(false)
+  const [isSavingAndRedirecting, setIsSavingAndRedirecting] = useState(false)
   const [options, setOptions] = useState<Record<string, unknown>>({})
   const { state, process, reset } = useTool(tool.slug)
   const isProcessingRef = useRef(false)
@@ -72,6 +73,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Resetting files on step transition
     setFilesLoaded(false)
     setFiles([])
+    setIsSavingAndRedirecting(false)
   }, [stepIndex])
 
   useEffect(() => {
@@ -140,6 +142,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
     setFiles([])
     setOptions({})
     isProcessingRef.current = false
+    setIsSavingAndRedirecting(false)
     reset()
   }
 
@@ -181,6 +184,8 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
     if (isSuccess && isWorkflowMode && state.status === "success" && "downloadUrl" in state) {
       const session = getWorkflowSession()
       if (session) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- Hydrating transition state when step finishes successfully
+        setIsSavingAndRedirecting(true)
         fetch(state.downloadUrl)
           .then(res => res.arrayBuffer())
           .then(buffer => {
@@ -189,13 +194,24 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
                 idx === stepIndex ? { outputBuffer: buffer, filename: state.filename } : result
               ),
             })
+            // Automatically navigate to next step or workflow page
+            if (workflow) {
+              const nextIndex = stepIndex + 1
+              if (nextIndex < workflow.steps.length) {
+                const nextTool = workflow.steps[nextIndex].tool
+                router.push(`/tools/${nextTool}?workflowId=${workflowId}&stepIndex=${nextIndex}`)
+              } else {
+                router.push(`/workflows/${workflowId}/run?complete=1`)
+              }
+            }
           })
           .catch(err => {
             console.error("Failed to save workflow result:", err)
+            setIsSavingAndRedirecting(false)
           })
       }
     }
-  }, [isSuccess, isWorkflowMode, state, stepIndex])
+  }, [isSuccess, isWorkflowMode, state, stepIndex, workflow, workflowId, router])
 
   const showOptionsAndProcess = files.length > 0 || tool.slug === "html-to-pdf"
 
@@ -268,8 +284,17 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
                         onClick={handleProcess}
                         className="w-full shadow-lg shadow-primary/25 text-base"
                       >
-                        <Zap className="mr-2 h-4 w-4" />
-                        {tool.title}
+                        {isWorkflowMode ? (
+                          <>
+                            Continue
+                            <ArrowRight className="ml-2 h-4 w-4" />
+                          </>
+                        ) : (
+                          <>
+                            <Zap className="mr-2 h-4 w-4" />
+                            {tool.title}
+                          </>
+                        )}
                       </Button>
                     </motion.div>
                   )}
@@ -310,8 +335,17 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
                         onClick={handleProcess}
                         className="w-full shadow-lg shadow-primary/25 text-base"
                       >
-                        <Zap className="mr-2 h-4 w-4" />
-                        {tool.title}
+                        {isWorkflowMode ? (
+                          <>
+                            Continue
+                            <ArrowRight className="ml-2 h-4 w-4" />
+                          </>
+                        ) : (
+                          <>
+                            <Zap className="mr-2 h-4 w-4" />
+                            {tool.title}
+                          </>
+                        )}
                       </Button>
                     </motion.div>
                   )}
@@ -352,8 +386,17 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
                         onClick={handleProcess}
                         className="w-full shadow-lg shadow-primary/25 text-base"
                       >
-                        <Zap className="mr-2 h-4 w-4" />
-                        {tool.title}
+                        {isWorkflowMode ? (
+                          <>
+                            Continue
+                            <ArrowRight className="ml-2 h-4 w-4" />
+                          </>
+                        ) : (
+                          <>
+                            <Zap className="mr-2 h-4 w-4" />
+                            {tool.title}
+                          </>
+                        )}
                       </Button>
                     </motion.div>
                   )}
@@ -394,8 +437,17 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
                         onClick={handleProcess}
                         className="w-full shadow-lg shadow-primary/25 text-base"
                       >
-                        <Zap className="mr-2 h-4 w-4" />
-                        {tool.title}
+                        {isWorkflowMode ? (
+                          <>
+                            Continue
+                            <ArrowRight className="ml-2 h-4 w-4" />
+                          </>
+                        ) : (
+                          <>
+                            <Zap className="mr-2 h-4 w-4" />
+                            {tool.title}
+                          </>
+                        )}
                       </Button>
                     </motion.div>
                   )}
@@ -406,7 +458,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
         </div>
       )}
 
-      {isSuccess && (
+      {isSuccess && !isWorkflowMode && (
         <div className="space-y-6">
           {/* For last step in workflow, only show download card */}
           {isWorkflowMode && workflow && stepIndex === workflow.steps.length - 1 ? (
@@ -518,9 +570,9 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
       )}
 
       <ProcessingModal
-        currentStep={isProcessing ? state.step : "start"}
+        currentStep={isSavingAndRedirecting ? "done" : (isProcessing ? state.step : "start")}
         uploadProgress={isProcessing ? state.uploadProgress : undefined}
-        isOpen={isProcessing}
+        isOpen={isProcessing || isSavingAndRedirecting}
       />
     </div>
   )

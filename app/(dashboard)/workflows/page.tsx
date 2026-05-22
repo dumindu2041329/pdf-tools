@@ -12,6 +12,7 @@ import {
 import Link from "next/link"
 
 import { Button } from "@/components/ui/button"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,6 +26,7 @@ import { getToolBySlug } from "@/lib/tools-config"
 export default function WorkflowsPage() {
   const router = useRouter()
   const [workflows, setWorkflows] = useState<Workflow[]>([])
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
 
   useEffect(() => {
     function refresh() {
@@ -47,7 +49,17 @@ export default function WorkflowsPage() {
   }
 
   function handleDeleteWorkflow(id: string) {
-    deleteWorkflow(id)
+    const workflow = workflows.find(w => w.id === id)
+    if (workflow) {
+      setDeleteTarget({ id, name: workflow.name })
+    }
+  }
+
+  function confirmDelete() {
+    if (deleteTarget) {
+      deleteWorkflow(deleteTarget.id)
+      setDeleteTarget(null)
+    }
   }
 
   return (
@@ -96,12 +108,6 @@ export default function WorkflowsPage() {
               <div className="flex items-start justify-between mb-3">
                 <div>
                   <h3 className="font-semibold">{workflow.name}</h3>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {workflow.steps.length} step{workflow.steps.length !== 1 ? "s" : ""}
-                    {workflow.lastRun
-                      ? ` · Last run ${workflow.lastRun}`
-                      : " · Never run"}
-                  </p>
                 </div>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -150,9 +156,6 @@ export default function WorkflowsPage() {
                   <Play className="h-3.5 w-3.5" />
                   Run
                 </Button>
-                <span className="text-xs text-muted-foreground">
-                  {workflow.runCount} run{workflow.runCount !== 1 ? "s" : ""}
-                </span>
               </div>
             </div>
           ))}
@@ -192,6 +195,17 @@ export default function WorkflowsPage() {
           </div>
         </div>
       </div>
+
+      <ConfirmDialog
+        isOpen={deleteTarget !== null}
+        title="Delete Workflow"
+        description={`Are you sure you want to delete "${deleteTarget?.name}"? This action cannot be undone.`}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        destructive
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   )
 }

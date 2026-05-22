@@ -3,6 +3,23 @@
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core"
+import type { DragEndEvent } from "@dnd-kit/core"
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+  useSortable,
+} from "@dnd-kit/sortable"
+import { CSS } from "@dnd-kit/utilities"
+
+import {
   ArrowLeft,
   Plus,
   Trash2,
@@ -18,6 +35,66 @@ import type { ToolConfig, ToolCategory } from "@/lib/tools-config"
 import type { WorkflowStep } from "@/lib/workflowStore"
 import { createWorkflow } from "@/lib/workflowStore"
 
+interface SortableStepItemProps {
+  step: WorkflowStep
+  index: number
+  stepsLength: number
+  onRemove: (index: number) => void
+}
+
+function SortableStepItem({ step, index, stepsLength, onRemove }: SortableStepItemProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: index.toString(),
+  })
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 10 : undefined,
+    opacity: isDragging ? 0.9 : 1,
+  }
+
+  const tool = getToolBySlug(step.tool)
+  const Icon = tool?.icon
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`flex items-center gap-3 rounded-xl border border-border bg-card p-4 ${
+        isDragging ? "shadow-lg ring-2 ring-primary" : ""
+      }`}
+    >
+      <button
+        type="button"
+        className="cursor-grab active:cursor-grabbing text-muted-foreground hover:text-foreground shrink-0"
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical className="h-5 w-5" />
+      </button>
+      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted shrink-0">
+        <span className="text-sm font-semibold text-muted-foreground">{index + 1}</span>
+      </div>
+      <div className="flex items-center gap-3 flex-1">
+        <div className="flex items-center gap-2">
+          {Icon && <Icon className="h-5 w-5 text-primary" />}
+          <span className="font-medium">{step.label}</span>
+        </div>
+        {index < stepsLength - 1 && <ArrowRight className="h-4 w-4 text-muted-foreground" />}
+      </div>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="text-destructive hover:text-destructive hover:bg-destructive/10 shrink-0"
+        onClick={() => onRemove(index)}
+      >
+        <Trash2 className="h-4 w-4" />
+      </Button>
+    </div>
+  )
+}
+
 export default function NewWorkflowPage() {
   const router = useRouter()
   const [name, setName] = useState("")
@@ -25,6 +102,17 @@ export default function NewWorkflowPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedCategory, setSelectedCategory] = useState<ToolCategory>("all")
   const [showToolSelector, setShowToolSelector] = useState(false)
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  )
 
   const filteredTools = getToolsByCategory(selectedCategory).filter((tool) =>
     tool.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -44,6 +132,19 @@ export default function NewWorkflowPage() {
 
   function removeStep(index: number) {
     setSteps(steps.filter((_, i) => i !== index))
+  }
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+
+    const oldIndex = parseInt(active.id as string, 10)
+    const newIndex = parseInt(over.id as string, 10)
+
+    const newSteps = [...steps]
+    const [moved] = newSteps.splice(oldIndex, 1)
+    newSteps.splice(newIndex, 0, moved)
+    setSteps(newSteps)
   }
 
   function saveWorkflow() {
@@ -170,34 +271,28 @@ export default function NewWorkflowPage() {
             </div>
           </div>
         ) : (
-          <div className="space-y-3">
-            {steps.map((step, index) => {
-              const tool = getToolBySlug(step.tool)
-              const Icon = tool?.icon
-              return (
-                <div key={index} className="flex items-center gap-3 rounded-xl border border-border bg-card p-4">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted shrink-0">
-                    <span className="text-sm font-semibold text-muted-foreground">{index + 1}</span>
-                  </div>
-                  <div className="flex items-center gap-3 flex-1">
-                    <div className="flex items-center gap-2">
-                      {Icon && <Icon className="h-5 w-5 text-primary" />}
-                      <span className="font-medium">{step.label}</span>
-                    </div>
-                    {index < steps.length - 1 && <ArrowRight className="h-4 w-4 text-muted-foreground" />}
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                    onClick={() => removeStep(index)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              )
-            })}
-          </div>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext
+              items={steps.map((_, i) => i.toString())}
+              strategy={verticalListSortingStrategy}
+            >
+              <div className="space-y-3">
+                {steps.map((step, index) => (
+                  <SortableStepItem
+                    key={index}
+                    step={step}
+                    index={index}
+                    stepsLength={steps.length}
+                    onRemove={removeStep}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
         )}
       </div>
 
