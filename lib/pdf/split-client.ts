@@ -26,7 +26,17 @@ function parseRanges(rangesStr: string, totalPages: number): [number, number][] 
 }
 
 export async function processSplitLocal(fileBuffer: ArrayBuffer, options: Record<string, unknown>, originalFilename: string = "document.pdf") {
-  const pdfDoc = await PDFDocument.load(fileBuffer)
+  if (!fileBuffer) {
+    throw new Error("No PDF file provided")
+  }
+
+  let pdfDoc
+  try {
+    pdfDoc = await PDFDocument.load(fileBuffer)
+  } catch (err) {
+    throw new Error(`Failed to load PDF file: ${(err as Error).message}`)
+  }
+
   const totalPages = pdfDoc.getPageCount()
   const splitMode = (options.split_mode as string) || "ranges"
   

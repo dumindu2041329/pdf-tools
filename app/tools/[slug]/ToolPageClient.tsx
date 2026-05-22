@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useCallback, useMemo } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { getToolBySlug } from "@/lib/tools-config"
 import { FileUploader } from "@/components/tools/FileUploader"
 import { ProcessingModal } from "@/components/tools/ProcessingModal"
@@ -12,7 +13,10 @@ import { PageNumberPreview } from "@/components/tools/options/PageNumberPreview"
 import { Button } from "@/components/ui/button"
 import { useTool } from "@/hooks/useTool"
 import { validateToolOptions } from "@/lib/toolValidation"
-import { Zap, CheckCircle, Clock, ArrowRight } from "lucide-react"
+import { getWorkflowById } from "@/lib/workflowStore"
+import { getWorkflowSession, updateWorkflowSession, loadWorkflowSession } from "@/lib/workflowSession"
+import type { WorkflowSession } from "@/lib/workflowSession"
+import { Zap, CheckCircle, Clock, ArrowRight, ArrowLeft, Download } from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
 import { toast } from "sonner"
 
@@ -21,13 +25,74 @@ interface ToolPageClientProps {
 }
 
 export function ToolPageClient({ slug }: ToolPageClientProps) {
+  const router = useRouter()
+  const searchParams = useSearchParams()
   const tool = getToolBySlug(slug)!
   const toolHasOptions = hasToolOptions(tool.slug)
   const isOrganize = tool.slug === "organize-pdf"
+
+  const workflowId = searchParams.get("workflowId")
+  const stepIndex = parseInt(searchParams.get("stepIndex") || "0", 10)
+  const isWorkflowMode = workflowId !== null && !isNaN(stepIndex)
+
+  const workflow = useMemo(() => {
+    if (isWorkflowMode && workflowId) {
+      return getWorkflowById(workflowId)
+    }
+    return null
+  }, [isWorkflowMode, workflowId])
+
+  const [workflowSession, setWorkflowSession] = useState<WorkflowSession | null>(null)
+
+  // Load workflow session on mount/transition
+  useEffect(() => {
+    if (!isWorkflowMode) return
+
+    const syncSession = getWorkflowSession()
+    if (syncSession) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Hydrating session synchronously on initial mount if available
+      setWorkflowSession(syncSession)
+    } else {
+      loadWorkflowSession().then((loadedSession) => {
+        if (loadedSession) {
+          setWorkflowSession(loadedSession)
+        }
+      })
+    }
+  }, [isWorkflowMode, stepIndex])
+
   const [files, setFiles] = useState<File[]>([])
+  const [filesLoaded, setFilesLoaded] = useState(false)
   const [options, setOptions] = useState<Record<string, unknown>>({})
   const { state, process, reset } = useTool(tool.slug)
   const isProcessingRef = useRef(false)
+
+  // Reset loaded state when stepIndex changes to allow loading new step files
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Resetting files on step transition
+    setFilesLoaded(false)
+    setFiles([])
+  }, [stepIndex])
+
+  useEffect(() => {
+    if (!isWorkflowMode || !workflowSession || filesLoaded) return
+
+    const prevResult = stepIndex > 0 ? workflowSession.stepResults[stepIndex - 1] : null
+    if (prevResult) {
+      const blob = new Blob([prevResult.outputBuffer], { type: "application/pdf" })
+      const file = new File([blob], prevResult.filename || "input.pdf", { type: "application/pdf" })
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Injecting workflow file into state
+      setFiles([file])
+      setFilesLoaded(true)
+    } else if (workflowSession.inputFiles.length > 0 && stepIndex === 0) {
+      const fileObjects = workflowSession.inputFiles.map(wf => {
+        const blob = new Blob([wf.arrayBuffer], { type: wf.type })
+        return new File([blob], wf.name, { type: wf.type })
+      })
+      setFiles(fileObjects)
+      setFilesLoaded(true)
+    }
+  }, [isWorkflowMode, workflowSession, stepIndex, filesLoaded])
 
   const handleProcess = () => {
     if ((files.length === 0 && tool.slug !== "html-to-pdf") || isProcessingRef.current) return
@@ -78,6 +143,18 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
     reset()
   }
 
+  const handleContinue = useCallback(() => {
+    if (!workflow || !workflowSession) return
+
+    const nextIndex = stepIndex + 1
+    if (nextIndex < workflow.steps.length) {
+      const nextTool = workflow.steps[nextIndex].tool
+      router.push(`/tools/${nextTool}?workflowId=${workflowId}&stepIndex=${nextIndex}`)
+    } else {
+      router.push(`/workflows/${workflowId}/run?complete=1`)
+    }
+  }, [workflow, workflowSession, stepIndex, workflowId, router])
+
   const isProcessing = state.status === "processing"
   const isSuccess = state.status === "success"
   const isValidationSuccess = state.status === "validation-success"
@@ -100,6 +177,26 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
     }
   }, [isError, state, reset])
 
+  useEffect(() => {
+    if (isSuccess && isWorkflowMode && state.status === "success" && "downloadUrl" in state) {
+      const session = getWorkflowSession()
+      if (session) {
+        fetch(state.downloadUrl)
+          .then(res => res.arrayBuffer())
+          .then(buffer => {
+            updateWorkflowSession({
+              stepResults: session.stepResults.map((result, idx) =>
+                idx === stepIndex ? { outputBuffer: buffer, filename: state.filename } : result
+              ),
+            })
+          })
+          .catch(err => {
+            console.error("Failed to save workflow result:", err)
+          })
+      }
+    }
+  }, [isSuccess, isWorkflowMode, state, stepIndex])
+
   const showOptionsAndProcess = files.length > 0 || tool.slug === "html-to-pdf"
 
   return (
@@ -117,6 +214,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
                 multiple={tool.maxFiles > 1}
                 maxFiles={tool.maxFiles}
                 maxSizeMB={tool.maxSizeMB}
+                files={files}
                 onFilesSelected={setFiles}
                 isDisabled={isProcessing}
               />
@@ -309,13 +407,86 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
       )}
 
       {isSuccess && (
-        <DownloadCard
-          downloadUrl={state.downloadUrl}
-          filename={state.filename}
-          processingTime={state.processingTime}
-          outputSize={state.outputSize}
-          onReset={handleReset}
-        />
+        <div className="space-y-6">
+          {/* For last step in workflow, only show download card */}
+          {isWorkflowMode && workflow && stepIndex === workflow.steps.length - 1 ? (
+            <div className="space-y-6">
+              <div className="rounded-xl border border-green-500/30 bg-green-500/5 p-8 text-center">
+                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-green-500/20 text-green-500 mx-auto mb-4">
+                  <CheckCircle className="h-8 w-8" />
+                </div>
+                <h3 className="text-xl font-bold mb-1">All Steps Completed!</h3>
+                <p className="text-muted-foreground mb-6">
+                  Your file has been processed through all {workflow.steps.length} steps.
+                </p>
+                <div className="flex items-center justify-center gap-6 mb-8">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Clock className="h-4 w-4" />
+                    {state.processingTime}s
+                  </div>
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    {state.outputSize && (
+                      <>({(state.outputSize / 1024 / 1024).toFixed(2)} MB)</>
+                    )}
+                  </div>
+                </div>
+                <Button
+                  size="lg"
+                  onClick={() => {
+                    const a = document.createElement("a")
+                    a.href = state.downloadUrl
+                    a.download = state.filename
+                    document.body.appendChild(a)
+                    a.click()
+                    document.body.removeChild(a)
+                  }}
+                  className="flex items-center gap-2 mx-auto"
+                >
+                  <Download className="h-4 w-4" />
+                  Download Result
+                </Button>
+              </div>
+              <div className="flex justify-center">
+                <Button
+                  variant="outline"
+                  onClick={() => router.push(`/workflows/${workflowId}/run?complete=1`)}
+                >
+                  Back to Workflow
+                </Button>
+              </div>
+            </div>
+          ) : isWorkflowMode && workflow ? (
+            <div className="flex justify-center gap-4">
+              {stepIndex > 0 && (
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    const prevTool = workflow.steps[stepIndex - 1].tool
+                    router.push(`/tools/${prevTool}?workflowId=${workflowId}&stepIndex=${stepIndex - 1}`)
+                  }}
+                >
+                  <ArrowLeft className="mr-2 h-4 w-4" />
+                  Previous Step
+                </Button>
+              )}
+              <Button
+                onClick={handleContinue}
+                className="flex items-center gap-2"
+              >
+                Continue to {workflow.steps[stepIndex + 1]?.label}
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+            </div>
+          ) : (
+            <DownloadCard
+              downloadUrl={state.downloadUrl}
+              filename={state.filename}
+              processingTime={state.processingTime}
+              outputSize={state.outputSize}
+              onReset={handleReset}
+            />
+          )}
+        </div>
       )}
 
       {isValidationSuccess && (

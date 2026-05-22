@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useRef, useState } from "react"
+import { useCallback, useRef, useState, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { Upload, X, FileText, AlertCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -13,6 +13,7 @@ interface FileUploaderProps {
   maxSizeMB?: number
   onFilesSelected: (files: File[]) => void
   isDisabled?: boolean
+  files?: File[]
 }
 
 function formatSize(bytes: number) {
@@ -28,11 +29,19 @@ export function FileUploader({
   maxSizeMB = 20,
   onFilesSelected,
   isDisabled = false,
+  files: propFiles,
 }: FileUploaderProps) {
-  const [files, setFiles] = useState<File[]>([])
+  const [files, setFiles] = useState<File[]>(propFiles || [])
   const [isDragging, setIsDragging] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (propFiles !== undefined) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Syncing external files prop into local file list state
+      setFiles(propFiles)
+    }
+  }, [propFiles])
 
   const validateFiles = useCallback(
     (incoming: File[]): { valid: File[]; error: string | null } => {

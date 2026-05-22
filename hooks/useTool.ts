@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react"
 import type { ProcessingStep } from "@/components/tools/ProcessingModal"
+import { recordActivity } from "@/lib/activityStore"
 
 export type ToolState =
   | { status: "idle" }
@@ -26,6 +27,11 @@ export function useTool(toolSlug: string) {
 
   const process = useCallback(
     async (files: File[], options: Record<string, unknown> = {}) => {
+      if (toolSlug !== "html-to-pdf" && files.length === 0) {
+        setState({ status: "error", message: "No files provided", retryable: true })
+        return
+      }
+
       setState({ status: "processing", step: "start" })
 
       const form = new FormData()
@@ -83,6 +89,7 @@ export function useTool(toolSlug: string) {
             processingTime: ((end - start) / 1000).toFixed(2),
             outputSize: blob.size,
           });
+          recordActivity(toolSlug, result.downloadFilename, blob.size)
           return;
         } catch (err) {
           console.error("Local split error:", err);
@@ -120,6 +127,7 @@ export function useTool(toolSlug: string) {
             processingTime: ((end - start) / 1000).toFixed(2),
             outputSize: blob.size,
           });
+          recordActivity(toolSlug, result.downloadFilename, blob.size)
           return;
         } catch (err) {
           console.error("Local merge error:", err);
@@ -173,6 +181,7 @@ export function useTool(toolSlug: string) {
           processingTime: data.processingTime || "0",
           outputSize: Number(data.outputSize || 0),
         })
+        recordActivity(toolSlug, data.filename || "output.pdf", Number(data.outputSize || 0))
       } catch {
         setState({ status: "error", message: "A network error occurred. Please try again.", retryable: true })
       }
@@ -191,7 +200,8 @@ export function useTool(toolSlug: string) {
       processingTime: "Instant (Local)",
       outputSize: file.size,
     })
-  }, [])
+    recordActivity(toolSlug, file.name, file.size)
+  }, [toolSlug])
 
   return { state, process, reset, forceSuccess }
 }

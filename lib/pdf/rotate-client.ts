@@ -5,22 +5,30 @@ export async function processRotateLocal(
   files: Array<{ buffer: Uint8Array | ArrayBuffer; filename: string }>,
   options: Record<string, unknown>
 ) {
+  if (!files || files.length === 0) {
+    throw new Error("No PDF files provided")
+  }
+
   const rotationDeg = ((options.rotate as number) || 0) % 360
   const resultFiles: { name: string; uint8Array: Uint8Array }[] = []
 
   for (const { buffer, filename } of files) {
-    const pdfDoc = await PDFDocument.load(buffer)
-    const pages = pdfDoc.getPages()
+    try {
+      const pdfDoc = await PDFDocument.load(buffer)
+      const pages = pdfDoc.getPages()
 
-    for (const page of pages) {
-      const currentAngle = page.getRotation().angle
-      page.setRotation(degrees(currentAngle + rotationDeg))
+      for (const page of pages) {
+        const currentAngle = page.getRotation().angle
+        page.setRotation(degrees(currentAngle + rotationDeg))
+      }
+
+      const uint8Array = await pdfDoc.save()
+      const baseName = filename.replace(/\.[^/.]+$/, "")
+      const suffix = rotationDeg > 0 ? `_rotated_${rotationDeg}` : ""
+      resultFiles.push({ name: `${baseName}${suffix}.pdf`, uint8Array })
+    } catch (err) {
+      throw new Error(`Failed to process PDF file "${filename}": ${(err as Error).message}`)
     }
-
-    const uint8Array = await pdfDoc.save()
-    const baseName = filename.replace(/\.[^/.]+$/, "")
-    const suffix = rotationDeg > 0 ? `_rotated_${rotationDeg}` : ""
-    resultFiles.push({ name: `${baseName}${suffix}.pdf`, uint8Array })
   }
 
   if (resultFiles.length === 1) {

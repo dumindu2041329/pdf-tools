@@ -1,13 +1,13 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import {
   GitBranch,
   Plus,
   Play,
   Trash2,
   MoreHorizontal,
-  Merge,
 } from "lucide-react"
 import Link from "next/link"
 
@@ -18,25 +18,37 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-
-interface WorkflowStep {
-  tool: string
-  label: string
-  icon: typeof Merge
-}
-
-interface Workflow {
-  id: string
-  name: string
-  steps: WorkflowStep[]
-  lastRun: string | null
-  runCount: number
-}
-
-const sampleWorkflows: Workflow[] = []
+import type { Workflow } from "@/lib/workflowStore"
+import { getWorkflows, deleteWorkflow, runWorkflow } from "@/lib/workflowStore"
+import { getToolBySlug } from "@/lib/tools-config"
 
 export default function WorkflowsPage() {
-  const [workflows] = useState<Workflow[]>(sampleWorkflows)
+  const router = useRouter()
+  const [workflows, setWorkflows] = useState<Workflow[]>([])
+
+  useEffect(() => {
+    function refresh() {
+      setWorkflows(getWorkflows())
+    }
+
+    refresh()
+    window.addEventListener("workflows-update", refresh)
+    window.addEventListener("storage", refresh)
+
+    return () => {
+      window.removeEventListener("workflows-update", refresh)
+      window.removeEventListener("storage", refresh)
+    }
+  }, [])
+
+  function handleRunWorkflow(id: string) {
+    runWorkflow(id)
+    router.push(`/workflows/${id}/run`)
+  }
+
+  function handleDeleteWorkflow(id: string) {
+    deleteWorkflow(id)
+  }
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
@@ -101,11 +113,11 @@ export default function WorkflowsPage() {
                     </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem className="flex items-center gap-2">
+                    <DropdownMenuItem className="flex items-center gap-2" onClick={() => handleRunWorkflow(workflow.id)}>
                       <Play className="h-4 w-4" />
                       Run workflow
                     </DropdownMenuItem>
-                    <DropdownMenuItem className="flex items-center gap-2 text-destructive focus:text-destructive">
+                    <DropdownMenuItem className="flex items-center gap-2 text-destructive focus:text-destructive" onClick={() => handleDeleteWorkflow(workflow.id)}>
                       <Trash2 className="h-4 w-4" />
                       Delete
                     </DropdownMenuItem>
@@ -116,7 +128,9 @@ export default function WorkflowsPage() {
               {/* Steps */}
               <div className="flex items-center gap-1.5 flex-wrap">
                 {workflow.steps.map((step, i) => {
-                  const Icon = step.icon
+                  const tool = getToolBySlug(step.tool)
+                  const Icon = tool?.icon
+                  if (!Icon) return null
                   return (
                     <div key={i} className="flex items-center gap-1.5">
                       <div className="flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-xs">
@@ -132,7 +146,7 @@ export default function WorkflowsPage() {
               </div>
 
               <div className="mt-4 flex items-center gap-2">
-                <Button size="sm" className="flex items-center gap-1.5">
+                <Button size="sm" className="flex items-center gap-1.5" onClick={() => handleRunWorkflow(workflow.id)}>
                   <Play className="h-3.5 w-3.5" />
                   Run
                 </Button>

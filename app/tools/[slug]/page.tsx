@@ -1,7 +1,9 @@
 import type { Metadata } from "next"
 import { notFound } from "next/navigation"
+import { Suspense } from "react"
 import { getToolBySlug, toolsConfig } from "@/lib/tools-config"
 import { ToolPageClient } from "./ToolPageClient"
+import { Loader2 } from "lucide-react"
 
 export async function generateStaticParams() {
   return toolsConfig.map((tool) => ({ slug: tool.slug }))
@@ -35,6 +37,14 @@ export default async function ToolPage({
   const tool = getToolBySlug(slug)
   if (!tool) notFound()
 
-  return <ToolPageClient slug={slug} />
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    }>
+      <ToolPageClient slug={slug} />
+    </Suspense>
+  )
 }
 
