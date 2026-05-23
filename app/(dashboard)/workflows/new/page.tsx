@@ -34,6 +34,7 @@ import { toolCategories, getToolsByCategory, getToolBySlug } from "@/lib/tools-c
 import type { ToolConfig, ToolCategory } from "@/lib/tools-config"
 import type { WorkflowStep } from "@/lib/workflowStore"
 import { createWorkflow } from "@/lib/workflowStore"
+import { toast } from "sonner"
 
 interface SortableStepItemProps {
   step: WorkflowStep
@@ -120,6 +121,10 @@ export default function NewWorkflowPage() {
   )
 
   function addStep(tool: ToolConfig) {
+    if (steps.some(step => step.tool === tool.slug)) {
+      toast.error(`${tool.title} is already in the workflow`)
+      return
+    }
     setSteps([
       ...steps,
       {
@@ -128,6 +133,7 @@ export default function NewWorkflowPage() {
       },
     ])
     setShowToolSelector(false)
+    setSearchQuery("")
   }
 
   function removeStep(index: number) {
@@ -206,7 +212,7 @@ export default function NewWorkflowPage() {
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="flex-1 rounded-lg border border-border bg-background px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary"
               />
-              <Button variant="ghost" size="icon" onClick={() => setShowToolSelector(false)}>
+              <Button variant="ghost" size="icon" onClick={() => { setShowToolSelector(false); setSearchQuery("") }}>
                 <X className="h-4 w-4" />
               </Button>
             </div>

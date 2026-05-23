@@ -217,9 +217,25 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
 
   return (
     <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 pt-10 pb-20">
-      <h1 className="text-3xl sm:text-4xl font-serif font-bold text-center text-foreground mb-10">
-        {tool.title}
-      </h1>
+      <div className="relative mb-10">
+        {isWorkflowMode && stepIndex > 0 && (
+          <div className="absolute left-0 top-1/2 -translate-y-1/2">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => {
+                const prevTool = workflow!.steps[stepIndex - 1].tool
+                router.push(`/tools/${prevTool}?workflowId=${workflowId}&stepIndex=${stepIndex - 1}`)
+              }}
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+          </div>
+        )}
+        <h1 className="text-3xl sm:text-4xl font-serif font-bold text-center text-foreground">
+          {tool.title}
+        </h1>
+      </div>
 
       {!isSuccess && !isValidationSuccess && (
         <div className="space-y-8">
