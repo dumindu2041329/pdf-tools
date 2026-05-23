@@ -6,6 +6,7 @@ import { toolsConfig, toolCategories, type ToolCategory } from "@/lib/tools-conf
 
 interface ToolsDropdownProps {
   isOpen: boolean
+  onClose: () => void
   onMouseEnter: () => void
   onMouseLeave: () => void
 }
@@ -21,7 +22,7 @@ const categoryLabels: Record<ToolCategory, string> = {
   ai: "AI",
 }
 
-export function ToolsDropdown({ isOpen, onMouseEnter, onMouseLeave }: ToolsDropdownProps) {
+export function ToolsDropdown({ isOpen, onClose, onMouseEnter, onMouseLeave }: ToolsDropdownProps) {
   const categories = toolCategories.filter((c) => c.id !== "all")
 
   const getToolsByCategory = (category: ToolCategory) => {
@@ -51,6 +52,7 @@ export function ToolsDropdown({ isOpen, onMouseEnter, onMouseLeave }: ToolsDropd
                     <li key={tool.slug}>
                       <Link
                         href={`/tools/${tool.slug}`}
+                        onClick={onClose}
                         className="flex items-center gap-2 px-1.5 py-1 rounded-md text-sm text-foreground/80 hover:text-foreground hover:bg-accent/50 transition-colors"
                       >
                         <div

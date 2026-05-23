@@ -92,6 +92,7 @@ export function Navbar() {
                   </button>
                   <ToolsDropdown
                     isOpen={toolsDropdownOpen}
+                    onClose={() => setToolsDropdownOpen(false)}
                     onMouseEnter={() => setToolsDropdownOpen(true)}
                     onMouseLeave={() => setToolsDropdownOpen(false)}
                   />
