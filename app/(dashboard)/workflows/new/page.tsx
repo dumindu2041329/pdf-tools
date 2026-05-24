@@ -27,13 +27,13 @@ import {
   Save,
   ArrowRight,
   X,
+  Loader2,
 } from "lucide-react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { toolCategories, getToolsByCategory, getToolBySlug } from "@/lib/tools-config"
 import type { ToolConfig, ToolCategory } from "@/lib/tools-config"
 import type { WorkflowStep } from "@/lib/workflowStore"
-import { createWorkflow } from "@/lib/workflowStore"
 import { toast } from "sonner"
 
 interface SortableStepItemProps {
@@ -103,6 +103,7 @@ export default function NewWorkflowPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedCategory, setSelectedCategory] = useState<ToolCategory>("all")
   const [showToolSelector, setShowToolSelector] = useState(false)
+  const [saving, setSaving] = useState(false)
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -153,10 +154,30 @@ export default function NewWorkflowPage() {
     setSteps(newSteps)
   }
 
-  function saveWorkflow() {
+  async function saveWorkflow() {
     if (!name.trim() || steps.length === 0) return
-    createWorkflow(name.trim(), steps)
-    router.push("/workflows")
+    setSaving(true)
+    try {
+      const res = await fetch("/api/workflows", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: name.trim(), steps }),
+      })
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as unknown
+        const msg =
+          typeof data === "object" && data !== null && typeof (data as Record<string, unknown>).error === "string"
+            ? String((data as Record<string, unknown>).error)
+            : "Failed to create workflow"
+        toast.error(msg)
+        return
+      }
+      router.push("/workflows")
+    } catch {
+      toast.error("Failed to create workflow")
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -309,11 +330,20 @@ export default function NewWorkflowPage() {
         </Link>
         <Button
           onClick={saveWorkflow}
-          disabled={!name.trim() || steps.length === 0}
+          disabled={!name.trim() || steps.length === 0 || saving}
           className="flex items-center gap-2"
         >
-          <Save className="h-4 w-4" />
-          Save Workflow
+          {saving ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Saving...
+            </>
+          ) : (
+            <>
+              <Save className="h-4 w-4" />
+              Save Workflow
+            </>
+          )}
         </Button>
       </div>
     </div>

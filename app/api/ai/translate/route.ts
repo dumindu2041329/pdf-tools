@@ -1,6 +1,8 @@
 import { auth } from "@clerk/nextjs/server"
 import { NextResponse } from "next/server"
 import { runTool } from "@/lib/iloveapi/tools"
+import { canProcessFile, recordProcessingEvent } from "@/lib/usage"
+import { getUserPlan } from "@/lib/auth"
 
 export async function POST(req: Request) {
   const { userId } = await auth()
@@ -9,6 +11,7 @@ export async function POST(req: Request) {
   }
 
   try {
+    const start = Date.now()
     const formData = await req.formData()
     const fileRaw = formData.get("file")
     if (!fileRaw || typeof fileRaw === "string" || !("arrayBuffer" in fileRaw)) {
@@ -16,6 +19,15 @@ export async function POST(req: Request) {
     }
     const file = fileRaw as File
     const targetLanguage = (formData.get("language") as string) || "Spanish"
+
+    const plan = await getUserPlan(userId)
+    const gate = await canProcessFile(userId, file.size, plan, 1)
+    if (!gate.allowed) {
+      return NextResponse.json(
+        { error: gate.reason ?? "Processing limit reached", upgradeRequired: true },
+        { status: 402 }
+      )
+    }
 
     // Step 1: Extract text via iLoveAPI (detailed mode for positions)
     const buffer = Buffer.from(await file.arrayBuffer())
@@ -62,6 +74,15 @@ export async function POST(req: Request) {
 
     const translatedText = completion.choices[0]?.message?.content || ""
 
+    await recordProcessingEvent({
+      userId,
+      toolSlug: "translate-pdf",
+      status: "success",
+      engine: "openai",
+      inputFilesCount: 1,
+      processingTimeMs: Date.now() - start,
+    })
+
     return NextResponse.json({
       translatedText,
       sourceLength: extractedText.length,
@@ -69,6 +90,14 @@ export async function POST(req: Request) {
     })
   } catch (err) {
     console.error("AI Translate error:", err)
+    await recordProcessingEvent({
+      userId,
+      toolSlug: "translate-pdf",
+      status: "error",
+      engine: "openai",
+      inputFilesCount: 1,
+      errorMessage: (err as Error).message || "Translation failed",
+    })
     return NextResponse.json({ error: "Translation failed" }, { status: 500 })
   }
 }

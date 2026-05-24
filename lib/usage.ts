@@ -1,27 +1,30 @@
-// lib/usage.ts
-// Stubbed usage tracking — DB integration added when Prisma is set up
+import { sql, ensureDbSchema, upsertUser } from "@/lib/db"
+import { getUserPlan } from "@/lib/auth"
+import type { UserPlan } from "@/lib/auth"
+import { getLimitsForPlan } from "@/lib/usageLimits"
+import type { UsageLimits } from "@/lib/usageLimits"
 
-export interface UsageLimits {
-  daily: number
-  monthly: number
-  maxFileSizeMB: number
+function firstRow(rows: unknown): Record<string, unknown> | null {
+  if (!Array.isArray(rows)) return null
+  const row = rows[0]
+  if (typeof row !== "object" || row === null) return null
+  return row as Record<string, unknown>
 }
 
-const planLimits: Record<string, UsageLimits> = {
-  free: { daily: 5, monthly: 30, maxFileSizeMB: 20 },
-  premium: { daily: 999, monthly: 9999, maxFileSizeMB: 200 },
-  business: { daily: 9999, monthly: 99999, maxFileSizeMB: 500 },
+function toInt(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value)
+  if (typeof value === "string") {
+    const n = Number(value)
+    return Number.isFinite(n) ? Math.trunc(n) : 0
+  }
+  return 0
 }
 
-export function getLimitsForPlan(plan: string): UsageLimits {
-  return planLimits[plan] ?? planLimits.free
-}
-
-// Stubbed — always allows processing until DB is connected
 export async function canProcessFile(
-  _userId: string,
+  userId: string,
   fileSizeBytes: number,
-  plan = "free"
+  plan = "free",
+  filesToProcess = 1
 ): Promise<{ allowed: boolean; reason?: string }> {
   const limits = getLimitsForPlan(plan)
   const fileSizeMB = fileSizeBytes / (1024 * 1024)
@@ -33,28 +36,110 @@ export async function canProcessFile(
     }
   }
 
-  // TODO: Check daily/monthly counts from DB
+  await ensureDbSchema()
+  await upsertUser(userId)
+
+  const rows = (await sql`
+    SELECT
+      COALESCE(SUM(CASE WHEN created_at >= date_trunc('day', now()) THEN input_files_count ELSE 0 END), 0)::int AS files_today,
+      COALESCE(SUM(CASE WHEN created_at >= date_trunc('month', now()) THEN input_files_count ELSE 0 END), 0)::int AS files_month
+    FROM processing_event
+    WHERE user_id = ${userId}
+      AND status = 'success'
+      AND created_at >= date_trunc('month', now())
+  `) as unknown
+
+  const row = firstRow(rows)
+  const filesProcessedToday = toInt(row?.files_today)
+  const filesProcessedThisMonth = toInt(row?.files_month)
+
+  if (filesProcessedToday + filesToProcess > limits.daily) {
+    return { allowed: false, reason: "Daily processing limit reached" }
+  }
+  if (filesProcessedThisMonth + filesToProcess > limits.monthly) {
+    return { allowed: false, reason: "Monthly processing limit reached" }
+  }
+
   return { allowed: true }
 }
 
-// Stubbed — no-op until DB is connected
-/* eslint-disable @typescript-eslint/no-unused-vars */
-export async function recordCreditUsage(
-  _userId: string,
-  _tool: string,
-  _filesProcessed: number,
-  _creditsUsed: number
-): Promise<void> {
-  // TODO: await db.creditUsage.create({ data: { ... } })
+export async function recordProcessingEvent(input: {
+  userId: string | null
+  toolSlug: string
+  status: "success" | "error"
+  engine?: string
+  inputFilesCount?: number
+  outputFilename?: string
+  outputSizeBytes?: number
+  processingTimeMs?: number
+  errorMessage?: string
+}): Promise<string> {
+  await ensureDbSchema()
+  if (input.userId) {
+    await upsertUser(input.userId)
+  }
+
+  const rows = (await sql`
+    INSERT INTO processing_event (
+      user_id,
+      tool_slug,
+      status,
+      engine,
+      input_files_count,
+      output_filename,
+      output_size_bytes,
+      processing_time_ms,
+      error_message
+    )
+    VALUES (
+      ${input.userId},
+      ${input.toolSlug},
+      ${input.status},
+      ${input.engine ?? null},
+      ${input.inputFilesCount ?? 1},
+      ${input.outputFilename ?? null},
+      ${input.outputSizeBytes ?? null},
+      ${input.processingTimeMs ?? null},
+      ${input.errorMessage ?? null}
+    )
+    RETURNING id::text AS id
+  `) as unknown
+
+  const id = firstRow(rows)?.id
+  if (!id) {
+    throw new Error("Failed to record processing event")
+  }
+  return String(id)
 }
 
-// Stubbed — returns mock data until DB is connected
-export async function getUsageStats(_userId: string) {
+export async function getUsageStats(userId: string): Promise<{
+  filesProcessedToday: number
+  filesProcessedThisMonth: number
+  subscriptionPlan: UserPlan
+  limits: UsageLimits
+}> {
+  await ensureDbSchema()
+  await upsertUser(userId)
+
+  const subscriptionPlan = await getUserPlan(userId)
+  const limits = getLimitsForPlan(subscriptionPlan)
+
+  const rows = (await sql`
+    SELECT
+      COALESCE(SUM(CASE WHEN created_at >= date_trunc('day', now()) THEN input_files_count ELSE 0 END), 0)::int AS files_today,
+      COALESCE(SUM(CASE WHEN created_at >= date_trunc('month', now()) THEN input_files_count ELSE 0 END), 0)::int AS files_month
+    FROM processing_event
+    WHERE user_id = ${userId}
+      AND status = 'success'
+      AND created_at >= date_trunc('month', now())
+  `) as unknown
+
+  const row = firstRow(rows)
+
   return {
-    filesProcessedToday: 0,
-    filesProcessedThisMonth: 0,
-    subscriptionPlan: "free" as const,
-    limits: planLimits.free,
+    filesProcessedToday: toInt(row?.files_today),
+    filesProcessedThisMonth: toInt(row?.files_month),
+    subscriptionPlan,
+    limits,
   }
 }
-/* eslint-enable @typescript-eslint/no-unused-vars */

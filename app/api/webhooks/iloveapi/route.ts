@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { ensureDbSchema, sql } from "@/lib/db"
 
 export async function POST(req: Request) {
   const body = await req.json()
@@ -26,10 +27,26 @@ export async function POST(req: Request) {
       break
 
     case "signature.completed":
+      await ensureDbSchema()
+      if (typeof data?.signature?.uuid === "string") {
+        await sql`
+          UPDATE signature_request
+          SET status = 'completed', updated_at = now()
+          WHERE uuid = ${data.signature.uuid}
+        `
+      }
       console.log("[iLoveAPI Webhook] Signature completed:", data?.signature?.uuid)
       break
 
     case "signature.declined":
+      await ensureDbSchema()
+      if (typeof data?.signature?.uuid === "string") {
+        await sql`
+          UPDATE signature_request
+          SET status = 'declined', updated_at = now()
+          WHERE uuid = ${data.signature.uuid}
+        `
+      }
       console.log("[iLoveAPI Webhook] Signature declined:", data?.signature?.uuid)
       break
 

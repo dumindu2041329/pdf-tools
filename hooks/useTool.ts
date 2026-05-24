@@ -4,6 +4,14 @@ import { useState, useCallback } from "react"
 import type { ProcessingStep } from "@/components/tools/ProcessingModal"
 import { recordActivity } from "@/lib/activityStore"
 
+function postActivity(toolSlug: string, fileName: string, outputSize: number): void {
+  fetch("/api/activity", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ toolSlug, fileName, outputSize }),
+  }).catch(() => {})
+}
+
 export type ToolState =
   | { status: "idle" }
   | { status: "files-selected"; files: File[] }
@@ -90,6 +98,7 @@ export function useTool(toolSlug: string) {
             outputSize: blob.size,
           });
           recordActivity(toolSlug, result.downloadFilename, blob.size)
+          postActivity(toolSlug, result.downloadFilename, blob.size)
           return;
         } catch (err) {
           console.error("Local split error:", err);
@@ -128,6 +137,7 @@ export function useTool(toolSlug: string) {
             outputSize: blob.size,
           });
           recordActivity(toolSlug, result.downloadFilename, blob.size)
+          postActivity(toolSlug, result.downloadFilename, blob.size)
           return;
         } catch (err) {
           console.error("Local merge error:", err);
@@ -182,6 +192,7 @@ export function useTool(toolSlug: string) {
           outputSize: Number(data.outputSize || 0),
         })
         recordActivity(toolSlug, data.filename || "output.pdf", Number(data.outputSize || 0))
+        postActivity(toolSlug, data.filename || "output.pdf", Number(data.outputSize || 0))
       } catch {
         setState({ status: "error", message: "A network error occurred. Please try again.", retryable: true })
       }
@@ -201,6 +212,7 @@ export function useTool(toolSlug: string) {
       outputSize: file.size,
     })
     recordActivity(toolSlug, file.name, file.size)
+    postActivity(toolSlug, file.name, file.size)
   }, [toolSlug])
 
   return { state, process, reset, forceSuccess }

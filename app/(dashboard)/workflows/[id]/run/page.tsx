@@ -5,13 +5,42 @@ import { useParams, useRouter, useSearchParams } from "next/navigation"
 import { ArrowLeft, Upload, CheckCircle, XCircle, Loader2, ArrowRight, Download } from "lucide-react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
-import { getWorkflowById } from "@/lib/workflowStore"
 import { getToolBySlug } from "@/lib/tools-config"
 import type { Workflow } from "@/lib/workflowStore"
-import { createWorkflowSession, getWorkflowSession, clearWorkflowSession, loadWorkflowSession } from "@/lib/workflowSession"
+import { createWorkflowSession, clearWorkflowSession, loadWorkflowSession } from "@/lib/workflowSession"
 import { toast } from "sonner"
 
 type WorkflowStatus = "idle" | "uploading" | "processing" | "success" | "error"
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
+}
+
+function parseWorkflow(value: unknown): Workflow | null {
+  if (!isRecord(value)) return null
+  const id = typeof value.id === "string" ? value.id : ""
+  const name = typeof value.name === "string" ? value.name : ""
+  const lastRun =
+    value.lastRun === null ? null : typeof value.lastRun === "string" ? value.lastRun : null
+  const runCount = typeof value.runCount === "number" ? value.runCount : 0
+  const createdAt = typeof value.createdAt === "number" ? value.createdAt : Date.now()
+
+  if (!id || !name) return null
+
+  const stepsRaw = value.steps
+  if (!Array.isArray(stepsRaw)) return null
+  const steps = stepsRaw
+    .map((s) => {
+      if (!isRecord(s)) return null
+      const tool = typeof s.tool === "string" ? s.tool : ""
+      const label = typeof s.label === "string" ? s.label : ""
+      if (!tool || !label) return null
+      return { tool, label }
+    })
+    .filter((s): s is { tool: string; label: string } => s !== null)
+
+  return { id, name, steps, lastRun, runCount, createdAt }
+}
 
 interface StepResult {
   status: "pending" | "running" | "success" | "error"
@@ -39,33 +68,12 @@ export default function WorkflowRunPage() {
   const isInitializedRef = useRef(false)
 
   const [state, setState] = useState<WorkflowState>(() => {
-    const loadedWorkflow = getWorkflowById(workflowId)
-    if (isComplete && loadedWorkflow) {
-      const session = getWorkflowSession()
-      if (session) {
-        const lastResult = session.stepResults[session.stepResults.length - 1]
-        if (lastResult) {
-          return {
-            workflow: loadedWorkflow,
-            files: [],
-            status: "success" as WorkflowStatus,
-            currentStepIndex: 0,
-            stepResults: session.stepResults.map(r => ({
-              status: "success" as const,
-              outputBuffer: r?.outputBuffer
-            })),
-            finalResult: { buffer: lastResult.outputBuffer, filename: lastResult.filename },
-            errorMessage: ""
-          }
-        }
-      }
-    }
     return {
-      workflow: loadedWorkflow,
+      workflow: null,
       files: [],
       status: "idle",
       currentStepIndex: 0,
-      stepResults: loadedWorkflow ? Array(loadedWorkflow.steps.length).fill({ status: "pending" }) : [],
+      stepResults: [],
       finalResult: null,
       errorMessage: ""
     }
@@ -75,22 +83,34 @@ export default function WorkflowRunPage() {
     if (isInitializedRef.current) return
     isInitializedRef.current = true
 
-    const loadedWorkflow = getWorkflowById(workflowId)
-    if (!loadedWorkflow) {
-      toast.error("Workflow not found")
-      router.push("/workflows")
-      return
-    }
+    fetch(`/api/workflows/${workflowId}`)
+      .then((r) => r.json())
+      .then((data: unknown) => {
+        if (typeof data === "object" && data !== null) {
+          const d = data as Record<string, unknown>
+          const wf = parseWorkflow(d.workflow)
+          if (!wf) {
+            toast.error("Workflow not found")
+            router.push("/workflows")
+            return
+          }
+          setState((prev) => ({
+            ...prev,
+            workflow: wf,
+            stepResults: Array(wf.steps.length).fill({ status: "pending" }),
+          }))
+        }
+      })
+      .catch(() => {
+        toast.error("Failed to load workflow")
+        router.push("/workflows")
+      })
+  }, [workflowId, router])
 
-    if (loadedWorkflow.id !== state.workflow?.id) {
-      setState(prev => ({
-        ...prev,
-        workflow: loadedWorkflow,
-        stepResults: Array(loadedWorkflow.steps.length).fill({ status: "pending" })
-      }))
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workflowId])
+  useEffect(() => {
+    if (!isComplete || !state.workflow) return
+    fetch(`/api/workflows/${workflowId}/run`, { method: "POST" }).catch(() => {})
+  }, [isComplete, state.workflow, workflowId])
 
   // Hydrate completed workflow session on page load/refresh
   useEffect(() => {

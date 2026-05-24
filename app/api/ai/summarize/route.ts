@@ -1,6 +1,8 @@
 import { auth } from "@clerk/nextjs/server"
 import { NextResponse } from "next/server"
 import { runTool } from "@/lib/iloveapi/tools"
+import { canProcessFile, recordProcessingEvent } from "@/lib/usage"
+import { getUserPlan } from "@/lib/auth"
 
 export async function POST(req: Request) {
   const { userId } = await auth()
@@ -9,6 +11,7 @@ export async function POST(req: Request) {
   }
 
   try {
+    const start = Date.now()
     const formData = await req.formData()
     const fileRaw = formData.get("file")
     if (!fileRaw || typeof fileRaw === "string" || !("arrayBuffer" in fileRaw)) {
@@ -16,6 +19,15 @@ export async function POST(req: Request) {
     }
     const file = fileRaw as File
     const length = (formData.get("length") as string) || "standard"
+
+    const plan = await getUserPlan(userId)
+    const gate = await canProcessFile(userId, file.size, plan, 1)
+    if (!gate.allowed) {
+      return NextResponse.json(
+        { error: gate.reason ?? "Processing limit reached", upgradeRequired: true },
+        { status: 402 }
+      )
+    }
 
     // Step 1: Extract text via iLoveAPI
     const buffer = Buffer.from(await file.arrayBuffer())
@@ -40,6 +52,14 @@ export async function POST(req: Request) {
     if (!apiKey) {
       // Fallback: return extracted text directly
       const lengthLabels = { brief: "Brief", standard: "Standard", detailed: "Detailed" }
+      await recordProcessingEvent({
+        userId,
+        toolSlug: "ai-summarizer",
+        status: "success",
+        engine: "fallback",
+        inputFilesCount: 1,
+        processingTimeMs: Date.now() - start,
+      })
       return NextResponse.json({
         summary: `[${lengthLabels[length as keyof typeof lengthLabels] || "Standard"} Summary]\n\n${extractedText.slice(0, 3000)}`,
         note: "AI summarization requires OPENAI_API_KEY. Showing extracted text instead.",
@@ -69,11 +89,28 @@ export async function POST(req: Request) {
       ],
     })
 
+    await recordProcessingEvent({
+      userId,
+      toolSlug: "ai-summarizer",
+      status: "success",
+      engine: "openai",
+      inputFilesCount: 1,
+      processingTimeMs: Date.now() - start,
+    })
+
     return NextResponse.json({
       summary: completion.choices[0]?.message?.content || "No summary generated.",
     })
   } catch (err) {
     console.error("AI Summarize error:", err)
+    await recordProcessingEvent({
+      userId,
+      toolSlug: "ai-summarizer",
+      status: "error",
+      engine: "openai",
+      inputFilesCount: 1,
+      errorMessage: (err as Error).message || "Summarization failed",
+    })
     return NextResponse.json({ error: "Summarization failed" }, { status: 500 })
   }
 }

@@ -106,16 +106,20 @@ app/                    # Next.js App Router
       profile/          # Profile settings
       security/         # Security settings
     workflows/          # Workflow management
-      [id]/run/         # Run workflow
+      [id]/run/        # Run workflow
       new/              # Create workflow
   (marketing)/          # Public marketing pages
   api/                  # Route handlers
+    activity/           # Activity logging endpoint
     tools/[tool]/       # PDF processing endpoints (120s max)
     download/[id]/      # File download endpoint
     ai/summarize/       # AI summarize endpoint (60s max)
     ai/translate/       # AI translate endpoint (60s max)
     usage/              # Usage tracking endpoint
     webhooks/iloveapi/  # iLoveAPI webhooks
+    workflows/          # Workflow CRUD (GET/POST)
+    workflows/[id]/     # Workflow by ID (GET/PATCH/DELETE)
+    workflows/[id]/run/ # Increment workflow run count
     tools/sign/         # PDF signing endpoint (30s max)
   tools/[slug]/         # Dynamic tool pages
 components/
@@ -130,16 +134,41 @@ lib/
   iloveapi/             # Client, types, tools runner, errors, signature, watermark-mapper, page-number-mapper
   pdf/                  # Client-side PDF helpers, Adobe export converter, office converter, rotate-client, split-client, merge-client
   tools-config.ts       # Tool registry (29 tools)
-  toolValidation.ts     # Per-tool input validation
-  usage.ts              # Plan limits & usage tracking
-  fileStore.ts          # File handling utilities
+  toolValidation.ts      # Per-tool input validation
+  usage.ts              # Plan limits & usage tracking (DB-backed)
+  usageLimits.ts        # Plan limit constants (client-safe)
+  fileStore.ts          # Neon-backed file storage (download_file table)
   extractFormatConverter.ts # Format conversion utilities
   auth.ts               # Clerk plan helpers
   utils.ts              # cn() utility
-  activityStore.ts      # Activity tracking (localStorage)
-  workflowStore.ts      # Workflow management (localStorage)
-  db.ts                 # Neon PostgreSQL database connection
+  activityStore.ts       # Activity tracking (localStorage, mirrored to DB)
+  workflowStore.ts      # Legacy localStorage store (read-only, workflows migrated to DB)
+  db.ts                 # Neon PostgreSQL connection + schema init + helpers
+proxy.ts                # Clerk middleware (Next.js 16 middleware filename)
 ```
+
+### Database (Neon PostgreSQL)
+
+The app connects to Neon via `@neondatabase/serverless`. The connection is configured in `lib/db.ts` using the `DATABASE_URL` environment variable. **Schema is auto-created on first server request** via `ensureDbSchema()` — no manual migrations needed.
+
+#### Schema (6 tables)
+
+| Table | Primary Key | Purpose |
+|---|---|---|
+| `app_user` | `id UUID` | Clerk userId → plan mapping |
+| `workflow` | `id UUID` | Workflow records (name, last_run, run_count) |
+| `workflow_step` | `id UUID` | Ordered steps per workflow (FK → workflow) |
+| `processing_event` | `id UUID` | Every tool run logged with status, engine, file counts, timing |
+| `download_file` | `id UUID` | Stored output files (bytes, filename, content-type, expiry) |
+| `signature_request` | `id UUID` | iLoveAPI sign request status + signer info |
+
+See `lib/db.ts` for the full `CREATE TABLE IF NOT EXISTS` DDL. All tables are created idempotently on first use.
+
+#### DB Helper Functions (lib/db.ts)
+
+- `sql` — tagged template literal for type-safe Neon queries
+- `ensureDbSchema()` — runs all CREATE TABLE IF NOT EXISTS statements (called at the top of every API route)
+- `upsertUser(userId)` — inserts or updates the `app_user` row for a Clerk user
 
 ### Tool Pipeline
 1. `FileUploader` component accepts user files
@@ -148,7 +177,7 @@ lib/
    - **iLoveAPI tools**: `runTool()` handles the API call and returns processed file
    - **Adobe tools** (`pdf-to-word`, `pdf-to-excel`, `pdf-to-powerpoint`, `ocr-pdf`): Adobe PDF Services SDK
    - **Local tools** (`local-split`, `local-merge`, `local-rotate`): pdf-lib processed client-side or server-side
-4. Result file is stored and `downloadId` returned to client
+4. Result is stored in Neon (`download_file` table), `downloadId` returned to client
 
 ### PDF Processing Strategies
 
@@ -166,13 +195,20 @@ lib/
 | `ai-summarizer`, `translate-pdf` | Server | OpenAI (via `/api/ai/*`) |
 
 ### API Routes
-- `POST /api/tools/[tool]` — Main PDF processing endpoint (120s max duration on Vercel)
-- `GET /api/download/[id]` — File download endpoint
-- `POST /api/tools/sign` — PDF signing endpoint (iLoveAPI sign tool, 30s max)
-- `POST /api/ai/summarize` — AI PDF summarization (60s max)
-- `POST /api/ai/translate` — AI PDF translation (60s max)
-- `GET /api/usage` — Usage tracking
-- `POST /api/webhooks/iloveapi` — iLoveAPI webhook handler
+
+| Route | Method | Description |
+|---|---|---|
+| `/api/tools/[tool]` | POST | Main PDF processing endpoint — records `processing_event`, stores output in `download_file` |
+| `/api/tools/sign` | POST | PDF signing via iLoveAPI — stores `signature_request` |
+| `/api/download/[id]` | GET | Stream file from Neon `download_file` table |
+| `/api/ai/summarize` | POST | AI summarization — records `processing_event` |
+| `/api/ai/translate` | POST | AI translation — records `processing_event` |
+| `/api/usage` | GET | Returns daily/monthly usage counts from `processing_event` |
+| `/api/activity` | GET/POST | Activity log (reads from DB for server tools, writes for all tools) |
+| `/api/workflows` | GET/POST | List workflows, create workflow |
+| `/api/workflows/[id]` | GET/PATCH/DELETE | Get/update/delete single workflow |
+| `/api/workflows/[id]/run` | POST | Increment workflow `run_count`, update `last_run` |
+| `/api/webhooks/iloveapi` | POST | iLoveAPI webhooks — updates `processing_event` status and `signature_request` |
 
 ### Local Tools Processing
 - **local-merge** (`merge-pdf`): Uses `pdf-lib` to merge PDFs entirely client-side. Handled in `useTool` hook via dynamic import of `processMergeLocal()`.
@@ -206,16 +242,17 @@ This tool requires `mode` to be preserved in the API call to distinguish between
 | ai (2) | ai-summarizer, translate-pdf |
 
 ### Workflows
-Users can create multi-step workflows by chaining tools together:
-- Stored in localStorage via `workflowStore.ts`
-- Each workflow has `id`, `name`, `steps[]`, `lastRun`, `runCount`, `createdAt`
-- Workflows can be run via the `/app/(dashboard)/workflows/[id]/run` page
+Multi-step tool chains stored in Neon (migrated from localStorage):
+- **Storage**: `workflow` + `workflow_step` tables in Neon
+- **API**: `/api/workflows` (CRUD), `/api/workflows/[id]/run` (increments run count)
+- **UI pages**: `app/(dashboard)/workflows/` — reads and writes via the REST API
+- **Client-side persistence**: `workflowStore.ts` retained for offline-first reads; UI always calls DB via API
 
 ### Activity Tracking
-User activity is recorded in localStorage via `activityStore.ts`:
-- Tracks `toolSlug`, `fileName`, `outputSize`, `timestamp`
-- Limited to 50 most recent activities
-- Used by the UsageMeter component
+- **Server-side tools** (`/api/tools/[tool]`, `/api/ai/*`): writes to `processing_event` table + Neon `activity_event` table
+- **Local tools** (merge, split, rotate client-side): writes to localStorage + POSTs to `/api/activity` to mirror to Neon
+- **Client display**: `activityStore.ts` reads from localStorage for real-time UI updates; billing page reads from DB via `/api/usage`
+- Limited to 50 most recent local entries
 
 ## Security Rules
 

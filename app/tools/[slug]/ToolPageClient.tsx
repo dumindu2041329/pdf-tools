@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect, useCallback, useMemo } from "react"
+import { useState, useRef, useEffect, useCallback } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { getToolBySlug } from "@/lib/tools-config"
 import { FileUploader } from "@/components/tools/FileUploader"
@@ -13,7 +13,7 @@ import { PageNumberPreview } from "@/components/tools/options/PageNumberPreview"
 import { Button } from "@/components/ui/button"
 import { useTool } from "@/hooks/useTool"
 import { validateToolOptions } from "@/lib/toolValidation"
-import { getWorkflowById } from "@/lib/workflowStore"
+import type { Workflow } from "@/lib/workflowStore"
 import { getWorkflowSession, updateWorkflowSession, loadWorkflowSession } from "@/lib/workflowSession"
 import type { WorkflowSession } from "@/lib/workflowSession"
 import { Zap, CheckCircle, Clock, ArrowRight, ArrowLeft, Download } from "lucide-react"
@@ -35,11 +35,25 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
   const stepIndex = parseInt(searchParams.get("stepIndex") || "0", 10)
   const isWorkflowMode = workflowId !== null && !isNaN(stepIndex)
 
-  const workflow = useMemo(() => {
-    if (isWorkflowMode && workflowId) {
-      return getWorkflowById(workflowId)
+  const [workflow, setWorkflow] = useState<Workflow | null>(null)
+
+  useEffect(() => {
+    if (!isWorkflowMode || !workflowId) {
+      setWorkflow(null)
+      return
     }
-    return null
+    fetch(`/api/workflows/${workflowId}`)
+      .then((r) => r.json())
+      .then((data: unknown) => {
+        if (typeof data === "object" && data !== null) {
+          const d = data as Record<string, unknown>
+          const wf = typeof d.workflow === "object" && d.workflow !== null ? (d.workflow as Workflow) : null
+          setWorkflow(wf)
+        } else {
+          setWorkflow(null)
+        }
+      })
+      .catch(() => setWorkflow(null))
   }, [isWorkflowMode, workflowId])
 
   const [workflowSession, setWorkflowSession] = useState<WorkflowSession | null>(null)

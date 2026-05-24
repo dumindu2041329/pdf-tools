@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { auth } from "@clerk/nextjs/server"
 import { runTool } from "@/lib/iloveapi/tools"
 import { ILoveAPIError, mapILoveAPIError } from "@/lib/iloveapi/errors"
 import { convertExtractFormat } from "@/lib/extractFormatConverter"
@@ -10,6 +11,8 @@ import { processRotateLocal } from "@/lib/pdf/rotate-client"
 import { getToolBySlug } from "@/lib/tools-config"
 import { mapWatermarkOptions } from "@/lib/iloveapi/watermark-mapper"
 import { mapPageNumberOptions } from "@/lib/iloveapi/page-number-mapper"
+import { canProcessFile, recordProcessingEvent } from "@/lib/usage"
+import { getUserPlan } from "@/lib/auth"
 
 export const maxDuration = 60
 
@@ -20,6 +23,7 @@ export async function POST(
   { params }: { params: Promise<{ tool: string }> }
 ) {
   const { tool } = await params
+  const { userId } = await auth()
 
   const contentType = req.headers.get("content-type")
   const contentLength = req.headers.get("content-length")
@@ -68,9 +72,21 @@ export async function POST(
   const optionsRaw = formData.get("options")
   const options = optionsRaw ? JSON.parse(optionsRaw as string) : {}
 
+  const userPlan = userId ? await getUserPlan(userId) : null
+
   if (files.length === 0) {
     if (tool === "html-to-pdf" && options.url) {
       try {
+        if (userId) {
+          const gate = await canProcessFile(userId, 0, userPlan ?? "free", 1)
+          if (!gate.allowed) {
+            return NextResponse.json(
+              { error: gate.reason ?? "Processing limit reached", upgradeRequired: true },
+              { status: 402 }
+            )
+          }
+        }
+
         const start = Date.now()
         const result = await runTool({
           tool: "htmlpdf",
@@ -82,7 +98,20 @@ export async function POST(
           result.buffer instanceof Uint8Array
             ? result.buffer
             : new Uint8Array(result.buffer as ArrayBuffer)
-        const downloadId = storeFile(fileData, result.downloadFilename, "application/pdf")
+        const eventId = await recordProcessingEvent({
+          userId,
+          toolSlug: tool,
+          status: "success",
+          engine: "iloveapi",
+          inputFilesCount: 1,
+          outputFilename: result.downloadFilename,
+          outputSizeBytes: result.outputFilesize,
+          processingTimeMs: Date.now() - start,
+        })
+        const downloadId = await storeFile(fileData, result.downloadFilename, "application/pdf", {
+          userId,
+          eventId,
+        })
 
         return NextResponse.json({
           downloadId,
@@ -96,6 +125,17 @@ export async function POST(
       }
     }
     return NextResponse.json({ error: "No files provided" }, { status: 400 })
+  }
+
+  if (userId) {
+    const totalBytes = files.reduce((sum, f) => sum + f.buffer.byteLength, 0)
+    const gate = await canProcessFile(userId, totalBytes, userPlan ?? "free", files.length)
+    if (!gate.allowed) {
+      return NextResponse.json(
+        { error: gate.reason ?? "Processing limit reached", upgradeRequired: true },
+        { status: 402 }
+      )
+    }
   }
 
   if (tool === "jpg-to-pdf" && options.merge_after === false) {
@@ -120,7 +160,20 @@ export async function POST(
 
       const zipBuffer = await zip.generateAsync({ type: "uint8array" })
       const elapsed = ((Date.now() - start) / 1000).toFixed(2)
-      const downloadId = storeFile(zipBuffer, "converted-pdfs.zip", "application/zip")
+      const eventId = await recordProcessingEvent({
+        userId,
+        toolSlug: tool,
+        status: "success",
+        engine: "iloveapi",
+        inputFilesCount: files.length,
+        outputFilename: "converted-pdfs.zip",
+        outputSizeBytes: zipBuffer.byteLength,
+        processingTimeMs: Date.now() - start,
+      })
+      const downloadId = await storeFile(zipBuffer, "converted-pdfs.zip", "application/zip", {
+        userId,
+        eventId,
+      })
 
       return NextResponse.json({
         downloadId,
@@ -148,7 +201,20 @@ export async function POST(
       )
 
       const elapsed = ((Date.now() - start) / 1000).toFixed(2)
-      const downloadId = storeFile(result.buffer, result.filename, "application/pdf")
+      const eventId = await recordProcessingEvent({
+        userId,
+        toolSlug: tool,
+        status: "success",
+        engine: "adobe",
+        inputFilesCount: 1,
+        outputFilename: result.filename,
+        outputSizeBytes: result.buffer.byteLength,
+        processingTimeMs: Date.now() - start,
+      })
+      const downloadId = await storeFile(result.buffer, result.filename, "application/pdf", {
+        userId,
+        eventId,
+      })
 
       return NextResponse.json({
         downloadId,
@@ -172,10 +238,21 @@ export async function POST(
       )
       const elapsed = ((Date.now() - start) / 1000).toFixed(2)
 
-      const downloadId = storeFile(
+      const eventId = await recordProcessingEvent({
+        userId,
+        toolSlug: tool,
+        status: "success",
+        engine: "adobe",
+        inputFilesCount: 1,
+        outputFilename: result.filename,
+        outputSizeBytes: result.buffer.byteLength,
+        processingTimeMs: Date.now() - start,
+      })
+      const downloadId = await storeFile(
         result.buffer,
         result.filename,
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        { userId, eventId }
       )
 
       return NextResponse.json({
@@ -200,10 +277,21 @@ export async function POST(
       )
       const elapsed = ((Date.now() - start) / 1000).toFixed(2)
 
-      const downloadId = storeFile(
+      const eventId = await recordProcessingEvent({
+        userId,
+        toolSlug: tool,
+        status: "success",
+        engine: "adobe",
+        inputFilesCount: 1,
+        outputFilename: result.filename,
+        outputSizeBytes: result.buffer.byteLength,
+        processingTimeMs: Date.now() - start,
+      })
+      const downloadId = await storeFile(
         result.buffer,
         result.filename,
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        { userId, eventId }
       )
 
       return NextResponse.json({
@@ -228,10 +316,21 @@ export async function POST(
       )
       const elapsed = ((Date.now() - start) / 1000).toFixed(2)
 
-      const downloadId = storeFile(
+      const eventId = await recordProcessingEvent({
+        userId,
+        toolSlug: tool,
+        status: "success",
+        engine: "adobe",
+        inputFilesCount: 1,
+        outputFilename: result.filename,
+        outputSizeBytes: result.buffer.byteLength,
+        processingTimeMs: Date.now() - start,
+      })
+      const downloadId = await storeFile(
         result.buffer,
         result.filename,
-        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        { userId, eventId }
       )
 
       return NextResponse.json({
@@ -260,6 +359,16 @@ export async function POST(
 
       const resultText = new TextDecoder().decode(result.buffer as ArrayBuffer)
 
+      await recordProcessingEvent({
+        userId,
+        toolSlug: tool,
+        status: "success",
+        engine: "iloveapi",
+        inputFilesCount: files.length,
+        outputSizeBytes: resultText.length,
+        processingTimeMs: Date.now() - start,
+      })
+
       return NextResponse.json({
         validationSuccess: true,
         message: "PDF validation is success",
@@ -287,7 +396,20 @@ export async function POST(
       )
 
       const elapsed = ((Date.now() - start) / 1000).toFixed(2)
-      const downloadId = storeFile(result.buffer, result.downloadFilename, "application/pdf")
+      const eventId = await recordProcessingEvent({
+        userId,
+        toolSlug: tool,
+        status: "success",
+        engine: "pdf-lib",
+        inputFilesCount: files.length,
+        outputFilename: result.downloadFilename,
+        outputSizeBytes: result.buffer.byteLength,
+        processingTimeMs: Date.now() - start,
+      })
+      const downloadId = await storeFile(result.buffer, result.downloadFilename, "application/pdf", {
+        userId,
+        eventId,
+      })
 
       return NextResponse.json({
         downloadId,
@@ -383,7 +505,19 @@ export async function POST(
                   : downloadFilename.endsWith(".md")
                     ? "text/markdown"
                     : "application/pdf"
-    const downloadId = storeFile(fileData, downloadFilename, mimeType)
+    const timerSeconds = Number(result.timer)
+    const processingTimeMs = Number.isFinite(timerSeconds) ? Math.round(timerSeconds * 1000) : undefined
+    const eventId = await recordProcessingEvent({
+      userId,
+      toolSlug: tool,
+      status: "success",
+      engine: "iloveapi",
+      inputFilesCount: files.length,
+      outputFilename: downloadFilename,
+      outputSizeBytes: fileData.byteLength,
+      processingTimeMs,
+    })
+    const downloadId = await storeFile(fileData, downloadFilename, mimeType, { userId, eventId })
 
     return NextResponse.json({
       downloadId,
@@ -395,6 +529,14 @@ export async function POST(
     if (err instanceof ILoveAPIError) {
       console.error("[ILoveAPIError Detailed]", JSON.stringify(err, null, 2))
       const { userMessage } = mapILoveAPIError(err)
+      await recordProcessingEvent({
+        userId,
+        toolSlug: tool,
+        status: "error",
+        engine: "iloveapi",
+        inputFilesCount: files.length,
+        errorMessage: userMessage,
+      })
       return NextResponse.json({ error: userMessage, type: err.type }, { status: 400 })
     }
     if ((err as Error).message === "ILOVEAPI_OUT_OF_CREDITS") {
@@ -427,6 +569,14 @@ export async function POST(
         errMessage = data
       }
     }
+    await recordProcessingEvent({
+      userId,
+      toolSlug: tool,
+      status: "error",
+      engine: "iloveapi",
+      inputFilesCount: files.length,
+      errorMessage: errMessage,
+    })
     return NextResponse.json({ error: errMessage }, { status: 500 })
   }
 }

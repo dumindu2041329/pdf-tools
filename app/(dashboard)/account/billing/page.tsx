@@ -15,8 +15,7 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { UsageMeter } from "@/components/shared/UsageMeter"
-import { getStats } from "@/lib/activityStore"
-import { getLimitsForPlan } from "@/lib/usage"
+import { getLimitsForPlan } from "@/lib/usageLimits"
 
 const plans = [
   {
@@ -73,19 +72,25 @@ const plans = [
 
 export default function BillingPage() {
   const { user, isLoaded } = useUser()
-  const [stats, setStats] = useState(() => getStats())
+  const [stats, setStats] = useState<{ filesToday: number; filesThisMonth: number }>({
+    filesToday: 0,
+    filesThisMonth: 0,
+  })
 
   useEffect(() => {
-    function refresh() {
-      setStats(getStats())
-    }
-    window.addEventListener("activity-update", refresh)
-    window.addEventListener("storage", refresh)
-    return () => {
-      window.removeEventListener("activity-update", refresh)
-      window.removeEventListener("storage", refresh)
-    }
-  }, [])
+    if (!isLoaded || !user) return
+    fetch("/api/usage")
+      .then((r) => r.json())
+      .then((data: unknown) => {
+        if (typeof data === "object" && data !== null) {
+          const d = data as Record<string, unknown>
+          const filesToday = typeof d.filesProcessedToday === "number" ? d.filesProcessedToday : 0
+          const filesThisMonth = typeof d.filesProcessedThisMonth === "number" ? d.filesProcessedThisMonth : 0
+          setStats({ filesToday, filesThisMonth })
+        }
+      })
+      .catch(() => {})
+  }, [isLoaded, user])
 
   if (!isLoaded || !user) {
     return (

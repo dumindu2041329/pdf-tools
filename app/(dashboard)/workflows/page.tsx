@@ -24,7 +24,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import type { Workflow } from "@/lib/workflowStore"
-import { getWorkflows, deleteWorkflow, runWorkflow } from "@/lib/workflowStore"
 import { getToolBySlug } from "@/lib/tools-config"
 
 export default function WorkflowsPage() {
@@ -51,27 +50,32 @@ export default function WorkflowsPage() {
   )
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- Resetting to page 1 when search changes
     setCurrentPage(1)
   }, [searchQuery])
 
   useEffect(() => {
-    function refresh() {
-      setWorkflows(getWorkflows())
+    async function refresh() {
+      try {
+        const res = await fetch("/api/workflows")
+        if (!res.ok) {
+          setWorkflows([])
+          return
+        }
+        const data = (await res.json()) as unknown
+        if (typeof data === "object" && data !== null) {
+          const d = data as Record<string, unknown>
+          const list = Array.isArray(d.workflows) ? (d.workflows as Workflow[]) : []
+          setWorkflows(list)
+        }
+      } catch {
+        setWorkflows([])
+      }
     }
 
     refresh()
-    window.addEventListener("workflows-update", refresh)
-    window.addEventListener("storage", refresh)
-
-    return () => {
-      window.removeEventListener("workflows-update", refresh)
-      window.removeEventListener("storage", refresh)
-    }
   }, [])
 
   function handleRunWorkflow(id: string) {
-    runWorkflow(id)
     router.push(`/workflows/${id}/run`)
   }
 
@@ -82,9 +86,22 @@ export default function WorkflowsPage() {
     }
   }
 
-  function confirmDelete() {
-    if (deleteTarget) {
-      deleteWorkflow(deleteTarget.id)
+  async function confirmDelete() {
+    if (!deleteTarget) return
+    try {
+      await fetch(`/api/workflows/${deleteTarget.id}`, { method: "DELETE" })
+      const res = await fetch("/api/workflows")
+      const data = (await res.json()) as unknown
+      if (typeof data === "object" && data !== null) {
+        const d = data as Record<string, unknown>
+        const list = Array.isArray(d.workflows) ? (d.workflows as Workflow[]) : []
+        setWorkflows(list)
+      } else {
+        setWorkflows([])
+      }
+    } catch {
+      setWorkflows([])
+    } finally {
       setDeleteTarget(null)
     }
   }
