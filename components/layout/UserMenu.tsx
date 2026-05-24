@@ -4,7 +4,6 @@ import Link from "next/link"
 import Image from "next/image"
 import { useUser, useClerk } from "@clerk/nextjs"
 import {
-  LayoutDashboard,
   GitBranch,
   Settings,
   LogOut,
@@ -63,12 +62,6 @@ export function UserMenu() {
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem asChild>
-          <Link href="/dashboard" className="flex items-center gap-2">
-            <LayoutDashboard className="h-4 w-4" />
-            Dashboard
-          </Link>
-        </DropdownMenuItem>
         <DropdownMenuItem asChild>
           <Link href="/workflows" className="flex items-center gap-2">
             <GitBranch className="h-4 w-4" />

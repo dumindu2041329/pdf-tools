@@ -14,6 +14,7 @@
 | **PDF Engine** | iLoveAPI (`@ilovepdf/ilovepdf-nodejs`) + Adobe Node SDK (`@adobe/pdfservices-node-sdk` ^4.1.0) + `pdf-lib` / `pdfjs-dist` |
 | **AI Services** | OpenAI (`openai` ^6.33.0) |
 | **UI/UX** | framer-motion ^12.38.0, three.js ^0.183.2, @dnd-kit (drag & drop), sonner ^2.0.7 |
+| **Database** | Neon PostgreSQL (`@neondatabase/serverless`) |
 | **Package Manager** | npm |
 | **Deployment** | Vercel |
 
@@ -98,18 +99,27 @@ export function ToolCard({ title }: Props) {  // named export
 ```
 app/                    # Next.js App Router
   (auth)/               # Auth pages (Clerk)
+  (dashboard)/          # Protected dashboard
+    account/            # Account management
+      _components/      # Account sidebar
+      billing/          # Billing page
+      profile/          # Profile settings
+      security/         # Security settings
+    workflows/          # Workflow management
+      [id]/run/         # Run workflow
+      new/              # Create workflow
   (marketing)/          # Public marketing pages
   api/                  # Route handlers
-    tools/[tool]/       # PDF processing endpoints
+    tools/[tool]/       # PDF processing endpoints (120s max)
     download/[id]/      # File download endpoint
-    ai/summarize/       # AI summarize endpoint
-    ai/translate/       # AI translate endpoint
+    ai/summarize/       # AI summarize endpoint (60s max)
+    ai/translate/       # AI translate endpoint (60s max)
     usage/              # Usage tracking endpoint
     webhooks/iloveapi/  # iLoveAPI webhooks
-    tools/sign/         # PDF signing endpoint
+    tools/sign/         # PDF signing endpoint (30s max)
   tools/[slug]/         # Dynamic tool pages
 components/
-  layout/               # Navbar, Footer, ToolsDropdown
+  layout/               # Navbar, Footer, ToolsDropdown, UserMenu
   shared/               # UsageMeter
   theme/                # ThemeProvider, ThemeToggle, Toaster
   tools/options/        # Per-tool option forms (WatermarkOptions, etc.)
@@ -117,8 +127,8 @@ components/
   ui/                   # shadcn/ui primitives + glsl-hills (Three.js)
 hooks/                  # Custom hooks (useTool)
 lib/
-  iloveapi/             # Client, types, tools runner, errors, signature, watermark-mapper
-  pdf/                  # Client-side PDF helpers, Adobe export converter, office converter, rotate-client, split-client
+  iloveapi/             # Client, types, tools runner, errors, signature, watermark-mapper, page-number-mapper
+  pdf/                  # Client-side PDF helpers, Adobe export converter, office converter, rotate-client, split-client, merge-client
   tools-config.ts       # Tool registry (29 tools)
   toolValidation.ts     # Per-tool input validation
   usage.ts              # Plan limits & usage tracking
@@ -126,6 +136,9 @@ lib/
   extractFormatConverter.ts # Format conversion utilities
   auth.ts               # Clerk plan helpers
   utils.ts              # cn() utility
+  activityStore.ts      # Activity tracking (localStorage)
+  workflowStore.ts      # Workflow management (localStorage)
+  db.ts                 # Neon PostgreSQL database connection
 ```
 
 ### Tool Pipeline
@@ -134,14 +147,14 @@ lib/
 3. API handler routes to appropriate processor:
    - **iLoveAPI tools**: `runTool()` handles the API call and returns processed file
    - **Adobe tools** (`pdf-to-word`, `pdf-to-excel`, `pdf-to-powerpoint`, `ocr-pdf`): Adobe PDF Services SDK
-   - **Local tools** (`local-split`, `local-rotate`): pdf-lib processed client-side or server-side
+   - **Local tools** (`local-split`, `local-merge`, `local-rotate`): pdf-lib processed client-side or server-side
 4. Result file is stored and `downloadId` returned to client
 
 ### PDF Processing Strategies
 
 | Tool Slug | Processing | Engine |
 |---|---|---|
-| `merge-pdf` | Server | iLoveAPI |
+| `merge-pdf` | Client-side | pdf-lib (`merge-client.ts`) |
 | `split-pdf`, `remove-pages`, `organize-pdf` | Client-side | pdf-lib (`split-client.ts`) |
 | `rotate-pdf` | Server | pdf-lib (`rotate-client.ts`) |
 | `compress-pdf`, `repair-pdf`, `watermark-pdf`, `add-page-numbers`, `edit-pdf` | Server | iLoveAPI |
@@ -153,15 +166,16 @@ lib/
 | `ai-summarizer`, `translate-pdf` | Server | OpenAI (via `/api/ai/*`) |
 
 ### API Routes
-- `POST /api/tools/[tool]` — Main PDF processing endpoint (60s max duration)
+- `POST /api/tools/[tool]` — Main PDF processing endpoint (120s max duration on Vercel)
 - `GET /api/download/[id]` — File download endpoint
-- `POST /api/tools/sign` — PDF signing endpoint (iLoveAPI sign tool)
-- `POST /api/ai/summarize` — AI PDF summarization
-- `POST /api/ai/translate` — AI PDF translation
+- `POST /api/tools/sign` — PDF signing endpoint (iLoveAPI sign tool, 30s max)
+- `POST /api/ai/summarize` — AI PDF summarization (60s max)
+- `POST /api/ai/translate` — AI PDF translation (60s max)
 - `GET /api/usage` — Usage tracking
 - `POST /api/webhooks/iloveapi` — iLoveAPI webhook handler
 
 ### Local Tools Processing
+- **local-merge** (`merge-pdf`): Uses `pdf-lib` to merge PDFs entirely client-side. Handled in `useTool` hook via dynamic import of `processMergeLocal()`.
 - **local-split** (`split-pdf`, `remove-pages`, `organize-pdf`): Uses `pdf-lib` to process PDFs entirely client-side. Handled in `useTool` hook via dynamic import of `processSplitLocal()`.
 - **local-rotate** (`rotate-pdf`): Uses `pdf-lib` server-side via `processRotateLocal()` in `rotate-client.ts`.
 
@@ -190,6 +204,18 @@ This tool requires `mode` to be preserved in the API call to distinguish between
 | edit (4) | rotate-pdf, watermark-pdf, add-page-numbers, edit-pdf |
 | security (3) | unlock-pdf, protect-pdf, sign-pdf |
 | ai (2) | ai-summarizer, translate-pdf |
+
+### Workflows
+Users can create multi-step workflows by chaining tools together:
+- Stored in localStorage via `workflowStore.ts`
+- Each workflow has `id`, `name`, `steps[]`, `lastRun`, `runCount`, `createdAt`
+- Workflows can be run via the `/app/(dashboard)/workflows/[id]/run` page
+
+### Activity Tracking
+User activity is recorded in localStorage via `activityStore.ts`:
+- Tracks `toolSlug`, `fileName`, `outputSize`, `timestamp`
+- Limited to 50 most recent activities
+- Used by the UsageMeter component
 
 ## Security Rules
 
