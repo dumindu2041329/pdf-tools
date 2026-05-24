@@ -10,6 +10,8 @@ import {
   MoreHorizontal,
   Search,
   X,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react"
 import Link from "next/link"
 
@@ -30,6 +32,8 @@ export default function WorkflowsPage() {
   const [workflows, setWorkflows] = useState<Workflow[]>([])
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
+  const [currentPage, setCurrentPage] = useState(1)
+  const itemsPerPage = 9
 
   const filteredWorkflows = workflows.filter((workflow) => {
     if (!searchQuery.trim()) return true
@@ -39,6 +43,17 @@ export default function WorkflowsPage() {
       step.label.toLowerCase().includes(query)
     )
   })
+
+  const totalPages = Math.ceil(filteredWorkflows.length / itemsPerPage)
+  const paginatedWorkflows = filteredWorkflows.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  )
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Resetting to page 1 when search changes
+    setCurrentPage(1)
+  }, [searchQuery])
 
   useEffect(() => {
     function refresh() {
@@ -143,7 +158,7 @@ export default function WorkflowsPage() {
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filteredWorkflows.map((workflow) => (
+          {paginatedWorkflows.map((workflow) => (
             <div
               key={workflow.id}
               className="rounded-xl border border-border bg-card p-5 transition-colors hover:bg-accent/50"
@@ -202,6 +217,41 @@ export default function WorkflowsPage() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="mt-8 flex items-center justify-center gap-2">
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+            disabled={currentPage === 1}
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <div className="flex items-center gap-1">
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+              <Button
+                key={page}
+                variant={page === currentPage ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setCurrentPage(page)}
+                className="w-10"
+              >
+                {page}
+              </Button>
+            ))}
+          </div>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+            disabled={currentPage === totalPages}
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
         </div>
       )}
 

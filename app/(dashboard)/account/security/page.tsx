@@ -4,13 +4,11 @@ import { useUser, useClerk } from "@clerk/nextjs"
 import { useState } from "react"
 import {
   Lock,
-  Shield,
   Monitor,
   Loader2,
   Check,
   Eye,
   EyeOff,
-  Smartphone,
   MonitorSmartphone,
   Globe,
   LogOut,
@@ -41,7 +39,6 @@ export default function SecurityPage() {
   }
 
   const hasPassword = user.passwordEnabled
-  const mfaEnabled = user.twoFactorEnabled
 
   const handlePasswordChange = async () => {
     setPasswordError("")
@@ -215,46 +212,6 @@ export default function SecurityPage() {
             )}
           </div>
         </div>
-      </div>
-
-      {/* Two-Factor Authentication */}
-      <div className="rounded-xl border border-border bg-card p-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-              <Shield className="h-5 w-5 text-primary" />
-            </div>
-            <div>
-              <h2 className="text-lg font-semibold">
-                Two-Factor Authentication
-              </h2>
-              <p className="text-sm text-muted-foreground">
-                {mfaEnabled
-                  ? "Your account has an extra layer of security"
-                  : "Add an extra layer of security to your account"}
-              </p>
-            </div>
-          </div>
-          <div
-            className={`rounded-full px-3 py-1 text-xs font-medium ${
-              mfaEnabled
-                ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
-                : "bg-muted text-muted-foreground"
-            }`}
-          >
-            {mfaEnabled ? "Enabled" : "Disabled"}
-          </div>
-        </div>
-        {!mfaEnabled && (
-          <div className="mt-4 flex items-center gap-3">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Smartphone className="h-4 w-4" />
-              <span>
-                Secure your account with an authenticator app or SMS code
-              </span>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Active Sessions */}
