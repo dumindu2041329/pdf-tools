@@ -8,6 +8,8 @@ import {
   Play,
   Trash2,
   MoreHorizontal,
+  Search,
+  X,
 } from "lucide-react"
 import Link from "next/link"
 
@@ -27,6 +29,16 @@ export default function WorkflowsPage() {
   const router = useRouter()
   const [workflows, setWorkflows] = useState<Workflow[]>([])
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
+  const [searchQuery, setSearchQuery] = useState("")
+
+  const filteredWorkflows = workflows.filter((workflow) => {
+    if (!searchQuery.trim()) return true
+    const query = searchQuery.toLowerCase()
+    if (workflow.name.toLowerCase().includes(query)) return true
+    return workflow.steps.some((step) =>
+      step.label.toLowerCase().includes(query)
+    )
+  })
 
   useEffect(() => {
     function refresh() {
@@ -80,27 +92,58 @@ export default function WorkflowsPage() {
         </Button>
       </div>
 
+      {/* Search */}
+      {workflows.length > 0 && (
+        <div className="mb-6">
+          <div className="relative max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Search workflows..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full rounded-lg border border-border bg-card pl-10 pr-10 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Workflow List */}
-      {workflows.length === 0 ? (
+      {filteredWorkflows.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border bg-card p-12 text-center">
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-muted mb-4">
             <GitBranch className="h-7 w-7 text-muted-foreground" />
           </div>
-          <h3 className="text-lg font-semibold mb-1">No workflows yet</h3>
+          <h3 className="text-lg font-semibold mb-1">
+            {searchQuery ? "No workflows found" : "No workflows yet"}
+          </h3>
           <p className="text-muted-foreground mb-6 max-w-md mx-auto">
-            Create your first workflow to automate repetitive PDF tasks. Chain
-            tools like merge, compress, and convert into a single pipeline.
+            {searchQuery
+              ? `No workflows match "${searchQuery}". Try a different search term.`
+              : "Create your first workflow to automate repetitive PDF tasks. Chain tools like merge, compress, and convert into a single pipeline."
+            }
           </p>
-          <Button asChild>
-            <Link href="/workflows/new" className="flex items-center gap-2">
-              <Plus className="h-4 w-4" />
-              Create your first workflow
-            </Link>
-          </Button>
+          {!searchQuery && (
+            <Button asChild>
+              <Link href="/workflows/new" className="flex items-center gap-2">
+                <Plus className="h-4 w-4" />
+                Create your first workflow
+              </Link>
+            </Button>
+          )}
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {workflows.map((workflow) => (
+          {filteredWorkflows.map((workflow) => (
             <div
               key={workflow.id}
               className="rounded-xl border border-border bg-card p-5 transition-colors hover:bg-accent/50"

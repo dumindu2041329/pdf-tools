@@ -50,7 +50,6 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
 
     const syncSession = getWorkflowSession()
     if (syncSession) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- Hydrating session synchronously on initial mount if available
       setWorkflowSession(syncSession)
     } else {
       loadWorkflowSession().then((loadedSession) => {
@@ -70,7 +69,6 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
 
   // Reset loaded state when stepIndex changes to allow loading new step files
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- Resetting files on step transition
     setFilesLoaded(false)
     setFiles([])
     setIsSavingAndRedirecting(false)
@@ -81,11 +79,54 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
 
     const prevResult = stepIndex > 0 ? workflowSession.stepResults[stepIndex - 1] : null
     if (prevResult) {
-      const blob = new Blob([prevResult.outputBuffer], { type: "application/pdf" })
-      const file = new File([blob], prevResult.filename || "input.pdf", { type: "application/pdf" })
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- Injecting workflow file into state
-      setFiles([file])
-      setFilesLoaded(true)
+      const buffer = prevResult.outputBuffer
+      const view = new Uint8Array(buffer.slice(0, 4))
+      const isZip = view[0] === 0x50 && view[1] === 0x4B && view[2] === 0x03 && view[3] === 0x04
+
+      if (isZip) {
+        import("jszip").then(({ default: JSZip }) => {
+          JSZip.loadAsync(buffer).then((zip) => {
+            const filePromises: Promise<File>[] = []
+            zip.forEach((relativePath, file) => {
+              if (!file.dir) {
+                filePromises.push(
+                  file.async("arraybuffer").then((data) => {
+                    const mimeType = relativePath.endsWith(".jpg") || relativePath.endsWith(".jpeg")
+                      ? "image/jpeg"
+                      : relativePath.endsWith(".png")
+                      ? "image/png"
+                      : relativePath.endsWith(".gif")
+                      ? "image/gif"
+                      : "application/pdf"
+                    return new File([data], relativePath.split("/").pop() || "file", { type: mimeType })
+                  })
+                )
+              }
+            })
+            Promise.all(filePromises).then((extractedFiles) => {
+              if (extractedFiles.length > 0) {
+                setFiles(extractedFiles)
+                setFilesLoaded(true)
+              } else {
+                const blob = new Blob([buffer], { type: "application/pdf" })
+                const fallbackFile = new File([blob], prevResult.filename || "input.pdf", { type: "application/pdf" })
+                setFiles([fallbackFile])
+                setFilesLoaded(true)
+              }
+            })
+          }).catch(() => {
+            const blob = new Blob([buffer], { type: "application/pdf" })
+            const fallbackFile = new File([blob], prevResult.filename || "input.pdf", { type: "application/pdf" })
+            setFiles([fallbackFile])
+            setFilesLoaded(true)
+          })
+        })
+      } else {
+        const blob = new Blob([buffer], { type: "application/pdf" })
+        const file = new File([blob], prevResult.filename || "input.pdf", { type: "application/pdf" })
+        setFiles([file])
+        setFilesLoaded(true)
+      }
     } else if (workflowSession.inputFiles.length > 0 && stepIndex === 0) {
       const fileObjects = workflowSession.inputFiles.map(wf => {
         const blob = new Blob([wf.arrayBuffer], { type: wf.type })
@@ -184,14 +225,13 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
     if (isSuccess && isWorkflowMode && state.status === "success" && "downloadUrl" in state) {
       const session = getWorkflowSession()
       if (session) {
-        // eslint-disable-next-line react-hooks/set-state-in-effect -- Hydrating transition state when step finishes successfully
         setIsSavingAndRedirecting(true)
         fetch(state.downloadUrl)
           .then(res => res.arrayBuffer())
           .then(buffer => {
             updateWorkflowSession({
               stepResults: session.stepResults.map((result, idx) =>
-                idx === stepIndex ? { outputBuffer: buffer, filename: state.filename } : result
+                idx === stepIndex ? { outputBuffer: buffer, filename: state.filename, toolSlug: tool.slug } : result
               ),
             })
             // Automatically navigate to next step or workflow page
@@ -211,7 +251,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
           })
       }
     }
-  }, [isSuccess, isWorkflowMode, state, stepIndex, workflow, workflowId, router])
+  }, [isSuccess, isWorkflowMode, state, stepIndex, workflow, workflowId, router, tool])
 
   const showOptionsAndProcess = files.length > 0 || tool.slug === "html-to-pdf"
 

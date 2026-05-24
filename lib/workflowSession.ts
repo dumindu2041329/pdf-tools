@@ -5,15 +5,18 @@ export interface WorkflowFile {
   arrayBuffer: ArrayBuffer
 }
 
+export interface WorkflowStepResult {
+  outputBuffer: ArrayBuffer
+  filename: string
+  toolSlug?: string
+}
+
 export interface WorkflowSession {
   workflowId: string
   currentStepIndex: number
   totalSteps: number
   inputFiles: WorkflowFile[]
-  stepResults: Array<{
-    outputBuffer: ArrayBuffer
-    filename: string
-  } | null>
+  stepResults: Array<WorkflowStepResult | null>
 }
 
 let memorySession: WorkflowSession | null = null

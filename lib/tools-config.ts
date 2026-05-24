@@ -51,6 +51,7 @@ export interface ToolConfig {
   acceptedFileTypes: string[]
   maxFiles: number
   maxSizeMB: number
+  outputsZip?: boolean
 }
 
 export const toolsConfig: ToolConfig[] = [
@@ -300,6 +301,7 @@ export const toolsConfig: ToolConfig[] = [
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
     maxSizeMB: 20,
+    outputsZip: true,
   },
   {
     slug: "pdf-to-excel",
