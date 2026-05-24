@@ -52,7 +52,7 @@ function HeroSection({ onGetStarted }: { onGetStarted: () => void }) {
             className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-4 py-1.5 text-sm font-medium text-primary mb-8"
           >
             <Star className="h-3.5 w-3.5" />
-            28+ Free PDF Tools — Powered by iLoveAPI
+            28+ Free PDF Tools
           </motion.div>
 
           {/* Headline */}

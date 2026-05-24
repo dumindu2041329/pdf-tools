@@ -27,11 +27,11 @@ export function UserMenu() {
 
   const initials =
     `${user.firstName?.charAt(0) ?? ""}${user.lastName?.charAt(0) ?? ""}`.toUpperCase() ||
-    user.emailAddresses[0]?.emailAddress.charAt(0).toUpperCase() ||
+    user.primaryEmailAddress?.emailAddress.charAt(0).toUpperCase() ||
     "U"
 
   const fullName = [user.firstName, user.lastName].filter(Boolean).join(" ") || "User"
-  const email = user.emailAddresses[0]?.emailAddress ?? ""
+  const email = user.primaryEmailAddress?.emailAddress ?? user.emailAddresses[0]?.emailAddress ?? ""
 
   return (
     <DropdownMenu>
