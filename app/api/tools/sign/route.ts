@@ -3,7 +3,6 @@ import { NextResponse } from "next/server"
 import { ilovepdf } from "@/lib/iloveapi/client"
 import { createSignatureRequest } from "@/lib/iloveapi/signature"
 import ILovePDFFile from "@ilovepdf/ilovepdf-nodejs/ILovePDFFile"
-import { ensureDbSchema, sql, upsertUser } from "@/lib/db"
 
 export async function POST(req: Request) {
   const { userId } = await auth()
@@ -43,7 +42,7 @@ export async function POST(req: Request) {
     // Start sign task + upload using SDK
     task = ilovepdf.newTask("sign")
     await task.start()
-    
+
     const buffer = await file.arrayBuffer()
     const iloveapiFile = ILovePDFFile.fromArray(Buffer.from(buffer), file.name)
     const addedFile = await task.addFile(iloveapiFile)
@@ -57,17 +56,6 @@ export async function POST(req: Request) {
       verify_enabled: true,
       ...options,
     }, task.server)
-
-    await ensureDbSchema()
-    await upsertUser(userId)
-    await sql`
-      INSERT INTO signature_request (uuid, user_id, token_requester, status)
-      VALUES (${signatureData.uuid}, ${userId}, ${signatureData.token_requester}, ${signatureData.status})
-      ON CONFLICT (uuid) DO UPDATE
-        SET status = EXCLUDED.status,
-            token_requester = EXCLUDED.token_requester,
-            updated_at = now()
-    `
 
     return NextResponse.json({
       tokenRequester: signatureData.token_requester,

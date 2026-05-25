@@ -1,4 +1,3 @@
-import { auth } from "@clerk/nextjs/server"
 import { NextResponse } from "next/server"
 import { recordProcessingEvent } from "@/lib/usage"
 
@@ -7,11 +6,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export async function POST(req: Request) {
-  const { userId } = await auth()
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  }
-
   let body: unknown
   try {
     body = await req.json()
@@ -32,7 +26,7 @@ export async function POST(req: Request) {
   }
 
   await recordProcessingEvent({
-    userId,
+    userId: null,
     toolSlug,
     status: "success",
     engine: "client",

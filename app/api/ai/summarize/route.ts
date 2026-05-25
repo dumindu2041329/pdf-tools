@@ -1,13 +1,16 @@
-import { auth } from "@clerk/nextjs/server"
 import { NextResponse } from "next/server"
 import { runTool } from "@/lib/iloveapi/tools"
 import { canProcessFile, recordProcessingEvent } from "@/lib/usage"
 import { getUserPlan } from "@/lib/auth"
 
 export async function POST(req: Request) {
-  const { userId } = await auth()
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  let userId: string | null = null
+  try {
+    const { auth } = await import("@clerk/nextjs/server")
+    const authResult = await auth()
+    userId = authResult.userId ?? null
+  } catch {
+    // Not authenticated, continue without userId
   }
 
   try {
@@ -20,8 +23,8 @@ export async function POST(req: Request) {
     const file = fileRaw as File
     const length = (formData.get("length") as string) || "standard"
 
-    const plan = await getUserPlan(userId)
-    const gate = await canProcessFile(userId, file.size, plan, 1)
+    const plan = userId ? await getUserPlan(userId) : "free"
+    const gate = await canProcessFile(userId ?? "", file.size, plan, 1)
     if (!gate.allowed) {
       return NextResponse.json(
         { error: gate.reason ?? "Processing limit reached", upgradeRequired: true },
