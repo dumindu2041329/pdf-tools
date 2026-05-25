@@ -11,8 +11,7 @@ const fileStore = new Map<string, StoredFile>()
 export function storeFile(
   buffer: Uint8Array | ArrayBuffer,
   filename: string,
-  contentType = "application/pdf",
-  _?: { userId?: string | null; eventId?: string | null; expiresAt?: Date | null }
+  contentType = "application/pdf"
 ): Promise<string> {
   const id = randomUUID()
   const data = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)

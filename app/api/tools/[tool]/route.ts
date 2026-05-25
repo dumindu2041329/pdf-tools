@@ -78,7 +78,7 @@ export async function POST(
     if (tool === "html-to-pdf" && options.url) {
       try {
         if (userId) {
-          const gate = await canProcessFile(userId, 0, userPlan ?? "free", 1)
+          const gate = await canProcessFile(userId, 0, userPlan ?? "free")
           if (!gate.allowed) {
             return NextResponse.json(
               { error: gate.reason ?? "Processing limit reached", upgradeRequired: true },
@@ -98,7 +98,7 @@ export async function POST(
           result.buffer instanceof Uint8Array
             ? result.buffer
             : new Uint8Array(result.buffer as ArrayBuffer)
-        const eventId = await recordProcessingEvent({
+        await recordProcessingEvent({
           userId,
           toolSlug: tool,
           status: "success",
@@ -108,10 +108,7 @@ export async function POST(
           outputSizeBytes: result.outputFilesize,
           processingTimeMs: Date.now() - start,
         })
-        const downloadId = await storeFile(fileData, result.downloadFilename, "application/pdf", {
-          userId,
-          eventId,
-        })
+        const downloadId = await storeFile(fileData, result.downloadFilename, "application/pdf")
 
         return NextResponse.json({
           downloadId,
@@ -129,7 +126,7 @@ export async function POST(
 
   if (userId) {
     const totalBytes = files.reduce((sum, f) => sum + f.buffer.byteLength, 0)
-    const gate = await canProcessFile(userId, totalBytes, userPlan ?? "free", files.length)
+    const gate = await canProcessFile(userId, totalBytes, userPlan ?? "free")
     if (!gate.allowed) {
       return NextResponse.json(
         { error: gate.reason ?? "Processing limit reached", upgradeRequired: true },
@@ -160,7 +157,7 @@ export async function POST(
 
       const zipBuffer = await zip.generateAsync({ type: "uint8array" })
       const elapsed = ((Date.now() - start) / 1000).toFixed(2)
-      const eventId = await recordProcessingEvent({
+      await recordProcessingEvent({
         userId,
         toolSlug: tool,
         status: "success",
@@ -170,10 +167,7 @@ export async function POST(
         outputSizeBytes: zipBuffer.byteLength,
         processingTimeMs: Date.now() - start,
       })
-      const downloadId = await storeFile(zipBuffer, "converted-pdfs.zip", "application/zip", {
-        userId,
-        eventId,
-      })
+      const downloadId = await storeFile(zipBuffer, "converted-pdfs.zip", "application/zip")
 
       return NextResponse.json({
         downloadId,
@@ -201,7 +195,7 @@ export async function POST(
       )
 
       const elapsed = ((Date.now() - start) / 1000).toFixed(2)
-      const eventId = await recordProcessingEvent({
+      await recordProcessingEvent({
         userId,
         toolSlug: tool,
         status: "success",
@@ -211,10 +205,7 @@ export async function POST(
         outputSizeBytes: result.buffer.byteLength,
         processingTimeMs: Date.now() - start,
       })
-      const downloadId = await storeFile(result.buffer, result.filename, "application/pdf", {
-        userId,
-        eventId,
-      })
+      const downloadId = await storeFile(result.buffer, result.filename, "application/pdf")
 
       return NextResponse.json({
         downloadId,
@@ -238,7 +229,7 @@ export async function POST(
       )
       const elapsed = ((Date.now() - start) / 1000).toFixed(2)
 
-      const eventId = await recordProcessingEvent({
+      await recordProcessingEvent({
         userId,
         toolSlug: tool,
         status: "success",
@@ -251,8 +242,7 @@ export async function POST(
       const downloadId = await storeFile(
         result.buffer,
         result.filename,
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        { userId, eventId }
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
       )
 
       return NextResponse.json({
@@ -277,7 +267,7 @@ export async function POST(
       )
       const elapsed = ((Date.now() - start) / 1000).toFixed(2)
 
-      const eventId = await recordProcessingEvent({
+      await recordProcessingEvent({
         userId,
         toolSlug: tool,
         status: "success",
@@ -290,8 +280,7 @@ export async function POST(
       const downloadId = await storeFile(
         result.buffer,
         result.filename,
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        { userId, eventId }
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
       )
 
       return NextResponse.json({
@@ -316,7 +305,7 @@ export async function POST(
       )
       const elapsed = ((Date.now() - start) / 1000).toFixed(2)
 
-      const eventId = await recordProcessingEvent({
+      await recordProcessingEvent({
         userId,
         toolSlug: tool,
         status: "success",
@@ -329,8 +318,7 @@ export async function POST(
       const downloadId = await storeFile(
         result.buffer,
         result.filename,
-        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        { userId, eventId }
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
       )
 
       return NextResponse.json({
@@ -396,7 +384,7 @@ export async function POST(
       )
 
       const elapsed = ((Date.now() - start) / 1000).toFixed(2)
-      const eventId = await recordProcessingEvent({
+      await recordProcessingEvent({
         userId,
         toolSlug: tool,
         status: "success",
@@ -406,10 +394,7 @@ export async function POST(
         outputSizeBytes: result.buffer.byteLength,
         processingTimeMs: Date.now() - start,
       })
-      const downloadId = await storeFile(result.buffer, result.downloadFilename, "application/pdf", {
-        userId,
-        eventId,
-      })
+      const downloadId = await storeFile(result.buffer, result.downloadFilename, "application/pdf")
 
       return NextResponse.json({
         downloadId,
@@ -507,7 +492,7 @@ export async function POST(
                     : "application/pdf"
     const timerSeconds = Number(result.timer)
     const processingTimeMs = Number.isFinite(timerSeconds) ? Math.round(timerSeconds * 1000) : undefined
-    const eventId = await recordProcessingEvent({
+    await recordProcessingEvent({
       userId,
       toolSlug: tool,
       status: "success",
@@ -517,7 +502,7 @@ export async function POST(
       outputSizeBytes: fileData.byteLength,
       processingTimeMs,
     })
-    const downloadId = await storeFile(fileData, downloadFilename, mimeType, { userId, eventId })
+    const downloadId = await storeFile(fileData, downloadFilename, mimeType)
 
     return NextResponse.json({
       downloadId,

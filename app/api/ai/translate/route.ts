@@ -24,7 +24,7 @@ export async function POST(req: Request) {
     const targetLanguage = (formData.get("language") as string) || "Spanish"
 
     const plan = userId ? await getUserPlan(userId) : "free"
-    const gate = await canProcessFile(userId ?? "", file.size, plan, 1)
+    const gate = await canProcessFile(userId ?? "", file.size, plan)
     if (!gate.allowed) {
       return NextResponse.json(
         { error: gate.reason ?? "Processing limit reached", upgradeRequired: true },

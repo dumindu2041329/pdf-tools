@@ -32,6 +32,7 @@ export default function WorkflowsPage() {
   const router = useRouter()
   const [workflows, setWorkflows] = useState<Workflow[]>([])
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [currentPage, setCurrentPage] = useState(1)
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
@@ -91,6 +92,7 @@ export default function WorkflowsPage() {
 
   async function confirmDelete() {
     if (!deleteTarget) return
+    setIsDeleting(true)
     try {
       await fetch(`/api/workflows/${deleteTarget.id}`, { method: "DELETE" })
       const res = await fetch("/api/workflows")
@@ -106,6 +108,7 @@ export default function WorkflowsPage() {
       setWorkflows([])
     } finally {
       setDeleteTarget(null)
+      setIsDeleting(false)
     }
   }
 
@@ -407,6 +410,7 @@ export default function WorkflowsPage() {
         confirmLabel="Delete"
         cancelLabel="Cancel"
         destructive
+        loading={isDeleting}
         onConfirm={confirmDelete}
         onCancel={() => setDeleteTarget(null)}
       />

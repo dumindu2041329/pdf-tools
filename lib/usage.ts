@@ -6,8 +6,7 @@ import type { UsageLimits } from "@/lib/usageLimits"
 export async function canProcessFile(
   userId: string,
   fileSizeBytes: number,
-  plan = "free",
-  _filesToProcess = 1
+  plan = "free"
 ): Promise<{ allowed: boolean; reason?: string }> {
   const limits = getLimitsForPlan(plan)
   const fileSizeMB = fileSizeBytes / (1024 * 1024)
@@ -22,6 +21,7 @@ export async function canProcessFile(
   return { allowed: true }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function recordProcessingEvent(_input: {
   userId: string | null
   toolSlug: string

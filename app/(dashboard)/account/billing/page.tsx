@@ -6,7 +6,6 @@ import { useEffect, useState } from "react"
 import {
   Crown,
   Zap,
-  Building2,
   Check,
   Loader2,
   HardDrive,
@@ -22,7 +21,7 @@ const plans = [
     id: "free",
     name: "Free",
     price: "$0",
-    period: "forever",
+    period: "/month",
     icon: Zap,
     color: "text-muted-foreground",
     borderColor: "border-border",
@@ -37,37 +36,20 @@ const plans = [
   {
     id: "premium",
     name: "Premium",
-    price: "$9",
+    price: "$20",
     period: "/month",
     icon: Crown,
     color: "text-yellow-500",
     borderColor: "border-primary",
     features: [
       "Unlimited daily processing",
-      "9,999 files per month",
+      "Unlimited files per month",
       "200 MB max file size",
       "All PDF tools",
       "AI Summarizer & Translate",
       "Priority support",
     ],
-  },
-  {
-    id: "business",
-    name: "Business",
-    price: "$24",
-    period: "/month",
-    icon: Building2,
-    color: "text-purple-500",
-    borderColor: "border-purple-500",
-    features: [
-      "Unlimited everything",
-      "500 MB max file size",
-      "All premium features",
-      "API access",
-      "Team management",
-      "Dedicated support",
-    ],
-  },
+  }
 ]
 
 export default function BillingPage() {
@@ -169,7 +151,7 @@ export default function BillingPage() {
       {/* Plan Comparison */}
       <div className="rounded-xl border border-border bg-card p-6">
         <h2 className="text-lg font-semibold mb-4">Available Plans</h2>
-        <div className="grid gap-4 lg:grid-cols-3">
+        <div className="grid gap-4 lg:grid-cols-2">
           {plans.map((p) => {
             const Icon = p.icon
             const isCurrent = p.id === plan
