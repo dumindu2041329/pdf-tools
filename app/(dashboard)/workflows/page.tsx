@@ -12,6 +12,8 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
+  LayoutGrid,
+  List,
 } from "lucide-react"
 import Link from "next/link"
 
@@ -32,6 +34,7 @@ export default function WorkflowsPage() {
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [currentPage, setCurrentPage] = useState(1)
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
   const itemsPerPage = 9
 
   const filteredWorkflows = workflows.filter((workflow) => {
@@ -124,10 +127,44 @@ export default function WorkflowsPage() {
         </Button>
       </div>
 
-      {/* Search */}
+      {/* How it works */}
+      <div className="mt-8 mb-8">
+        <h2 className="text-xl font-semibold mb-4">How Workflows Work</h2>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <div className="rounded-xl border border-border bg-card p-5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary mb-3">
+              <span className="text-sm font-bold">1</span>
+            </div>
+            <h3 className="font-medium mb-1">Add your PDF</h3>
+            <p className="text-sm text-muted-foreground">
+              Upload one or more PDF files to process through the workflow.
+            </p>
+          </div>
+          <div className="rounded-xl border border-border bg-card p-5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary mb-3">
+              <span className="text-sm font-bold">2</span>
+            </div>
+            <h3 className="font-medium mb-1">Tools run in sequence</h3>
+            <p className="text-sm text-muted-foreground">
+              Each tool processes the output of the previous step automatically.
+            </p>
+          </div>
+          <div className="rounded-xl border border-border bg-card p-5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary mb-3">
+              <span className="text-sm font-bold">3</span>
+            </div>
+            <h3 className="font-medium mb-1">Download the result</h3>
+            <p className="text-sm text-muted-foreground">
+              Get your final processed file ready to download.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Search & View Toggle */}
       {workflows.length > 0 && (
-        <div className="mb-6">
-          <div className="relative max-w-md">
+        <div className="mb-6 flex items-center gap-4">
+          <div className="relative max-w-md flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <input
               type="text"
@@ -145,6 +182,32 @@ export default function WorkflowsPage() {
                 <X className="h-4 w-4" />
               </button>
             )}
+          </div>
+          <div className="flex items-center gap-1 rounded-lg border border-border bg-card p-1">
+            <button
+              type="button"
+              onClick={() => setViewMode("grid")}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors ${
+                viewMode === "grid"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <LayoutGrid className="h-4 w-4" />
+              <span className="hidden sm:inline">Grid</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("list")}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors ${
+                viewMode === "list"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <List className="h-4 w-4" />
+              <span className="hidden sm:inline">List</span>
+            </button>
           </div>
         </div>
       )}
@@ -173,7 +236,7 @@ export default function WorkflowsPage() {
             </Button>
           )}
         </div>
-      ) : (
+      ) : viewMode === "grid" ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {paginatedWorkflows.map((workflow) => (
             <div
@@ -235,6 +298,71 @@ export default function WorkflowsPage() {
             </div>
           ))}
         </div>
+      ) : (
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+          <table className="w-full">
+            <thead className="border-b border-border bg-muted/50">
+              <tr>
+                <th className="px-4 py-3 text-left text-sm font-medium text-muted-foreground">Name</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-muted-foreground">Steps</th>
+                <th className="px-4 py-3 text-right text-sm font-medium text-muted-foreground">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paginatedWorkflows.map((workflow) => (
+                <tr key={workflow.id} className="border-b border-border last:border-0 hover:bg-accent/50 transition-colors">
+                  <td className="px-4 py-3">
+                    <span className="font-medium">{workflow.name}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {workflow.steps.map((step, i) => {
+                        const tool = getToolBySlug(step.tool)
+                        const Icon = tool?.icon
+                        if (!Icon) return null
+                        return (
+                          <div key={i} className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-xs">
+                              <Icon className="h-3 w-3" />
+                              {step.label}
+                            </div>
+                            {i < workflow.steps.length - 1 && (
+                              <span className="text-muted-foreground">→</span>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <Button size="sm" className="flex items-center gap-1.5" onClick={() => handleRunWorkflow(workflow.id)}>
+                        <Play className="h-3.5 w-3.5" />
+                        Run
+                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted cursor-pointer"
+                          >
+                            <MoreHorizontal className="h-4 w-4" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem className="flex items-center gap-2 text-destructive focus:text-destructive" onClick={() => handleDeleteWorkflow(workflow.id)}>
+                            <Trash2 className="h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {/* Pagination */}
@@ -271,40 +399,6 @@ export default function WorkflowsPage() {
           </Button>
         </div>
       )}
-
-      {/* How it works */}
-      <div className="mt-12">
-        <h2 className="text-xl font-semibold mb-4">How Workflows Work</h2>
-        <div className="grid gap-4 sm:grid-cols-3">
-          <div className="rounded-xl border border-border bg-card p-5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary mb-3">
-              <span className="text-sm font-bold">1</span>
-            </div>
-            <h3 className="font-medium mb-1">Add your PDF</h3>
-            <p className="text-sm text-muted-foreground">
-              Upload one or more PDF files to process through the workflow.
-            </p>
-          </div>
-          <div className="rounded-xl border border-border bg-card p-5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary mb-3">
-              <span className="text-sm font-bold">2</span>
-            </div>
-            <h3 className="font-medium mb-1">Tools run in sequence</h3>
-            <p className="text-sm text-muted-foreground">
-              Each tool processes the output of the previous step automatically.
-            </p>
-          </div>
-          <div className="rounded-xl border border-border bg-card p-5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary mb-3">
-              <span className="text-sm font-bold">3</span>
-            </div>
-            <h3 className="font-medium mb-1">Download the result</h3>
-            <p className="text-sm text-muted-foreground">
-              Get your final processed file ready to download.
-            </p>
-          </div>
-        </div>
-      </div>
 
       <ConfirmDialog
         isOpen={deleteTarget !== null}

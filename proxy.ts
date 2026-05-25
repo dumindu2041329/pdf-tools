@@ -9,5 +9,5 @@ export default clerkMiddleware(async (auth, req) => {
 }, { clockSkewInMs: 60000 })
 
 export const config = {
-  matcher: ["/((?!_next|api/tools/(?!sign)|.*\\..*).*)"],
+  matcher: ["/((?!_next|/api/tools/(?!sign$)|.*\\..*).*)"],
 }
