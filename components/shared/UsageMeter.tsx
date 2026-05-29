@@ -7,7 +7,8 @@ interface UsageMeterProps {
 }
 
 export function UsageMeter({ label, used, limit }: UsageMeterProps) {
-  const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0
+  const isUnlimited = limit < 0
+  const pct = isUnlimited ? 0 : limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0
   const isWarning = pct >= 80
   const isDanger = pct >= 95
 
@@ -16,7 +17,7 @@ export function UsageMeter({ label, used, limit }: UsageMeterProps) {
       <div className="flex items-center justify-between text-sm">
         <span className="text-muted-foreground">{label}</span>
         <span className="font-medium">
-          {used} / {limit}
+          {used} / {isUnlimited ? "∞" : limit}
         </span>
       </div>
       <div className="h-2 w-full rounded-full bg-muted overflow-hidden">

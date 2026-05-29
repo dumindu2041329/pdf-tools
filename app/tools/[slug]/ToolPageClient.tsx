@@ -29,7 +29,6 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
   const searchParams = useSearchParams()
   const tool = getToolBySlug(slug)!
   const toolHasOptions = hasToolOptions(tool.slug)
-  const isOrganize = tool.slug === "organize-pdf"
 
   const workflowId = searchParams.get("workflowId")
   const stepIndex = parseInt(searchParams.get("stepIndex") || "0", 10)
@@ -293,7 +292,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
 
       {!isSuccess && !isValidationSuccess && (
         <div className="space-y-8">
-          <div className={`grid grid-cols-1 ${(tool.slug === "rotate-pdf" || tool.slug === "watermark-pdf" || tool.slug === "add-page-numbers") && files.length > 0 ? "lg:grid-cols-3" : toolHasOptions && files.length > 0 && !isOrganize && tool.slug !== "html-to-pdf" ? "lg:grid-cols-2" : "max-w-2xl mx-auto"} gap-8 items-start`}>
+          <div className={`grid grid-cols-1 ${(tool.slug === "rotate-pdf" || tool.slug === "watermark-pdf" || tool.slug === "add-page-numbers") && files.length > 0 ? "lg:grid-cols-3" : toolHasOptions && files.length > 0 && tool.slug !== "html-to-pdf" ? "lg:grid-cols-2" : "max-w-2xl mx-auto"} gap-8 items-start`}>
             {tool.slug !== "html-to-pdf" && (
               <FileUploader
                 accept={tool.acceptedFileTypes}

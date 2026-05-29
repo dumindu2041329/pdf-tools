@@ -3,7 +3,7 @@
 
 import { clerkClient } from "@clerk/nextjs/server"
 
-export type UserPlan = "free" | "premium" | "business"
+export type UserPlan = "free" | "premium"
 
 export async function getUserPlan(userId: string): Promise<UserPlan> {
   try {
@@ -20,16 +20,6 @@ export async function grantPremiumAccess(userId: string): Promise<void> {
   await client.users.updateUserMetadata(userId, {
     publicMetadata: {
       plan: "premium",
-      planUpdatedAt: new Date().toISOString(),
-    },
-  })
-}
-
-export async function grantBusinessAccess(userId: string): Promise<void> {
-  const client = await clerkClient()
-  await client.users.updateUserMetadata(userId, {
-    publicMetadata: {
-      plan: "business",
       planUpdatedAt: new Date().toISOString(),
     },
   })
