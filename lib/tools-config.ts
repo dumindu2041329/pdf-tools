@@ -50,6 +50,8 @@ export interface ToolConfig {
   access: "free" | "premium"
   acceptedFileTypes: string[]
   maxFiles: number
+  maxFilesFree?: number
+  maxFilesPremium?: number
   maxSizeMB: number
   outputsZip?: boolean
 }
@@ -69,6 +71,8 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 80,
+    maxFilesFree: 80,
+    maxFilesPremium: 500,
     maxSizeMB: 20,
   },
   {
@@ -129,6 +133,8 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 5,
+    maxFilesFree: 5,
+    maxFilesPremium: 20,
     maxSizeMB: 20,
   },
   {

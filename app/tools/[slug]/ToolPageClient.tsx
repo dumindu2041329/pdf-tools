@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
+import { useUser } from "@clerk/nextjs"
 import { getToolBySlug } from "@/lib/tools-config"
 import { FileUploader } from "@/components/tools/FileUploader"
 import { ProcessingModal } from "@/components/tools/ProcessingModal"
@@ -27,8 +28,14 @@ interface ToolPageClientProps {
 export function ToolPageClient({ slug }: ToolPageClientProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const { user } = useUser()
   const tool = getToolBySlug(slug)!
   const toolHasOptions = hasToolOptions(tool.slug)
+
+  const userPlan = ((user?.publicMetadata as Record<string, unknown>)?.plan as string) ?? "free"
+  const effectiveMaxFiles = userPlan === "premium" && tool.maxFilesPremium
+    ? tool.maxFilesPremium
+    : (tool.maxFilesFree ?? tool.maxFiles)
 
   const workflowId = searchParams.get("workflowId")
   const stepIndex = parseInt(searchParams.get("stepIndex") || "0", 10)
@@ -296,12 +303,15 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
             {tool.slug !== "html-to-pdf" && (
               <FileUploader
                 accept={tool.acceptedFileTypes}
-                multiple={tool.maxFiles > 1}
-                maxFiles={tool.maxFiles}
+                multiple={effectiveMaxFiles > 1}
+                maxFiles={effectiveMaxFiles}
                 maxSizeMB={tool.maxSizeMB}
                 files={files}
                 onFilesSelected={setFiles}
                 isDisabled={isProcessing}
+                colorCodeBySourceFile={tool.slug === "organize-pdf"}
+                reorderable={tool.slug === "organize-pdf"}
+                layout={tool.slug === "organize-pdf" ? "list" : "grid"}
               />
             )}
 

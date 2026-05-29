@@ -35,6 +35,29 @@ interface Props {
   onChange: (opts: Record<string, unknown>) => void
 }
 
+const FILE_COLORS = [
+  "border-red-500",
+  "border-blue-500",
+  "border-green-500",
+  "border-yellow-500",
+  "border-purple-500",
+  "border-orange-500",
+  "border-pink-500",
+  "border-teal-500",
+  "border-indigo-500",
+  "border-cyan-500",
+  "border-lime-500",
+  "border-emerald-500",
+  "border-fuchsia-500",
+  "border-rose-500",
+  "border-sky-500",
+  "border-violet-500",
+  "border-amber-500",
+  "border-zinc-500",
+  "border-stone-500",
+  "border-neutral-500",
+]
+
 function SortableItem({ item, onRemove, onRotate }: { item: PageItem; onRemove: (id: string) => void; onRotate: (id: string) => void }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id })
   const style = {
@@ -42,6 +65,8 @@ function SortableItem({ item, onRemove, onRotate }: { item: PageItem; onRemove: 
     transition,
     zIndex: isDragging ? 10 : 1,
   }
+
+  const fileColor = FILE_COLORS[item.fileIndex % FILE_COLORS.length]
 
   return (
     <div
@@ -51,7 +76,8 @@ function SortableItem({ item, onRemove, onRotate }: { item: PageItem; onRemove: 
       {...listeners}
       className={cn(
         "relative flex flex-col items-center justify-center rounded-lg border-2 bg-background p-2 group shadow-sm transition-shadow",
-        isDragging ? "border-primary shadow-lg ring-2 ring-primary/20" : "border-border hover:border-primary/50"
+        fileColor,
+        isDragging ? "shadow-lg ring-2 ring-primary/20 opacity-90" : "hover:shadow-md hover:border-primary/50"
       )}
     >
       <div className="relative w-full aspect-[1/1.4] overflow-hidden rounded-md bg-muted/30 flex items-center justify-center">
@@ -165,28 +191,47 @@ export function OrganizeOptions({ files, options, onChange }: Props) {
 
         setItems((prev) => {
           if (prev.length === 0) return newItems
-          
-          // Generate a fingerprint function
+
           const getFingerprint = (f: File) => `${f.name}-${f.size}-${f.lastModified}`
-          const currentFingerprints = new Set(files.map(getFingerprint))
-          
-          // 1. Keep previous items only if their source file still exists
-          const keptPrevItems = prev.filter(p => currentFingerprints.has(getFingerprint(p.file)))
-          
-          // 2. We need to update fileIndex on kept items since the files array might have shifted
+
+          const currentFingerprints = files.map(getFingerprint)
+          const prevFingerprints = prev.map(p => getFingerprint(p.file))
+
+          const sameFilesReordered = currentFingerprints.length === prevFingerprints.length &&
+            currentFingerprints.every((fp, idx) => fp === prevFingerprints[idx])
+
+          if (sameFilesReordered) {
+            const updatedPrevItems = prev.map(p => {
+              const newFileIndex = files.findIndex(f => getFingerprint(f) === getFingerprint(p.file))
+              return { ...p, fileIndex: newFileIndex, id: `${newFileIndex}-${p.pageIndex}` }
+            })
+            updatedPrevItems.sort((a, b) => {
+              if (a.fileIndex !== b.fileIndex) return a.fileIndex - b.fileIndex
+              return a.pageIndex - b.pageIndex
+            })
+            return updatedPrevItems
+          }
+
+          const currentFingerprintsSet = new Set(currentFingerprints)
+          const keptPrevItems = prev.filter(p => currentFingerprintsSet.has(getFingerprint(p.file)))
+
           const updatedPrevItems = keptPrevItems.map(p => {
             const newIndex = files.findIndex(f => getFingerprint(f) === getFingerprint(p.file))
             return { ...p, fileIndex: newIndex, id: `${newIndex}-${p.pageIndex}` }
           })
-          
-          // 3. Find completely new items that were just added
+
+          updatedPrevItems.sort((a, b) => {
+            if (a.fileIndex !== b.fileIndex) return a.fileIndex - b.fileIndex
+            return a.pageIndex - b.pageIndex
+          })
+
           const keptPrevFingerprintsAndPages = new Set(
             updatedPrevItems.map(p => `${getFingerprint(p.file)}-${p.pageIndex}`)
           )
           const appendedItems = newItems.filter(
             n => !keptPrevFingerprintsAndPages.has(`${getFingerprint(n.file)}-${n.pageIndex}`)
           )
-          
+
           return [...updatedPrevItems, ...appendedItems]
         })
       } catch (err) {
