@@ -135,9 +135,9 @@ lib/
   pdf/                  # Client-side PDF helpers, Adobe export converter, office converter, rotate-client, split-client, merge-client
   tools-config.ts       # Tool registry (29 tools)
   toolValidation.ts      # Per-tool input validation
-  usage.ts              # Plan limits & usage tracking (DB-backed)
+  usage.ts              # Plan limits & usage tracking
   usageLimits.ts        # Plan limit constants (client-safe)
-  fileStore.ts          # Neon-backed file storage (download_file table)
+  fileStore.ts          # In-memory file storage (Map-based, not Neon)
   extractFormatConverter.ts # Format conversion utilities
   auth.ts               # Clerk plan helpers
   utils.ts              # cn() utility
@@ -152,16 +152,13 @@ proxy.ts                # Clerk middleware (Next.js 16 middleware filename)
 
 The app connects to Neon via `@neondatabase/serverless`. The connection is configured in `lib/db.ts` using the `DATABASE_URL` environment variable. **Schema is auto-created on first server request** via `ensureDbSchema()` — no manual migrations needed.
 
-#### Schema (6 tables)
+#### Schema (3 tables)
 
 | Table | Primary Key | Purpose |
 |---|---|---|
 | `app_user` | `clerk_user_id text` | Clerk userId mapping |
 | `workflow` | `id UUID` | Workflow records (name, last_run, run_count) |
 | `workflow_step` | `id UUID` | Ordered steps per workflow (FK → workflow) |
-| `processing_event` | `id UUID` | Every tool run logged with status, engine, file counts, timing |
-| `download_file` | `id UUID` | Stored output files (bytes, filename, content-type, expiry) |
-| `signature_request` | `id UUID` | iLoveAPI sign request status + signer info |
 
 See `lib/db.ts` for the full `CREATE TABLE IF NOT EXISTS` DDL. All tables are created idempotently on first use.
 
@@ -178,7 +175,7 @@ See `lib/db.ts` for the full `CREATE TABLE IF NOT EXISTS` DDL. All tables are cr
    - **iLoveAPI tools**: `runTool()` handles the API call and returns processed file
    - **Adobe tools** (`pdf-to-word`, `pdf-to-excel`, `pdf-to-powerpoint`, `ocr-pdf`): Adobe PDF Services SDK
    - **Local tools** (`local-split`, `local-merge`, `local-rotate`): pdf-lib processed client-side or server-side
-4. Result is stored in Neon (`download_file` table), `downloadId` returned to client
+4. Result is returned as base64 to client (files stored in-memory via fileStore)
 
 ### PDF Processing Strategies
 
@@ -199,17 +196,17 @@ See `lib/db.ts` for the full `CREATE TABLE IF NOT EXISTS` DDL. All tables are cr
 
 | Route | Method | Description |
 |---|---|---|
-| `/api/tools/[tool]` | POST | Main PDF processing endpoint — records `processing_event`, stores output in `download_file` |
-| `/api/tools/sign` | POST | PDF signing via iLoveAPI — stores `signature_request` |
-| `/api/download/[id]` | GET | Stream file from Neon `download_file` table |
-| `/api/ai/summarize` | POST | AI summarization — records `processing_event` |
-| `/api/ai/translate` | POST | AI translation — records `processing_event` |
-| `/api/usage` | GET | Returns daily/monthly usage counts from `processing_event` |
-| `/api/activity` | GET/POST | Activity log (reads from DB for server tools, writes for all tools) |
+| `/api/tools/[tool]` | POST | Main PDF processing endpoint |
+| `/api/tools/sign` | POST | PDF signing via iLoveAPI |
+| `/api/download/[id]` | GET | Stream file from in-memory fileStore |
+| `/api/ai/summarize` | POST | AI summarization |
+| `/api/ai/translate` | POST | AI translation |
+| `/api/usage` | GET | Returns usage counts (stub, returns zeros) |
+| `/api/activity` | GET/POST | Activity log (localStorage + mirrors to in-memory store) |
 | `/api/workflows` | GET/POST | List workflows, create workflow |
 | `/api/workflows/[id]` | GET/PATCH/DELETE | Get/update/delete single workflow |
 | `/api/workflows/[id]/run` | POST | Increment workflow `run_count`, update `last_run` |
-| `/api/webhooks/iloveapi` | POST | iLoveAPI webhooks — updates `processing_event` status and `signature_request` |
+| `/api/webhooks/iloveapi` | POST | iLoveAPI webhooks (logs events only) |
 
 ### Local Tools Processing
 - **local-merge** (`merge-pdf`): Uses `pdf-lib` to merge PDFs entirely client-side. Handled in `useTool` hook via dynamic import of `processMergeLocal()`.
@@ -254,9 +251,9 @@ Multi-step tool chains stored in Neon (migrated from localStorage):
 - **Session Management**: `workflowSession.ts` manages active workflow state during multi-step runs
 
 ### Activity Tracking
-- **Server-side tools** (`/api/tools/[tool]`, `/api/ai/*`): writes to `processing_event` table + Neon `activity_event` table
-- **Local tools** (merge, split, rotate client-side): writes to localStorage + POSTs to `/api/activity` to mirror to Neon
-- **Client display**: `activityStore.ts` reads from localStorage for real-time UI updates; billing page reads from DB via `/api/usage`
+- **Server-side tools** (`/api/tools/[tool]`, `/api/ai/*`): writes to in-memory fileStore (stub `recordProcessingEvent` does nothing)
+- **Local tools** (merge, split, rotate client-side): writes to localStorage + POSTs to `/api/activity`
+- **Client display**: `activityStore.ts` reads from localStorage for real-time UI updates
 - Limited to 50 most recent local entries
 
 ### Clerk Middleware
