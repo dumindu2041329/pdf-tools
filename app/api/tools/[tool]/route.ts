@@ -575,6 +575,52 @@ export async function POST(
     }
   }
 
+  if ((tool === "word-to-pdf" || tool === "excel-to-pdf" || tool === "powerpoint-to-pdf") && files.length > 1) {
+    try {
+      const start = Date.now()
+      const JSZip = (await import("jszip")).default
+      const zip = new JSZip()
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        const singleResult = await runTool({
+          tool: "officepdf",
+          files: [file],
+          options: { ...options },
+        })
+        const pdfBuffer = singleResult.buffer instanceof Uint8Array
+          ? singleResult.buffer
+          : new Uint8Array(singleResult.buffer as ArrayBuffer)
+        const pdfFilename = `pdf_${i + 1}.pdf`
+        zip.file(pdfFilename, pdfBuffer)
+      }
+
+      const zipBuffer = await zip.generateAsync({ type: "uint8array" })
+      const elapsed = ((Date.now() - start) / 1000).toFixed(2)
+      await recordProcessingEvent({
+        userId,
+        toolSlug: tool,
+        status: "success",
+        engine: "iloveapi",
+        inputFilesCount: files.length,
+        outputFilename: "converted-pdfs.zip",
+        outputSizeBytes: zipBuffer.byteLength,
+        processingTimeMs: Date.now() - start,
+      })
+      const zipBase64 = Buffer.from(zipBuffer).toString("base64")
+
+      return NextResponse.json({
+        fileData: zipBase64,
+        filename: "converted-pdfs.zip",
+        processingTime: elapsed,
+        outputSize: zipBuffer.byteLength,
+      })
+    } catch (err) {
+      console.error(`${tool} (multiple) processing error:`, err)
+      return NextResponse.json({ error: `Failed to convert files to PDF` }, { status: 500 })
+    }
+  }
+
   try {
     const toolConfig = getToolBySlug(tool)
     if (!toolConfig) {

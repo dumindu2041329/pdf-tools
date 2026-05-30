@@ -52,7 +52,6 @@ export interface ToolConfig {
   maxFiles: number
   maxFilesFree?: number
   maxFilesPremium?: number
-  maxSizeMB: number
   outputsZip?: boolean
 }
 
@@ -73,7 +72,6 @@ export const toolsConfig: ToolConfig[] = [
     maxFiles: 80,
     maxFilesFree: 80,
     maxFilesPremium: 500,
-    maxSizeMB: 20,
   },
   {
     slug: "split-pdf",
@@ -88,7 +86,6 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
-    maxSizeMB: 20,
   },
   {
     slug: "remove-pages",
@@ -103,7 +100,6 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
-    maxSizeMB: 20,
   },
   {
     slug: "extract-pages",
@@ -118,7 +114,6 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
-    maxSizeMB: 20,
   },
   {
     slug: "organize-pdf",
@@ -135,7 +130,6 @@ export const toolsConfig: ToolConfig[] = [
     maxFiles: 5,
     maxFilesFree: 5,
     maxFilesPremium: 20,
-    maxSizeMB: 20,
   },
   {
     slug: "scan-to-pdf",
@@ -150,7 +144,6 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".jpg", ".jpeg", ".png", ".webp", ".gif"],
     maxFiles: 20,
-    maxSizeMB: 20,
   },
 
   // ── Optimize ──────────────────────────────────────────────
@@ -166,10 +159,9 @@ export const toolsConfig: ToolConfig[] = [
     color: "hsl(140, 65%, 45%)",
     access: "free",
     acceptedFileTypes: [".pdf"],
-    maxFiles: 1,
-    maxFilesFree: 3,
+    maxFiles: 2,
+    maxFilesFree: 2,
     maxFilesPremium: 10,
-    maxSizeMB: 20,
   },
   {
     slug: "repair-pdf",
@@ -186,7 +178,6 @@ export const toolsConfig: ToolConfig[] = [
     maxFiles: 1,
     maxFilesFree: 1,
     maxFilesPremium: 10,
-    maxSizeMB: 20,
   },
   {
     slug: "ocr-pdf",
@@ -201,9 +192,8 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
-    maxFilesFree: 2,
+    maxFilesFree: 1,
     maxFilesPremium: 10,
-    maxSizeMB: 20,
   },
 
   // ── Convert to PDF ────────────────────────────────────────
@@ -220,7 +210,8 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".doc", ".docx"],
     maxFiles: 1,
-    maxSizeMB: 20,
+    maxFilesFree: 1,
+    maxFilesPremium: 10,
   },
   {
     slug: "excel-to-pdf",
@@ -235,7 +226,8 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".xls", ".xlsx"],
     maxFiles: 1,
-    maxSizeMB: 20,
+    maxFilesFree: 1,
+    maxFilesPremium: 10,
   },
   {
     slug: "powerpoint-to-pdf",
@@ -250,7 +242,8 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".ppt", ".pptx"],
     maxFiles: 1,
-    maxSizeMB: 20,
+    maxFilesFree: 1,
+    maxFilesPremium: 10,
   },
   {
     slug: "jpg-to-pdf",
@@ -265,7 +258,8 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".jpg", ".jpeg", ".png", ".webp", ".gif"],
     maxFiles: 20,
-    maxSizeMB: 20,
+    maxFilesFree: 20,
+    maxFilesPremium: 80,
   },
   {
     slug: "html-to-pdf",
@@ -280,7 +274,6 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".html", ".htm"],
     maxFiles: 1,
-    maxSizeMB: 20,
   },
 
   // ── Convert from PDF ──────────────────────────────────────
@@ -297,7 +290,6 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
-    maxSizeMB: 20,
   },
   {
     slug: "pdf-to-jpg",
@@ -312,7 +304,6 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
-    maxSizeMB: 20,
     outputsZip: true,
   },
   {
@@ -328,7 +319,6 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
-    maxSizeMB: 20,
   },
   {
     slug: "pdf-to-powerpoint",
@@ -343,7 +333,6 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
-    maxSizeMB: 20,
   },
   {
     slug: "pdf-to-pdfa",
@@ -358,7 +347,6 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
-    maxSizeMB: 20,
   },
   {
     slug: "validate-pdfa",
@@ -373,7 +361,6 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
-    maxSizeMB: 20,
   },
 
   // ── Edit ──────────────────────────────────────────────────
@@ -390,7 +377,6 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 30,
-    maxSizeMB: 20,
   },
   {
     slug: "watermark-pdf",
@@ -405,7 +391,6 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
-    maxSizeMB: 20,
   },
   {
     slug: "add-page-numbers",
@@ -420,7 +405,6 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
-    maxSizeMB: 20,
   },
   {
     slug: "edit-pdf",
@@ -435,7 +419,6 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
-    maxSizeMB: 20,
   },
 
   // ── Security ──────────────────────────────────────────────
@@ -452,7 +435,6 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
-    maxSizeMB: 20,
   },
   {
     slug: "protect-pdf",
@@ -467,7 +449,6 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
-    maxSizeMB: 20,
   },
   {
     slug: "sign-pdf",
@@ -482,7 +463,6 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 5,
-    maxSizeMB: 20,
   },
 
   // ── AI ────────────────────────────────────────────────────
@@ -499,7 +479,6 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
-    maxSizeMB: 20,
   },
   {
     slug: "translate-pdf",
@@ -514,7 +493,6 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
-    maxSizeMB: 20,
   },
 ]
 

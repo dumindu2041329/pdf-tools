@@ -6,7 +6,7 @@ export interface UsageLimits {
 
 const planLimits: Record<string, UsageLimits> = {
   free: { daily: 5, monthly: 30, maxFileSizeMB: 20 },
-  premium: { daily: -1, monthly: -1, maxFileSizeMB: 200 },
+  premium: { daily: -1, monthly: -1, maxFileSizeMB: 4096 },
 }
 
 export function getLimitsForPlan(plan: string): UsageLimits {

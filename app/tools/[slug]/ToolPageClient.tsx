@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useUser } from "@clerk/nextjs"
 import { getToolBySlug } from "@/lib/tools-config"
+import { getLimitsForPlan } from "@/lib/usageLimits"
 import { FileUploader } from "@/components/tools/FileUploader"
 import { ProcessingModal } from "@/components/tools/ProcessingModal"
 import { DownloadCard } from "@/components/tools/DownloadCard"
@@ -33,6 +34,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
   const toolHasOptions = hasToolOptions(tool.slug)
 
   const userPlan = ((user?.publicMetadata as Record<string, unknown>)?.plan as string) ?? "free"
+  const planLimits = getLimitsForPlan(userPlan)
   const effectiveMaxFiles = userPlan === "premium" && tool.maxFilesPremium
     ? tool.maxFilesPremium
     : (tool.maxFilesFree ?? tool.maxFiles)
@@ -315,7 +317,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
                 accept={tool.acceptedFileTypes}
                 multiple={effectiveMaxFiles > 1}
                 maxFiles={effectiveMaxFiles}
-                maxSizeMB={tool.maxSizeMB}
+                maxSizeMB={planLimits.maxFileSizeMB}
                 files={files}
                 onFilesSelected={setFiles}
                 isDisabled={isProcessing}

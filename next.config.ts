@@ -5,6 +5,10 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.resolve("."),
   },
+  experimental: {
+    // Raise the proxy body-buffer limit (default 10MB) for large PDF uploads
+    proxyClientMaxBodySize: "4gb",
+  },
   images: {
     remotePatterns: [
       {
