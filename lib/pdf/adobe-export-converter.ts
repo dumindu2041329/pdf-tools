@@ -18,17 +18,12 @@ import { getSafeBaseName } from "./office-converter"
 const PDF_SERVICES_CLIENT_ID = process.env.PDF_SERVICES_CLIENT_ID ?? ""
 const PDF_SERVICES_CLIENT_SECRET = process.env.PDF_SERVICES_CLIENT_SECRET ?? ""
 
-const globalForPDFServices = global as unknown as { pdfServices: PDFServices }
-
-function getPDFServices(): PDFServices {
-  if (!globalForPDFServices.pdfServices) {
-    const credentials = new ServicePrincipalCredentials({
-      clientId: PDF_SERVICES_CLIENT_ID,
-      clientSecret: PDF_SERVICES_CLIENT_SECRET,
-    })
-    globalForPDFServices.pdfServices = new PDFServices({ credentials })
-  }
-  return globalForPDFServices.pdfServices
+function createPDFServices(): PDFServices {
+  const credentials = new ServicePrincipalCredentials({
+    clientId: PDF_SERVICES_CLIENT_ID,
+    clientSecret: PDF_SERVICES_CLIENT_SECRET,
+  })
+  return new PDFServices({ credentials })
 }
 
 async function runExportPDF(
@@ -36,7 +31,7 @@ async function runExportPDF(
   targetFormat: ExportPDFTargetFormat,
   sourceFilename: string
 ): Promise<{ buffer: Uint8Array; filename: string }> {
-  const pdfServices = getPDFServices()
+  const pdfServices = createPDFServices()
   const inputAsset = await pdfServices.upload({
     readStream: Readable.from(Buffer.from(pdfBuffer)),
     mimeType: "application/pdf",
@@ -103,7 +98,7 @@ async function runOCR(
   sourceFilename: string,
   locale?: OCRSupportedLocale
 ): Promise<{ buffer: Uint8Array; filename: string }> {
-  const pdfServices = getPDFServices()
+  const pdfServices = createPDFServices()
   const inputAsset = await pdfServices.upload({
     readStream: Readable.from(Buffer.from(pdfBuffer)),
     mimeType: "application/pdf",

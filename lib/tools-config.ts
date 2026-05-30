@@ -290,6 +290,8 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
+    maxFilesFree: 1,
+    maxFilesPremium: 10,
   },
   {
     slug: "pdf-to-jpg",
@@ -304,6 +306,8 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
+    maxFilesFree: 1,
+    maxFilesPremium: 10,
     outputsZip: true,
   },
   {
@@ -319,6 +323,8 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
+    maxFilesFree: 1,
+    maxFilesPremium: 10,
   },
   {
     slug: "pdf-to-powerpoint",
@@ -333,6 +339,8 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
+    maxFilesFree: 1,
+    maxFilesPremium: 10,
   },
   {
     slug: "pdf-to-pdfa",

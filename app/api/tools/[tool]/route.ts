@@ -201,6 +201,9 @@ export async function POST(
           const ocrFilename = `ocr_${i + 1}.pdf`
           console.log(`[OCR] Adding to zip as: ${ocrFilename}`)
           zip.file(ocrFilename, result.buffer)
+          if (i < files.length - 1) {
+            await new Promise((resolve) => setTimeout(resolve, 500))
+          }
         }
 
         const zipBuffer = await zip.generateAsync({ type: "uint8array" })
@@ -264,6 +267,48 @@ export async function POST(
     try {
       const start = Date.now()
 
+      if (files.length > 1) {
+        const JSZip = (await import("jszip")).default
+        const zip = new JSZip()
+
+        console.log(`[Excel] Processing ${files.length} files`)
+
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i]
+          console.log(`[Excel] Processing file ${i + 1}/${files.length}: ${file.filename}`)
+          const result = await convertPdfToExcel(file.buffer, file.filename)
+          console.log(`[Excel] Result for ${file.filename}: buffer length = ${result.buffer.length}`)
+          const excelFilename = `excel_${i + 1}.xlsx`
+          console.log(`[Excel] Adding to zip as: ${excelFilename}`)
+          zip.file(excelFilename, result.buffer)
+          if (i < files.length - 1) {
+            await new Promise((resolve) => setTimeout(resolve, 500))
+          }
+        }
+
+        const zipBuffer = await zip.generateAsync({ type: "uint8array" })
+        console.log(`[Excel] ZIP generated, size: ${zipBuffer.length} bytes`)
+        const elapsed = ((Date.now() - start) / 1000).toFixed(2)
+        await recordProcessingEvent({
+          userId,
+          toolSlug: tool,
+          status: "success",
+          engine: "adobe",
+          inputFilesCount: files.length,
+          outputFilename: "converted-excels.zip",
+          outputSizeBytes: zipBuffer.byteLength,
+          processingTimeMs: Date.now() - start,
+        })
+        const zipBase64 = Buffer.from(zipBuffer).toString("base64")
+
+        return NextResponse.json({
+          fileData: zipBase64,
+          filename: "converted-excels.zip",
+          processingTime: elapsed,
+          outputSize: zipBuffer.byteLength,
+        })
+      }
+
       const result = await convertPdfToExcel(
         files[0].buffer,
         files[0].filename
@@ -298,6 +343,48 @@ export async function POST(
     try {
       const start = Date.now()
 
+      if (files.length > 1) {
+        const JSZip = (await import("jszip")).default
+        const zip = new JSZip()
+
+        console.log(`[Word] Processing ${files.length} files`)
+
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i]
+          console.log(`[Word] Processing file ${i + 1}/${files.length}: ${file.filename}`)
+          const result = await convertPdfToWordAdobe(file.buffer, file.filename)
+          console.log(`[Word] Result for ${file.filename}: buffer length = ${result.buffer.length}`)
+          const wordFilename = `word_${i + 1}.docx`
+          console.log(`[Word] Adding to zip as: ${wordFilename}`)
+          zip.file(wordFilename, result.buffer)
+          if (i < files.length - 1) {
+            await new Promise((resolve) => setTimeout(resolve, 500))
+          }
+        }
+
+        const zipBuffer = await zip.generateAsync({ type: "uint8array" })
+        console.log(`[Word] ZIP generated, size: ${zipBuffer.length} bytes`)
+        const elapsed = ((Date.now() - start) / 1000).toFixed(2)
+        await recordProcessingEvent({
+          userId,
+          toolSlug: tool,
+          status: "success",
+          engine: "adobe",
+          inputFilesCount: files.length,
+          outputFilename: "converted-words.zip",
+          outputSizeBytes: zipBuffer.byteLength,
+          processingTimeMs: Date.now() - start,
+        })
+        const zipBase64 = Buffer.from(zipBuffer).toString("base64")
+
+        return NextResponse.json({
+          fileData: zipBase64,
+          filename: "converted-words.zip",
+          processingTime: elapsed,
+          outputSize: zipBuffer.byteLength,
+        })
+      }
+
       const result = await convertPdfToWordAdobe(
         files[0].buffer,
         files[0].filename
@@ -331,6 +418,48 @@ export async function POST(
   if (tool === "pdf-to-powerpoint") {
     try {
       const start = Date.now()
+
+      if (files.length > 1) {
+        const JSZip = (await import("jszip")).default
+        const zip = new JSZip()
+
+        console.log(`[PowerPoint] Processing ${files.length} files`)
+
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i]
+          console.log(`[PowerPoint] Processing file ${i + 1}/${files.length}: ${file.filename}`)
+          const result = await convertPdfToPowerpointAdobe(file.buffer, file.filename)
+          console.log(`[PowerPoint] Result for ${file.filename}: buffer length = ${result.buffer.length}`)
+          const pptxFilename = `powerpoint_${i + 1}.pptx`
+          console.log(`[PowerPoint] Adding to zip as: ${pptxFilename}`)
+          zip.file(pptxFilename, result.buffer)
+          if (i < files.length - 1) {
+            await new Promise((resolve) => setTimeout(resolve, 500))
+          }
+        }
+
+        const zipBuffer = await zip.generateAsync({ type: "uint8array" })
+        console.log(`[PowerPoint] ZIP generated, size: ${zipBuffer.length} bytes`)
+        const elapsed = ((Date.now() - start) / 1000).toFixed(2)
+        await recordProcessingEvent({
+          userId,
+          toolSlug: tool,
+          status: "success",
+          engine: "adobe",
+          inputFilesCount: files.length,
+          outputFilename: "converted-powerpoints.zip",
+          outputSizeBytes: zipBuffer.byteLength,
+          processingTimeMs: Date.now() - start,
+        })
+        const zipBase64 = Buffer.from(zipBuffer).toString("base64")
+
+        return NextResponse.json({
+          fileData: zipBase64,
+          filename: "converted-powerpoints.zip",
+          processingTime: elapsed,
+          outputSize: zipBuffer.byteLength,
+        })
+      }
 
       const result = await convertPdfToPowerpointAdobe(
         files[0].buffer,
