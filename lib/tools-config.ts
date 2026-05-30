@@ -167,6 +167,8 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
+    maxFilesFree: 3,
+    maxFilesPremium: 10,
     maxSizeMB: 20,
   },
   {

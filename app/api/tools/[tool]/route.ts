@@ -3,7 +3,6 @@ import { auth } from "@clerk/nextjs/server"
 import { runTool } from "@/lib/iloveapi/tools"
 import { ILoveAPIError, mapILoveAPIError } from "@/lib/iloveapi/errors"
 import { convertExtractFormat } from "@/lib/extractFormatConverter"
-import { storeFile } from "@/lib/fileStore"
 import { convertPdfToExcel } from "@/lib/pdf/office-converter"
 import { convertPdfToWordAdobe, convertPdfToPowerpointAdobe, ocrPdfAdobe } from "@/lib/pdf/adobe-export-converter"
 import { OCRSupportedLocale } from "@adobe/pdfservices-node-sdk"
@@ -108,10 +107,10 @@ export async function POST(
           outputSizeBytes: result.outputFilesize,
           processingTimeMs: Date.now() - start,
         })
-        const downloadId = await storeFile(fileData, result.downloadFilename, "application/pdf")
+        const fileDataBase64 = Buffer.from(fileData).toString("base64")
 
         return NextResponse.json({
-          downloadId,
+          fileData: fileDataBase64,
           filename: result.downloadFilename,
           processingTime: elapsed,
           outputSize: result.outputFilesize,
@@ -167,10 +166,10 @@ export async function POST(
         outputSizeBytes: zipBuffer.byteLength,
         processingTimeMs: Date.now() - start,
       })
-      const downloadId = await storeFile(zipBuffer, "converted-pdfs.zip", "application/zip")
+      const zipBase64 = Buffer.from(zipBuffer).toString("base64")
 
       return NextResponse.json({
-        downloadId,
+        fileData: zipBase64,
         filename: "converted-pdfs.zip",
         processingTime: elapsed,
         outputSize: zipBuffer.byteLength,
@@ -205,10 +204,10 @@ export async function POST(
         outputSizeBytes: result.buffer.byteLength,
         processingTimeMs: Date.now() - start,
       })
-      const downloadId = await storeFile(result.buffer, result.filename, "application/pdf")
+      const ocrBase64 = Buffer.from(result.buffer).toString("base64")
 
       return NextResponse.json({
-        downloadId,
+        fileData: ocrBase64,
         filename: result.filename,
         processingTime: elapsed,
         outputSize: result.buffer.byteLength,
@@ -239,14 +238,10 @@ export async function POST(
         outputSizeBytes: result.buffer.byteLength,
         processingTimeMs: Date.now() - start,
       })
-      const downloadId = await storeFile(
-        result.buffer,
-        result.filename,
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-      )
+      const excelBase64 = Buffer.from(result.buffer).toString("base64")
 
       return NextResponse.json({
-        downloadId,
+        fileData: excelBase64,
         filename: result.filename,
         processingTime: elapsed,
         outputSize: result.buffer.byteLength,
@@ -277,14 +272,10 @@ export async function POST(
         outputSizeBytes: result.buffer.byteLength,
         processingTimeMs: Date.now() - start,
       })
-      const downloadId = await storeFile(
-        result.buffer,
-        result.filename,
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-      )
+      const wordBase64 = Buffer.from(result.buffer).toString("base64")
 
       return NextResponse.json({
-        downloadId,
+        fileData: wordBase64,
         filename: result.filename,
         processingTime: elapsed,
         outputSize: result.buffer.byteLength,
@@ -315,14 +306,10 @@ export async function POST(
         outputSizeBytes: result.buffer.byteLength,
         processingTimeMs: Date.now() - start,
       })
-      const downloadId = await storeFile(
-        result.buffer,
-        result.filename,
-        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-      )
+      const pptxBase64 = Buffer.from(result.buffer).toString("base64")
 
       return NextResponse.json({
-        downloadId,
+        fileData: pptxBase64,
         filename: result.filename,
         processingTime: elapsed,
         outputSize: result.buffer.byteLength,
@@ -394,10 +381,10 @@ export async function POST(
         outputSizeBytes: result.buffer.byteLength,
         processingTimeMs: Date.now() - start,
       })
-      const downloadId = await storeFile(result.buffer, result.downloadFilename, "application/pdf")
+      const rotateBase64 = Buffer.from(result.buffer).toString("base64")
 
       return NextResponse.json({
-        downloadId,
+        fileData: rotateBase64,
         filename: result.downloadFilename,
         processingTime: elapsed,
         outputSize: result.buffer.byteLength,
@@ -405,6 +392,51 @@ export async function POST(
     } catch (err) {
       console.error("Rotate PDF processing error:", err)
       return NextResponse.json({ error: "Failed to rotate PDF" }, { status: 500 })
+    }
+  }
+
+  if (tool === "compress-pdf" && files.length > 1) {
+    try {
+      const start = Date.now()
+      const JSZip = (await import("jszip")).default
+      const zip = new JSZip()
+
+      for (const file of files) {
+        const singleResult = await runTool({
+          tool: "compress",
+          files: [file],
+          options: { ...options },
+        })
+        const pdfBuffer = singleResult.buffer instanceof Uint8Array
+          ? singleResult.buffer
+          : new Uint8Array(singleResult.buffer as ArrayBuffer)
+        const compressedFilename = file.filename.replace(/\.pdf$/i, "_compressed.pdf")
+        zip.file(compressedFilename, pdfBuffer)
+      }
+
+      const zipBuffer = await zip.generateAsync({ type: "uint8array" })
+      const elapsed = ((Date.now() - start) / 1000).toFixed(2)
+      await recordProcessingEvent({
+        userId,
+        toolSlug: tool,
+        status: "success",
+        engine: "iloveapi",
+        inputFilesCount: files.length,
+        outputFilename: "compressed-pdfs.zip",
+        outputSizeBytes: zipBuffer.byteLength,
+        processingTimeMs: Date.now() - start,
+      })
+      const compressBase64 = Buffer.from(zipBuffer).toString("base64")
+
+      return NextResponse.json({
+        fileData: compressBase64,
+        filename: "compressed-pdfs.zip",
+        processingTime: elapsed,
+        outputSize: zipBuffer.byteLength,
+      })
+    } catch (err) {
+      console.error("Compress PDF (multiple) processing error:", err)
+      return NextResponse.json({ error: "Failed to compress PDFs" }, { status: 500 })
     }
   }
 
@@ -473,23 +505,6 @@ export async function POST(
 
     const fileData =
       finalBuffer instanceof Uint8Array ? finalBuffer : new Uint8Array(finalBuffer as ArrayBuffer)
-    const mimeType = downloadFilename.endsWith(".zip")
-      ? "application/zip"
-      : downloadFilename.endsWith(".docx")
-        ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        : downloadFilename.endsWith(".xlsx")
-          ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          : downloadFilename.endsWith(".pptx")
-            ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-            : downloadFilename.endsWith(".txt")
-              ? "text/plain"
-              : downloadFilename.endsWith(".json")
-                ? "application/json"
-                : downloadFilename.endsWith(".csv")
-                  ? "text/csv"
-                  : downloadFilename.endsWith(".md")
-                    ? "text/markdown"
-                    : "application/pdf"
     const timerSeconds = Number(result.timer)
     const processingTimeMs = Number.isFinite(timerSeconds) ? Math.round(timerSeconds * 1000) : undefined
     await recordProcessingEvent({
@@ -502,10 +517,10 @@ export async function POST(
       outputSizeBytes: fileData.byteLength,
       processingTimeMs,
     })
-    const downloadId = await storeFile(fileData, downloadFilename, mimeType)
+    const fileDataBase64 = Buffer.from(fileData).toString("base64")
 
     return NextResponse.json({
-      downloadId,
+      fileData: fileDataBase64,
       filename: downloadFilename,
       processingTime: String(result.timer),
       outputSize: result.outputFilesize,

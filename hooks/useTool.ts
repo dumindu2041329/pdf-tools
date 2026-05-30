@@ -182,7 +182,18 @@ export function useTool(toolSlug: string) {
           return
         }
 
-        const downloadUrl = `/api/download/${data.downloadId}`
+        let downloadUrl: string
+        if (data.fileData) {
+          const binaryString = atob(data.fileData)
+          const bytes = new Uint8Array(binaryString.length)
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i)
+          }
+          const blob = new Blob([bytes], { type: "application/pdf" })
+          downloadUrl = URL.createObjectURL(blob)
+        } else {
+          downloadUrl = `/api/download/${data.downloadId}`
+        }
 
         setState({
           status: "success",
