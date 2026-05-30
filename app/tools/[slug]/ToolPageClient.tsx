@@ -273,7 +273,17 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
     }
   }, [isSuccess, isWorkflowMode, state, stepIndex, workflow, workflowId, router, tool])
 
-  const showOptionsAndProcess = files.length > 0 || tool.slug === "html-to-pdf"
+  const isMergePdfTool = tool.slug === "merge-pdf"
+  const hasEnoughFilesForMerge = !isMergePdfTool || files.length >= 2
+  const showOptionsAndProcess = (files.length > 0 || tool.slug === "html-to-pdf") && hasEnoughFilesForMerge
+
+  useEffect(() => {
+    if (isMergePdfTool && files.length === 1) {
+      toast.info("Please add at least one more PDF file to merge", {
+        duration: 4000,
+      })
+    }
+  }, [isMergePdfTool, files.length])
 
   return (
     <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 pt-10 pb-20">

@@ -143,6 +143,7 @@ lib/
   utils.ts              # cn() utility
   activityStore.ts       # Activity tracking (localStorage, mirrored to DB)
   workflowStore.ts      # Legacy localStorage store (read-only, workflows migrated to DB)
+  workflowSession.ts    # Workflow session management during multi-step runs
   db.ts                 # Neon PostgreSQL connection + schema init + helpers
 proxy.ts                # Clerk middleware (Next.js 16 middleware filename)
 ```
@@ -155,7 +156,7 @@ The app connects to Neon via `@neondatabase/serverless`. The connection is confi
 
 | Table | Primary Key | Purpose |
 |---|---|---|
-| `app_user` | `id UUID` | Clerk userId → plan mapping |
+| `app_user` | `clerk_user_id text` | Clerk userId mapping |
 | `workflow` | `id UUID` | Workflow records (name, last_run, run_count) |
 | `workflow_step` | `id UUID` | Ordered steps per workflow (FK → workflow) |
 | `processing_event` | `id UUID` | Every tool run logged with status, engine, file counts, timing |
@@ -225,10 +226,13 @@ Tools configured with `local-excel`/`local-powerpoint`/`adobe-ocr` in `tools-con
 Requires `PDF_SERVICES_CLIENT_ID` and `PDF_SERVICES_CLIENT_SECRET` environment variables.
 
 ### Global Singletons
-Use `global as unknown as { ... }` pattern for dev-mode singletons (see `lib/iloveapi/client.ts`).
+Use `global as unknown as { ... }` pattern for dev-mode singletons (see `lib/iloveapi/client.ts` and `lib/pdf/adobe-export-converter.ts`).
 
 ### Watermark-pdf Tool
 This tool requires `mode` to be preserved in the API call to distinguish between text and image watermark modes. The `watermarkImage` file is uploaded separately via `runToolInput.watermarkImage` and the resulting `serverFilename` is obtained from `task.addFile()` return value. The `mapWatermarkOptions()` function in `lib/iloveapi/watermark-mapper.ts` handles parameter mapping and removes text-related fields when in image mode.
+
+### Page Number Tool
+The `add-page-numbers` tool uses `mapPageNumberOptions()` from `lib/iloveapi/page-number-mapper.ts` to map UI options to iLoveAPI parameters. Supports vertical position (bottom/top), horizontal position (center/left/right), and various numbering formats.
 
 ### Tool Categories (29 tools total)
 | Category | Tools |
@@ -247,12 +251,24 @@ Multi-step tool chains stored in Neon (migrated from localStorage):
 - **API**: `/api/workflows` (CRUD), `/api/workflows/[id]/run` (increments run count)
 - **UI pages**: `app/(dashboard)/workflows/` — reads and writes via the REST API
 - **Client-side persistence**: `workflowStore.ts` retained for offline-first reads; UI always calls DB via API
+- **Session Management**: `workflowSession.ts` manages active workflow state during multi-step runs
 
 ### Activity Tracking
 - **Server-side tools** (`/api/tools/[tool]`, `/api/ai/*`): writes to `processing_event` table + Neon `activity_event` table
 - **Local tools** (merge, split, rotate client-side): writes to localStorage + POSTs to `/api/activity` to mirror to Neon
 - **Client display**: `activityStore.ts` reads from localStorage for real-time UI updates; billing page reads from DB via `/api/usage`
 - Limited to 50 most recent local entries
+
+### Clerk Middleware
+Auth is handled via `proxy.ts` (Clerk middleware). Protected routes are defined using `createRouteMatcher`. The middleware config excludes API tool routes, webhooks, and static assets from auth checks.
+
+### Usage Limits & Plans
+| Plan | Daily | Monthly | Max File Size |
+|---|---|---|---|
+| free | 5 | 30 | 20 MB |
+| premium | unlimited | unlimited | 200 MB |
+
+Plan is stored in Clerk user metadata (`publicMetadata.plan`).
 
 ## Security Rules
 
@@ -262,6 +278,20 @@ Multi-step tool chains stored in Neon (migrated from localStorage):
 4. Validate all client input on the server (see `toolValidation.ts`).
 5. Never use `dangerouslySetInnerHTML` without sanitization.
 6. Never commit `.env`, `.env.local`, or secrets files.
+
+## Environment Variables
+
+### Required
+- `DATABASE_URL` — Neon PostgreSQL connection string
+- `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` — Clerk public key
+- `CLERK_SECRET_KEY` — Clerk secret key
+- `ILOVEAPI_PUBLIC_KEY` — iLoveAPI public key
+- `ILOVEAPI_SECRET_KEY` — iLoveAPI secret key
+- `OPENAI_API_KEY` — OpenAI API key
+
+### Optional
+- `PDF_SERVICES_CLIENT_ID` — Adobe PDF Services client ID (for Adobe tools)
+- `PDF_SERVICES_CLIENT_SECRET` — Adobe PDF Services client secret
 
 ## Agent Rules
 
@@ -279,3 +309,33 @@ Multi-step tool chains stored in Neon (migrated from localStorage):
 - Use `any` in TypeScript.
 - Use `@ts-ignore` — use `@ts-expect-error` with a comment if truly necessary.
 - Commit unless explicitly asked.
+
+## Key Implementation Details
+
+### File Processing Flow
+1. User selects file(s) in `FileUploader`
+2. Options are configured via tool-specific option components
+3. `useTool` hook manages processing state via `ToolState` discriminated union
+4. File(s) sent to `/api/tools/[tool]` with FormData
+5. API route processes via appropriate engine:
+   - **Client-side**: Returns blob URL directly
+   - **Server-side**: Stores in Neon, returns `downloadId`
+6. Client downloads via `/api/download/[id]` or blob URL
+
+### iLoveAPI Integration
+- Client singleton pattern in `lib/iloveapi/client.ts`
+- JWT token generation with 2-hour expiry
+- 4-step workflow: Start → Upload → Process → Download
+- Webhook support for async operations
+- File encryption support for sensitive documents
+
+### Validation
+- Client-side validation in `toolValidation.ts`
+- Server-side validation in API routes
+- File type and size checks against tool config
+
+### Error Handling Patterns
+- iLoveAPI errors mapped to user-friendly messages
+- Adobe errors caught and returned as 500 with generic message
+- Local processing errors bubble up with original message
+- All errors logged to console for debugging
