@@ -150,7 +150,7 @@ export async function POST(
         const pdfBuffer = singleResult.buffer instanceof Uint8Array
           ? singleResult.buffer
           : new Uint8Array(singleResult.buffer as ArrayBuffer)
-        const pdfFilename = file.filename.replace(/\.[^.]+$/, ".pdf")
+        const pdfFilename = `pdf_${i + 1}.pdf`
         zip.file(pdfFilename, pdfBuffer)
       }
 
@@ -183,6 +183,48 @@ export async function POST(
   if (tool === "ocr-pdf") {
     try {
       const start = Date.now()
+
+      if (files.length > 1) {
+        const JSZip = (await import("jszip")).default
+        const zip = new JSZip()
+
+        const ocrLanguages = (options.ocr_languages as string[]) || ["eng"]
+        const locale = ocrLanguages[0] === "eng" ? OCRSupportedLocale.EN_US : undefined
+
+        console.log(`[OCR] Processing ${files.length} files`)
+
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i]
+          console.log(`[OCR] Processing file ${i + 1}/${files.length}: ${file.filename}`)
+          const result = await ocrPdfAdobe(file.buffer, file.filename, locale)
+          console.log(`[OCR] Result for ${file.filename}: buffer length = ${result.buffer.length}`)
+          const ocrFilename = `ocr_${i + 1}.pdf`
+          console.log(`[OCR] Adding to zip as: ${ocrFilename}`)
+          zip.file(ocrFilename, result.buffer)
+        }
+
+        const zipBuffer = await zip.generateAsync({ type: "uint8array" })
+        console.log(`[OCR] ZIP generated, size: ${zipBuffer.length} bytes`)
+        const elapsed = ((Date.now() - start) / 1000).toFixed(2)
+        await recordProcessingEvent({
+          userId,
+          toolSlug: tool,
+          status: "success",
+          engine: "adobe",
+          inputFilesCount: files.length,
+          outputFilename: "ocr-pdfs.zip",
+          outputSizeBytes: zipBuffer.byteLength,
+          processingTimeMs: Date.now() - start,
+        })
+        const zipBase64 = Buffer.from(zipBuffer).toString("base64")
+
+        return NextResponse.json({
+          fileData: zipBase64,
+          filename: "ocr-pdfs.zip",
+          processingTime: elapsed,
+          outputSize: zipBuffer.byteLength,
+        })
+      }
 
       const ocrLanguages = (options.ocr_languages as string[]) || ["eng"]
       const locale = ocrLanguages[0] === "eng" ? OCRSupportedLocale.EN_US : undefined
@@ -401,7 +443,8 @@ export async function POST(
       const JSZip = (await import("jszip")).default
       const zip = new JSZip()
 
-      for (const file of files) {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
         const singleResult = await runTool({
           tool: "compress",
           files: [file],
@@ -410,7 +453,7 @@ export async function POST(
         const pdfBuffer = singleResult.buffer instanceof Uint8Array
           ? singleResult.buffer
           : new Uint8Array(singleResult.buffer as ArrayBuffer)
-        const compressedFilename = file.filename.replace(/\.pdf$/i, "_compressed.pdf")
+        const compressedFilename = `compressed_${i + 1}.pdf`
         zip.file(compressedFilename, pdfBuffer)
       }
 
@@ -437,6 +480,98 @@ export async function POST(
     } catch (err) {
       console.error("Compress PDF (multiple) processing error:", err)
       return NextResponse.json({ error: "Failed to compress PDFs" }, { status: 500 })
+    }
+  }
+
+  if (tool === "repair-pdf" && files.length > 1) {
+    try {
+      const start = Date.now()
+      const JSZip = (await import("jszip")).default
+      const zip = new JSZip()
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        const singleResult = await runTool({
+          tool: "repair",
+          files: [file],
+          options: { ...options },
+        })
+        const pdfBuffer = singleResult.buffer instanceof Uint8Array
+          ? singleResult.buffer
+          : new Uint8Array(singleResult.buffer as ArrayBuffer)
+        const repairedFilename = `repaired_${i + 1}.pdf`
+        zip.file(repairedFilename, pdfBuffer)
+      }
+
+      const zipBuffer = await zip.generateAsync({ type: "uint8array" })
+      const elapsed = ((Date.now() - start) / 1000).toFixed(2)
+      await recordProcessingEvent({
+        userId,
+        toolSlug: tool,
+        status: "success",
+        engine: "iloveapi",
+        inputFilesCount: files.length,
+        outputFilename: "repaired-pdfs.zip",
+        outputSizeBytes: zipBuffer.byteLength,
+        processingTimeMs: Date.now() - start,
+      })
+      const zipBase64 = Buffer.from(zipBuffer).toString("base64")
+
+      return NextResponse.json({
+        fileData: zipBase64,
+        filename: "repaired-pdfs.zip",
+        processingTime: elapsed,
+        outputSize: zipBuffer.byteLength,
+      })
+    } catch (err) {
+      console.error("Repair PDF (multiple) processing error:", err)
+      return NextResponse.json({ error: "Failed to repair PDFs" }, { status: 500 })
+    }
+  }
+
+  if (tool === "scan-to-pdf" && files.length > 1) {
+    try {
+      const start = Date.now()
+      const JSZip = (await import("jszip")).default
+      const zip = new JSZip()
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        const singleResult = await runTool({
+          tool: "imagepdf",
+          files: [file],
+          options: { ...options },
+        })
+        const pdfBuffer = singleResult.buffer instanceof Uint8Array
+          ? singleResult.buffer
+          : new Uint8Array(singleResult.buffer as ArrayBuffer)
+        const pdfFilename = `pdf_${i + 1}.pdf`
+        zip.file(pdfFilename, pdfBuffer)
+      }
+
+      const zipBuffer = await zip.generateAsync({ type: "uint8array" })
+      const elapsed = ((Date.now() - start) / 1000).toFixed(2)
+      await recordProcessingEvent({
+        userId,
+        toolSlug: tool,
+        status: "success",
+        engine: "iloveapi",
+        inputFilesCount: files.length,
+        outputFilename: "scanned-pdfs.zip",
+        outputSizeBytes: zipBuffer.byteLength,
+        processingTimeMs: Date.now() - start,
+      })
+      const zipBase64 = Buffer.from(zipBuffer).toString("base64")
+
+      return NextResponse.json({
+        fileData: zipBase64,
+        filename: "scanned-pdfs.zip",
+        processingTime: elapsed,
+        outputSize: zipBuffer.byteLength,
+      })
+    } catch (err) {
+      console.error("Scan to PDF (multiple) processing error:", err)
+      return NextResponse.json({ error: "Failed to convert images to PDF" }, { status: 500 })
     }
   }
 
