@@ -12,7 +12,8 @@ export async function processRotateLocal(
   const rotationDeg = ((options.rotate as number) || 0) % 360
   const resultFiles: { name: string; uint8Array: Uint8Array }[] = []
 
-  for (const { buffer, filename } of files) {
+  for (let i = 0; i < files.length; i++) {
+    const { buffer, filename } = files[i]
     try {
       const pdfDoc = await PDFDocument.load(buffer)
       const pages = pdfDoc.getPages()
@@ -25,7 +26,8 @@ export async function processRotateLocal(
       const uint8Array = await pdfDoc.save()
       const baseName = filename.replace(/\.[^/.]+$/, "")
       const suffix = rotationDeg > 0 ? `_rotated_${rotationDeg}` : ""
-      resultFiles.push({ name: `${baseName}${suffix}.pdf`, uint8Array })
+      const uniqueSuffix = files.length > 1 ? `_${i + 1}` : ""
+      resultFiles.push({ name: `${baseName}${suffix}${uniqueSuffix}.pdf`, uint8Array })
     } catch (err) {
       throw new Error(`Failed to process PDF file "${filename}": ${(err as Error).message}`)
     }

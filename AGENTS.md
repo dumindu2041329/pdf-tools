@@ -7,14 +7,14 @@
 | Field | Value |
 |---|---|
 | **Name** | `pdf-tools` |
-| **Framework** | Next.js ^16.2.3 (App Router) |
+| **Framework** | Next.js ^16.2.3 (App Router, Turbopack) |
 | **Language** | TypeScript (strict) |
 | **Styling** | Tailwind CSS v4 + shadcn/ui |
 | **Auth** | Clerk (`@clerk/nextjs` ^7.0.7) |
-| **PDF Engine** | iLoveAPI (`@ilovepdf/ilovepdf-nodejs`) + Adobe Node SDK (`@adobe/pdfservices-node-sdk` ^4.1.0) + `pdf-lib` / `pdfjs-dist` |
+| **PDF Engine** | iLoveAPI (`@ilovepdf/ilovepdf-nodejs` ^0.3.1) + Adobe Node SDK (`@adobe/pdfservices-node-sdk` ^4.1.0) + `pdf-lib` ^1.17.1 / `pdfjs-dist` ^4.10.38 |
 | **AI Services** | OpenAI (`openai` ^6.33.0) |
-| **UI/UX** | framer-motion ^12.38.0, three.js ^0.183.2, @dnd-kit (drag & drop), sonner ^2.0.7 |
-| **Database** | Neon PostgreSQL (`@neondatabase/serverless`) |
+| **UI/UX** | framer-motion ^12.38.0, three.js ^0.183.2, @dnd-kit/core ^6.3.1 + @dnd-kit/sortable ^10.0.0, sonner ^2.0.7, lucide-react ^1.7.0 |
+| **Database** | Neon PostgreSQL (`@neondatabase/serverless` ^1.1.0) |
 | **Package Manager** | npm |
 | **Deployment** | Vercel |
 
@@ -99,74 +99,101 @@ export function ToolCard({ title }: Props) {  // named export
 ```
 app/                    # Next.js App Router
   (auth)/               # Auth pages (Clerk)
+    sign-in/[[...sign-in]]/
+    sign-up/[[...sign-up]]/
   (dashboard)/          # Protected dashboard
     account/            # Account management
-      _components/      # Account sidebar
+      _components/      # AccountSidebar
       billing/          # Billing page
       profile/          # Profile settings
       security/         # Security settings
     workflows/          # Workflow management
-      [id]/run/        # Run workflow
+      [id]/run/         # Run workflow
       new/              # Create workflow
   (marketing)/          # Public marketing pages
   api/                  # Route handlers
     activity/           # Activity logging endpoint
-    tools/[tool]/       # PDF processing endpoints (120s max)
-    download/[id]/      # File download endpoint
     ai/summarize/       # AI summarize endpoint (60s max)
     ai/translate/       # AI translate endpoint (60s max)
-    usage/              # Usage tracking endpoint
+    download/[id]/      # File download endpoint
+    tools/[tool]/       # PDF processing endpoints (120s max)
+    tools/sign/         # PDF signing endpoint (30s max)
+    usage/              # Usage tracking endpoint (stub)
     webhooks/iloveapi/  # iLoveAPI webhooks
     workflows/          # Workflow CRUD (GET/POST)
     workflows/[id]/     # Workflow by ID (GET/PATCH/DELETE)
     workflows/[id]/run/ # Increment workflow run count
-    tools/sign/         # PDF signing endpoint (30s max)
   tools/[slug]/         # Dynamic tool pages
+    page.tsx            # Server component (metadata)
+    ToolPageClient.tsx  # Client component (tool UI)
+  globals.css
+  layout.tsx
+  sitemap.ts
+  not-found.tsx
 components/
   layout/               # Navbar, Footer, ToolsDropdown, UserMenu
   shared/               # UsageMeter
   theme/                # ThemeProvider, ThemeToggle, Toaster
-  tools/options/        # Per-tool option forms (WatermarkOptions, etc.)
-  tools/                # FileUploader, ProcessingModal, ToolCard, etc.
-  ui/                   # shadcn/ui primitives + glsl-hills (Three.js)
-hooks/                  # Custom hooks (useTool)
+  tools/
+    options/            # Per-tool option forms + previews
+      CompressOptions, ExtractOptions, HtmlToPdfOptions,
+      ImageToPdfOptions, OcrOptions, OrganizeOptions,
+      PageNumberOptions, PageNumberPreview, PdfaOptions,
+      PdfToJpgOptions, ProtectOptions, RotateOptions,
+      RotatePreview, SplitOptions, ToolOptions,
+      UnlockOptions, WatermarkOptions, WatermarkPreview
+    FileUploader.tsx    # File input + drag-and-drop
+    ProcessingModal.tsx # Processing state overlay
+    ToolCard.tsx        # Tool grid card
+    ToolGrid.tsx        # Tool category grid
+    ToolHero.tsx        # Tool page hero section
+    DownloadCard.tsx    # Download result card
+  ui/                   # shadcn/ui primitives
+    button, dropdown-menu, confirm-dialog, glsl-hills (Three.js)
+hooks/
+  useTool.ts            # Central tool state machine
 lib/
-  iloveapi/             # Client, types, tools runner, errors, signature, watermark-mapper, page-number-mapper
-  pdf/                  # Client-side PDF helpers, Adobe export converter, office converter, rotate-client, split-client, merge-client
+  iloveapi/             # client.ts, types.ts, tools.ts, errors.ts,
+                        # signature.ts, watermark-mapper.ts, page-number-mapper.ts
+  pdf/                  # adobe-export-converter.ts, office-converter.ts,
+                        # rotate-client.ts, split-client.ts, merge-client.ts
+  adobe/                # (directory, Adobe SDK helpers)
   tools-config.ts       # Tool registry (29 tools)
-  toolValidation.ts      # Per-tool input validation
-  usage.ts              # Plan limits & usage tracking
+  toolValidation.ts     # Per-tool input validation
+  usage.ts              # Plan limits & usage tracking (canProcessFile, recordProcessingEvent stub)
   usageLimits.ts        # Plan limit constants (client-safe)
   fileStore.ts          # In-memory file storage (Map-based, not Neon)
   extractFormatConverter.ts # Format conversion utilities
-  auth.ts               # Clerk plan helpers
+  auth.ts               # Clerk plan helpers (getUserPlan, grantPremiumAccess, revokePremiumAccess)
   utils.ts              # cn() utility
-  activityStore.ts       # Activity tracking (localStorage, mirrored to DB)
+  activityStore.ts      # Activity tracking (localStorage, mirrored to DB)
   workflowStore.ts      # Legacy localStorage store (read-only, workflows migrated to DB)
   workflowSession.ts    # Workflow session management during multi-step runs
   db.ts                 # Neon PostgreSQL connection + schema init + helpers
 proxy.ts                # Clerk middleware (Next.js 16 middleware filename)
+next.config.ts          # Next.js config (Turbopack, proxyClientMaxBodySize: 4gb, Clerk image domain)
+vercel.json             # Vercel deployment config
 ```
 
 ### Database (Neon PostgreSQL)
 
-The app connects to Neon via `@neondatabase/serverless`. The connection is configured in `lib/db.ts` using the `DATABASE_URL` environment variable. **Schema is auto-created on first server request** via `ensureDbSchema()` — no manual migrations needed.
+The app connects to Neon via `@neondatabase/serverless`. The connection is configured in `lib/db.ts` using the `DATABASE_URL` environment variable. **Schema is auto-created on first server request** via `ensureDbSchema()` — no manual migrations needed. Uses `pgcrypto` extension for UUID generation.
 
 #### Schema (3 tables)
 
 | Table | Primary Key | Purpose |
 |---|---|---|
 | `app_user` | `clerk_user_id text` | Clerk userId mapping |
-| `workflow` | `id UUID` | Workflow records (name, last_run, run_count) |
-| `workflow_step` | `id UUID` | Ordered steps per workflow (FK → workflow) |
+| `workflow` | `id UUID` | Workflow records (name, last_run, run_count, user_id FK) |
+| `workflow_step` | `id UUID` | Ordered steps per workflow (FK → workflow, options jsonb) |
 
-See `lib/db.ts` for the full `CREATE TABLE IF NOT EXISTS` DDL. All tables are created idempotently on first use.
+Indexes: `workflow_user_created_at_idx`, `workflow_step_workflow_step_index_idx`.
 
 #### DB Helper Functions (lib/db.ts)
 
 - `sql` — tagged template literal for type-safe Neon queries
-- `ensureDbSchema()` — runs all CREATE TABLE IF NOT EXISTS statements (called at the top of every API route)
-- `upsertUser(userId)` — inserts or updates the `app_user` row for a Clerk user
+- `ensureDbSchema()` — runs all CREATE TABLE IF NOT EXISTS statements; uses a global singleton promise to avoid duplicate runs in dev
+- `upsertUser(userId)` — inserts or ignores the `app_user` row for a Clerk user
 
 ### Tool Pipeline
 1. `FileUploader` component accepts user files
@@ -185,11 +212,17 @@ See `lib/db.ts` for the full `CREATE TABLE IF NOT EXISTS` DDL. All tables are cr
 | `split-pdf`, `remove-pages`, `organize-pdf` | Client-side | pdf-lib (`split-client.ts`) |
 | `rotate-pdf` | Server | pdf-lib (`rotate-client.ts`) |
 | `compress-pdf`, `repair-pdf`, `watermark-pdf`, `add-page-numbers`, `edit-pdf` | Server | iLoveAPI |
-| `pdf-to-word` | Server | Adobe PDF Services (`ExportPDFJob`) |
-| `pdf-to-excel` | Server | Adobe PDF Services (`ExportPDFJob`) |
-| `pdf-to-powerpoint` | Server | Adobe PDF Services (`ExportPDFJob`) |
-| `ocr-pdf` | Server | Adobe PDF Services (`OCRJob`) |
+| `extract-pages` | Server | iLoveAPI (`extract`) |
+| `scan-to-pdf`, `jpg-to-pdf` | Server | iLoveAPI (`imagepdf`) |
+| `word-to-pdf`, `excel-to-pdf`, `powerpoint-to-pdf` | Server | iLoveAPI (`officepdf`) |
+| `html-to-pdf` | Server | iLoveAPI (`htmlpdf`) |
+| `unlock-pdf`, `protect-pdf` | Server | iLoveAPI |
+| `pdf-to-word` | Server | iLoveAPI (`officepdf`) — note: config shows `officepdf`, not Adobe |
+| `pdf-to-excel` | Server | Adobe PDF Services (`ExportPDFJob`) via `local-excel` |
+| `pdf-to-powerpoint` | Server | Adobe PDF Services (`ExportPDFJob`) via `local-powerpoint` |
+| `ocr-pdf` | Server | Adobe PDF Services (`OCRJob`) via `adobe-ocr` |
 | `pdf-to-jpg`, `pdf-to-pdfa`, `validate-pdfa` | Server | iLoveAPI |
+| `sign-pdf` | Server | iLoveAPI (dedicated `/api/tools/sign` route) |
 | `ai-summarizer`, `translate-pdf` | Server | OpenAI (via `/api/ai/*`) |
 
 ### API Routes
@@ -208,6 +241,22 @@ See `lib/db.ts` for the full `CREATE TABLE IF NOT EXISTS` DDL. All tables are cr
 | `/api/workflows/[id]/run` | POST | Increment workflow `run_count`, update `last_run` |
 | `/api/webhooks/iloveapi` | POST | iLoveAPI webhooks (logs events only) |
 
+Note: `/api/user/plan` and `/api/preview` directories exist in the filesystem but contain no route files.
+
+### ToolState Discriminated Union (hooks/useTool.ts)
+
+```ts
+type ToolState =
+  | { status: "idle" }
+  | { status: "files-selected"; files: File[] }
+  | { status: "processing"; step: ProcessingStep; uploadProgress?: number }
+  | { status: "success"; downloadUrl: string; filename: string; processingTime: string; outputSize: number }
+  | { status: "validation-success"; message: string; result?: string; processingTime: string }
+  | { status: "error"; message: string; retryable: boolean; upgradeRequired?: boolean }
+```
+
+`useTool` also exposes `forceSuccess(file)` for tools that produce a result without server processing.
+
 ### Local Tools Processing
 - **local-merge** (`merge-pdf`): Uses `pdf-lib` to merge PDFs entirely client-side. Handled in `useTool` hook via dynamic import of `processMergeLocal()`.
 - **local-split** (`split-pdf`, `remove-pages`, `organize-pdf`): Uses `pdf-lib` to process PDFs entirely client-side. Handled in `useTool` hook via dynamic import of `processSplitLocal()`.
@@ -215,7 +264,6 @@ See `lib/db.ts` for the full `CREATE TABLE IF NOT EXISTS` DDL. All tables are cr
 
 ### Adobe PDF Services Pipeline
 Tools configured with `local-excel`/`local-powerpoint`/`adobe-ocr` in `tools-config.ts` route to Adobe services:
-- `pdf-to-word` → `convertPdfToWordAdobe()` from `adobe-export-converter.ts`
 - `pdf-to-excel` → `convertPdfToExcel()` from `office-converter.ts`
 - `pdf-to-powerpoint` → `convertPdfToPowerpointAdobe()` from `adobe-export-converter.ts`
 - `ocr-pdf` → `ocrPdfAdobe()` from `adobe-export-converter.ts`
@@ -223,10 +271,10 @@ Tools configured with `local-excel`/`local-powerpoint`/`adobe-ocr` in `tools-con
 Requires `PDF_SERVICES_CLIENT_ID` and `PDF_SERVICES_CLIENT_SECRET` environment variables.
 
 ### Global Singletons
-Use `global as unknown as { ... }` pattern for dev-mode singletons (see `lib/iloveapi/client.ts` and `lib/pdf/adobe-export-converter.ts`).
+Use `global as unknown as { ... }` pattern for dev-mode singletons (see `lib/iloveapi/client.ts` and `lib/pdf/adobe-export-converter.ts`). `ensureDbSchema()` also uses a global promise singleton.
 
 ### Watermark-pdf Tool
-This tool requires `mode` to be preserved in the API call to distinguish between text and image watermark modes. The `watermarkImage` file is uploaded separately via `runToolInput.watermarkImage` and the resulting `serverFilename` is obtained from `task.addFile()` return value. The `mapWatermarkOptions()` function in `lib/iloveapi/watermark-mapper.ts` handles parameter mapping and removes text-related fields when in image mode.
+This tool requires `mode` to be preserved in the API call to distinguish between text and image watermark modes. The `watermarkImage` file is uploaded separately via `form.append("watermark_image", watermarkImage)` in `useTool`. The `mapWatermarkOptions()` function in `lib/iloveapi/watermark-mapper.ts` handles parameter mapping and removes text-related fields when in image mode.
 
 ### Page Number Tool
 The `add-page-numbers` tool uses `mapPageNumberOptions()` from `lib/iloveapi/page-number-mapper.ts` to map UI options to iLoveAPI parameters. Supports vertical position (bottom/top), horizontal position (center/left/right), and various numbering formats.
@@ -242,6 +290,26 @@ The `add-page-numbers` tool uses `mapPageNumberOptions()` from `lib/iloveapi/pag
 | security (3) | unlock-pdf, protect-pdf, sign-pdf |
 | ai (2) | ai-summarizer, translate-pdf |
 
+### ToolConfig Shape (lib/tools-config.ts)
+```ts
+interface ToolConfig {
+  slug: string
+  title: string
+  description: string
+  seoDescription: string
+  category: ToolCategory
+  iloveapiTool: ILoveAPITool | "local-split" | "local-excel" | "local-powerpoint" | "adobe-ocr" | "local-rotate" | "local-merge"
+  icon: LucideIcon
+  color: string          // hsl(…) string
+  access: "free" | "premium"
+  acceptedFileTypes: string[]
+  maxFiles: number
+  maxFilesFree?: number
+  maxFilesPremium?: number
+  outputsZip?: boolean
+}
+```
+
 ### Workflows
 Multi-step tool chains stored in Neon (migrated from localStorage):
 - **Storage**: `workflow` + `workflow_step` tables in Neon
@@ -251,21 +319,26 @@ Multi-step tool chains stored in Neon (migrated from localStorage):
 - **Session Management**: `workflowSession.ts` manages active workflow state during multi-step runs
 
 ### Activity Tracking
-- **Server-side tools** (`/api/tools/[tool]`, `/api/ai/*`): writes to in-memory fileStore (stub `recordProcessingEvent` does nothing)
-- **Local tools** (merge, split, rotate client-side): writes to localStorage + POSTs to `/api/activity`
+- **Server-side tools** (`/api/tools/[tool]`, `/api/ai/*`): `recordProcessingEvent` is a stub that returns `""` and does nothing
+- **Local tools** (merge, split, rotate client-side): calls `recordActivity()` (localStorage) + POSTs to `/api/activity`
 - **Client display**: `activityStore.ts` reads from localStorage for real-time UI updates
 - Limited to 50 most recent local entries
 
-### Clerk Middleware
-Auth is handled via `proxy.ts` (Clerk middleware). Protected routes are defined using `createRouteMatcher`. The middleware config excludes API tool routes, webhooks, and static assets from auth checks.
+### Clerk Middleware (proxy.ts)
+Auth is handled via `proxy.ts` (Clerk middleware). No routes are currently in `isProtectedRoute` — the matcher excludes `_next`, API tool routes, activity, usage, download, AI, and webhook routes. `clockSkewInMs: 60000` is set.
 
 ### Usage Limits & Plans
 | Plan | Daily | Monthly | Max File Size |
 |---|---|---|---|
 | free | 5 | 30 | 20 MB |
-| premium | unlimited | unlimited | 200 MB |
+| premium | unlimited (-1) | unlimited (-1) | 4096 MB (4 GB) |
 
-Plan is stored in Clerk user metadata (`publicMetadata.plan`).
+Plan is stored in Clerk user metadata (`publicMetadata.plan`). `getLimitsForPlan()` in `usageLimits.ts` is the source of truth. The `canProcessFile()` function in `usage.ts` enforces file size limits only (daily/monthly counts are not currently tracked — `recordProcessingEvent` is a stub).
+
+### Next.js Config (next.config.ts)
+- **Turbopack** enabled with `root: path.resolve(".")`
+- `proxyClientMaxBodySize: "4gb"` — allows large PDF uploads
+- Remote image pattern: `img.clerk.com` (for Clerk user avatars)
 
 ## Security Rules
 
@@ -287,7 +360,7 @@ Plan is stored in Clerk user metadata (`publicMetadata.plan`).
 - `OPENAI_API_KEY` — OpenAI API key
 
 ### Optional
-- `PDF_SERVICES_CLIENT_ID` — Adobe PDF Services client ID (for Adobe tools)
+- `PDF_SERVICES_CLIENT_ID` — Adobe PDF Services client ID (for pdf-to-excel, pdf-to-powerpoint, ocr-pdf)
 - `PDF_SERVICES_CLIENT_SECRET` — Adobe PDF Services client secret
 
 ## Agent Rules
@@ -311,17 +384,18 @@ Plan is stored in Clerk user metadata (`publicMetadata.plan`).
 
 ### File Processing Flow
 1. User selects file(s) in `FileUploader`
-2. Options are configured via tool-specific option components
+2. Options are configured via tool-specific option components in `components/tools/options/`
 3. `useTool` hook manages processing state via `ToolState` discriminated union
-4. File(s) sent to `/api/tools/[tool]` with FormData
-5. API route processes via appropriate engine:
-   - **Client-side**: Returns blob URL directly
-   - **Server-side**: Stores in Neon, returns `downloadId`
-6. Client downloads via `/api/download/[id]` or blob URL
+4. For local tools (merge/split/rotate): processed in-browser, blob URL returned directly
+5. For server tools: files sent to `/api/tools/[tool]` with FormData (`file` + `options` JSON + optional `watermark_image`)
+6. API route processes via appropriate engine and returns either:
+   - `{ fileData: base64, filename, processingTime, outputSize }` — decoded to blob URL client-side
+   - `{ downloadId, filename, processingTime, outputSize }` — downloaded via `/api/download/[id]`
+   - `{ validationSuccess, message, result }` — for validate-pdfa
 
 ### iLoveAPI Integration
 - Client singleton pattern in `lib/iloveapi/client.ts`
-- JWT token generation with 2-hour expiry
+- JWT token generation with 2-hour expiry (`lib/iloveapi/signature.ts`)
 - 4-step workflow: Start → Upload → Process → Download
 - Webhook support for async operations
 - File encryption support for sensitive documents
@@ -332,7 +406,8 @@ Plan is stored in Clerk user metadata (`publicMetadata.plan`).
 - File type and size checks against tool config
 
 ### Error Handling Patterns
-- iLoveAPI errors mapped to user-friendly messages
+- iLoveAPI errors mapped to user-friendly messages via `mapILoveAPIError()`
 - Adobe errors caught and returned as 500 with generic message
 - Local processing errors bubble up with original message
+- `upgradeRequired: true` flag returned when plan limits are exceeded
 - All errors logged to console for debugging

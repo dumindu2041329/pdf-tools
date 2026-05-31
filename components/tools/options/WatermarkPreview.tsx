@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useCallback } from "react"
 import { Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
+
 let pdfjsLib: typeof import("pdfjs-dist") | null = null
 
 async function getPdfJs() {
@@ -164,9 +165,15 @@ function drawImageWatermark(
 export function WatermarkPreview({ files, options, className }: Props) {
   const [items, setItems] = useState<PageItem[]>([])
   const [isLoading, setIsLoading] = useState(false)
+  const [selectedFileIndex, setSelectedFileIndex] = useState(0)
   const pagesDataRef = useRef<Map<string, string>>(new Map())
 
   const mode = (options.mode as string) || "text"
+
+  // Reset selected file index when files change
+  useEffect(() => {
+    setSelectedFileIndex(0)
+  }, [files])
 
   useEffect(() => {
     if (!files || files.length === 0) {
@@ -279,7 +286,7 @@ export function WatermarkPreview({ files, options, className }: Props) {
   useEffect(() => {
     if (items.length === 0) return
     drawAllWatermarks()
-  }, [drawAllWatermarks, items.length, options])
+  }, [drawAllWatermarks, items.length, options, selectedFileIndex])
 
   if (isLoading) {
     return (
@@ -291,10 +298,23 @@ export function WatermarkPreview({ files, options, className }: Props) {
 
   if (items.length === 0) return null
 
+  const visibleItems = files.length > 1 ? items.filter((item) => item.fileIndex === selectedFileIndex) : items
+
   return (
     <div className={cn("flex flex-col gap-3", className)}>
+      {files.length > 1 && (
+        <select
+          value={selectedFileIndex}
+          onChange={(e) => setSelectedFileIndex(Number(e.target.value))}
+          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none cursor-pointer"
+        >
+          {files.map((file, idx) => (
+            <option key={idx} value={idx}>{file.name}</option>
+          ))}
+        </select>
+      )}
       <div className="grid grid-cols-2 gap-3 overflow-y-auto max-h-96 pr-1">
-        {items.map((item) => (
+        {visibleItems.map((item) => (
           <div
             key={item.id}
             className="relative rounded-lg overflow-hidden border border-border bg-muted/20 flex items-center justify-center p-2"

@@ -71,7 +71,7 @@ export const toolsConfig: ToolConfig[] = [
     acceptedFileTypes: [".pdf"],
     maxFiles: 80,
     maxFilesFree: 80,
-    maxFilesPremium: 500,
+    maxFilesPremium: 500
   },
   {
     slug: "split-pdf",
@@ -85,7 +85,7 @@ export const toolsConfig: ToolConfig[] = [
     color: "hsl(200, 80%, 50%)",
     access: "free",
     acceptedFileTypes: [".pdf"],
-    maxFiles: 1,
+    maxFiles: 1
   },
   {
     slug: "remove-pages",
@@ -99,7 +99,7 @@ export const toolsConfig: ToolConfig[] = [
     color: "hsl(0, 70%, 55%)",
     access: "free",
     acceptedFileTypes: [".pdf"],
-    maxFiles: 1,
+    maxFiles: 1
   },
   {
     slug: "extract-pages",
@@ -113,7 +113,7 @@ export const toolsConfig: ToolConfig[] = [
     color: "hsl(160, 60%, 45%)",
     access: "free",
     acceptedFileTypes: [".pdf"],
-    maxFiles: 1,
+    maxFiles: 1
   },
   {
     slug: "organize-pdf",
@@ -129,7 +129,7 @@ export const toolsConfig: ToolConfig[] = [
     acceptedFileTypes: [".pdf"],
     maxFiles: 5,
     maxFilesFree: 5,
-    maxFilesPremium: 20,
+    maxFilesPremium: 20
   },
   {
     slug: "scan-to-pdf",
@@ -143,7 +143,7 @@ export const toolsConfig: ToolConfig[] = [
     color: "hsl(190, 70%, 50%)",
     access: "free",
     acceptedFileTypes: [".jpg", ".jpeg", ".png", ".webp", ".gif"],
-    maxFiles: 20,
+    maxFiles: 20
   },
 
   // ── Optimize ──────────────────────────────────────────────
@@ -161,7 +161,7 @@ export const toolsConfig: ToolConfig[] = [
     acceptedFileTypes: [".pdf"],
     maxFiles: 2,
     maxFilesFree: 2,
-    maxFilesPremium: 10,
+    maxFilesPremium: 10
   },
   {
     slug: "repair-pdf",
@@ -177,7 +177,7 @@ export const toolsConfig: ToolConfig[] = [
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
     maxFilesFree: 1,
-    maxFilesPremium: 10,
+    maxFilesPremium: 10
   },
   {
     slug: "ocr-pdf",
@@ -193,7 +193,7 @@ export const toolsConfig: ToolConfig[] = [
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
     maxFilesFree: 1,
-    maxFilesPremium: 10,
+    maxFilesPremium: 10
   },
 
   // ── Convert to PDF ────────────────────────────────────────
@@ -211,7 +211,7 @@ export const toolsConfig: ToolConfig[] = [
     acceptedFileTypes: [".doc", ".docx"],
     maxFiles: 1,
     maxFilesFree: 1,
-    maxFilesPremium: 10,
+    maxFilesPremium: 10
   },
   {
     slug: "excel-to-pdf",
@@ -227,7 +227,7 @@ export const toolsConfig: ToolConfig[] = [
     acceptedFileTypes: [".xls", ".xlsx"],
     maxFiles: 1,
     maxFilesFree: 1,
-    maxFilesPremium: 10,
+    maxFilesPremium: 10
   },
   {
     slug: "powerpoint-to-pdf",
@@ -243,7 +243,7 @@ export const toolsConfig: ToolConfig[] = [
     acceptedFileTypes: [".ppt", ".pptx"],
     maxFiles: 1,
     maxFilesFree: 1,
-    maxFilesPremium: 10,
+    maxFilesPremium: 10
   },
   {
     slug: "jpg-to-pdf",
@@ -259,7 +259,7 @@ export const toolsConfig: ToolConfig[] = [
     acceptedFileTypes: [".jpg", ".jpeg", ".png", ".webp", ".gif"],
     maxFiles: 20,
     maxFilesFree: 20,
-    maxFilesPremium: 80,
+    maxFilesPremium: 80
   },
   {
     slug: "html-to-pdf",
@@ -273,7 +273,7 @@ export const toolsConfig: ToolConfig[] = [
     color: "hsl(200, 70%, 50%)",
     access: "free",
     acceptedFileTypes: [".html", ".htm"],
-    maxFiles: 1,
+    maxFiles: 1
   },
 
   // ── Convert from PDF ──────────────────────────────────────
@@ -291,7 +291,7 @@ export const toolsConfig: ToolConfig[] = [
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
     maxFilesFree: 1,
-    maxFilesPremium: 10,
+    maxFilesPremium: 10
   },
   {
     slug: "pdf-to-jpg",
@@ -308,7 +308,7 @@ export const toolsConfig: ToolConfig[] = [
     maxFiles: 1,
     maxFilesFree: 1,
     maxFilesPremium: 10,
-    outputsZip: true,
+    outputsZip: true
   },
   {
     slug: "pdf-to-excel",
@@ -324,7 +324,7 @@ export const toolsConfig: ToolConfig[] = [
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
     maxFilesFree: 1,
-    maxFilesPremium: 10,
+    maxFilesPremium: 10
   },
   {
     slug: "pdf-to-powerpoint",
@@ -340,7 +340,7 @@ export const toolsConfig: ToolConfig[] = [
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
     maxFilesFree: 1,
-    maxFilesPremium: 10,
+    maxFilesPremium: 10
   },
   {
     slug: "pdf-to-pdfa",
@@ -355,6 +355,8 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 1,
+    maxFilesFree: 1,
+    maxFilesPremium: 10
   },
   {
     slug: "validate-pdfa",
@@ -368,7 +370,7 @@ export const toolsConfig: ToolConfig[] = [
     color: "hsl(160, 60%, 45%)",
     access: "free",
     acceptedFileTypes: [".pdf"],
-    maxFiles: 1,
+    maxFiles: 1
   },
 
   // ── Edit ──────────────────────────────────────────────────
@@ -385,6 +387,8 @@ export const toolsConfig: ToolConfig[] = [
     access: "free",
     acceptedFileTypes: [".pdf"],
     maxFiles: 30,
+    maxFilesFree: 30,
+    maxFilesPremium: 80
   },
   {
     slug: "watermark-pdf",
@@ -398,7 +402,9 @@ export const toolsConfig: ToolConfig[] = [
     color: "hsl(200, 60%, 50%)",
     access: "free",
     acceptedFileTypes: [".pdf"],
-    maxFiles: 1,
+    maxFiles: 3,
+    maxFilesFree: 3,
+    maxFilesPremium: 10
   },
   {
     slug: "add-page-numbers",
@@ -412,7 +418,7 @@ export const toolsConfig: ToolConfig[] = [
     color: "hsl(30, 70%, 50%)",
     access: "free",
     acceptedFileTypes: [".pdf"],
-    maxFiles: 1,
+    maxFiles: 1
   },
   {
     slug: "edit-pdf",
@@ -426,7 +432,7 @@ export const toolsConfig: ToolConfig[] = [
     color: "hsl(262, 75%, 55%)",
     access: "free",
     acceptedFileTypes: [".pdf"],
-    maxFiles: 1,
+    maxFiles: 1
   },
 
   // ── Security ──────────────────────────────────────────────
@@ -442,7 +448,7 @@ export const toolsConfig: ToolConfig[] = [
     color: "hsl(120, 55%, 45%)",
     access: "free",
     acceptedFileTypes: [".pdf"],
-    maxFiles: 1,
+    maxFiles: 1
   },
   {
     slug: "protect-pdf",
@@ -456,7 +462,7 @@ export const toolsConfig: ToolConfig[] = [
     color: "hsl(0, 65%, 50%)",
     access: "free",
     acceptedFileTypes: [".pdf"],
-    maxFiles: 1,
+    maxFiles: 1
   },
   {
     slug: "sign-pdf",
@@ -470,7 +476,7 @@ export const toolsConfig: ToolConfig[] = [
     color: "hsl(262, 80%, 60%)",
     access: "free",
     acceptedFileTypes: [".pdf"],
-    maxFiles: 5,
+    maxFiles: 5
   },
 
   // ── AI ────────────────────────────────────────────────────
@@ -486,7 +492,7 @@ export const toolsConfig: ToolConfig[] = [
     color: "hsl(280, 80%, 60%)",
     access: "free",
     acceptedFileTypes: [".pdf"],
-    maxFiles: 1,
+    maxFiles: 1
   },
   {
     slug: "translate-pdf",
@@ -500,7 +506,7 @@ export const toolsConfig: ToolConfig[] = [
     color: "hsl(300, 65%, 55%)",
     access: "free",
     acceptedFileTypes: [".pdf"],
-    maxFiles: 1,
+    maxFiles: 1
   },
 ]
 

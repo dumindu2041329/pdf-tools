@@ -750,6 +750,118 @@ export async function POST(
     }
   }
 
+  if (tool === "pdf-to-pdfa" && files.length > 1) {
+    try {
+      const start = Date.now()
+      const JSZip = (await import("jszip")).default
+      const zip = new JSZip()
+
+      console.log(`[PDFA] Processing ${files.length} files`)
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        console.log(`[PDFA] Processing file ${i + 1}/${files.length}: ${file.filename}`)
+        const singleResult = await runTool({
+          tool: "pdfa",
+          files: [file],
+          options: { ...options },
+        })
+        const pdfBuffer = singleResult.buffer instanceof Uint8Array
+          ? singleResult.buffer
+          : new Uint8Array(singleResult.buffer as ArrayBuffer)
+        const pdfaFilename = `pdfa_${i + 1}.pdf`
+        console.log(`[PDFA] Adding to zip as: ${pdfaFilename}`)
+        zip.file(pdfaFilename, pdfBuffer)
+      }
+
+      const zipBuffer = await zip.generateAsync({ type: "uint8array" })
+      console.log(`[PDFA] ZIP generated, size: ${zipBuffer.length} bytes`)
+      const elapsed = ((Date.now() - start) / 1000).toFixed(2)
+      await recordProcessingEvent({
+        userId,
+        toolSlug: tool,
+        status: "success",
+        engine: "iloveapi",
+        inputFilesCount: files.length,
+        outputFilename: "converted-pdfas.zip",
+        outputSizeBytes: zipBuffer.byteLength,
+        processingTimeMs: Date.now() - start,
+      })
+      const zipBase64 = Buffer.from(zipBuffer).toString("base64")
+
+      return NextResponse.json({
+        fileData: zipBase64,
+        filename: "converted-pdfas.zip",
+        processingTime: elapsed,
+        outputSize: zipBuffer.byteLength,
+      })
+    } catch (err) {
+      console.error("PDF to PDF/A (multiple) processing error:", err)
+      return NextResponse.json({ error: "Failed to convert PDF to PDF/A format" }, { status: 500 })
+    }
+  }
+
+  if (tool === "watermark-pdf" && files.length > 1) {
+    try {
+      const start = Date.now()
+      const JSZip = (await import("jszip")).default
+      const zip = new JSZip()
+
+      const optionsWithoutSlug = { ...options }
+      delete optionsWithoutSlug._toolSlug
+      const cleanOptions = mapWatermarkOptions(optionsWithoutSlug)
+
+      console.log(`[Watermark] Processing ${files.length} files`)
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        console.log(`[Watermark] Processing file ${i + 1}/${files.length}: ${file.filename}`)
+
+        const runToolInput: Parameters<typeof runTool>[0] = {
+          tool: "watermark",
+          files: [file],
+          options: cleanOptions as unknown as Record<string, unknown>,
+        }
+        if (watermarkImage) {
+          runToolInput.watermarkImage = watermarkImage
+        }
+
+        const singleResult = await runTool(runToolInput)
+        const pdfBuffer = singleResult.buffer instanceof Uint8Array
+          ? singleResult.buffer
+          : new Uint8Array(singleResult.buffer as ArrayBuffer)
+        const watermarkFilename = `watermark_${i + 1}.pdf`
+        console.log(`[Watermark] Adding to zip as: ${watermarkFilename}`)
+        zip.file(watermarkFilename, pdfBuffer)
+      }
+
+      const zipBuffer = await zip.generateAsync({ type: "uint8array" })
+      console.log(`[Watermark] ZIP generated, size: ${zipBuffer.length} bytes`)
+      const elapsed = ((Date.now() - start) / 1000).toFixed(2)
+      await recordProcessingEvent({
+        userId,
+        toolSlug: tool,
+        status: "success",
+        engine: "iloveapi",
+        inputFilesCount: files.length,
+        outputFilename: "watermarked-pdfs.zip",
+        outputSizeBytes: zipBuffer.byteLength,
+        processingTimeMs: Date.now() - start,
+      })
+      const zipBase64 = Buffer.from(zipBuffer).toString("base64")
+
+      return NextResponse.json({
+        fileData: zipBase64,
+        filename: "watermarked-pdfs.zip",
+        processingTime: elapsed,
+        outputSize: zipBuffer.byteLength,
+      })
+    } catch (err) {
+      console.error("Watermark PDF (multiple) processing error:", err)
+      return NextResponse.json({ error: "Failed to watermark PDF files" }, { status: 500 })
+    }
+  }
+
   try {
     const toolConfig = getToolBySlug(tool)
     if (!toolConfig) {
