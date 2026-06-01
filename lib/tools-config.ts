@@ -464,7 +464,9 @@ export const toolsConfig: ToolConfig[] = [
     color: "hsl(0, 65%, 50%)",
     access: "free",
     acceptedFileTypes: [".pdf"],
-    maxFiles: 1
+    maxFiles: 5,
+    maxFilesFree: 5,
+    maxFilesPremium: 80
   },
   {
     slug: "sign-pdf",

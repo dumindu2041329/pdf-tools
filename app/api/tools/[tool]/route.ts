@@ -869,6 +869,57 @@ export async function POST(
     }
   }
 
+  if (tool === "protect-pdf" && files.length > 1) {
+    try {
+      const start = Date.now()
+      const JSZip = (await import("jszip")).default
+      const zip = new JSZip()
+
+      console.log(`[Protect] Processing ${files.length} files`)
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        console.log(`[Protect] Processing file ${i + 1}/${files.length}: ${file.filename}`)
+        const singleResult = await runTool({
+          tool: "protect",
+          files: [file],
+          options: { ...options },
+        })
+        const pdfBuffer = singleResult.buffer instanceof Uint8Array
+          ? singleResult.buffer
+          : new Uint8Array(singleResult.buffer as ArrayBuffer)
+        const protectedFilename = `protected_${i + 1}.pdf`
+        console.log(`[Protect] Adding to zip as: ${protectedFilename}`)
+        zip.file(protectedFilename, pdfBuffer)
+      }
+
+      const zipBuffer = await zip.generateAsync({ type: "uint8array" })
+      console.log(`[Protect] ZIP generated, size: ${zipBuffer.length} bytes`)
+      const elapsed = ((Date.now() - start) / 1000).toFixed(2)
+      await recordProcessingEvent({
+        userId,
+        toolSlug: tool,
+        status: "success",
+        engine: "iloveapi",
+        inputFilesCount: files.length,
+        outputFilename: "protected-pdfs.zip",
+        outputSizeBytes: zipBuffer.byteLength,
+        processingTimeMs: Date.now() - start,
+      })
+      const zipBase64 = Buffer.from(zipBuffer).toString("base64")
+
+      return NextResponse.json({
+        fileData: zipBase64,
+        filename: "protected-pdfs.zip",
+        processingTime: elapsed,
+        outputSize: zipBuffer.byteLength,
+      })
+    } catch (err) {
+      console.error("Protect PDF (multiple) processing error:", err)
+      return NextResponse.json({ error: "Failed to protect PDF files" }, { status: 500 })
+    }
+  }
+
   if (tool === "add-page-numbers" && files.length > 1) {
     try {
       const start = Date.now()
