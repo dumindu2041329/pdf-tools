@@ -418,7 +418,9 @@ export const toolsConfig: ToolConfig[] = [
     color: "hsl(30, 70%, 50%)",
     access: "free",
     acceptedFileTypes: [".pdf"],
-    maxFiles: 1
+    maxFiles: 3,
+    maxFilesFree: 3,
+    maxFilesPremium: 10
   },
   {
     slug: "edit-pdf",

@@ -809,6 +809,8 @@ export async function POST(
 
       const optionsWithoutSlug = { ...options }
       delete optionsWithoutSlug._toolSlug
+      const filePages = (optionsWithoutSlug.filePages as Record<number, string>) || {}
+      delete optionsWithoutSlug.filePages
       const cleanOptions = mapWatermarkOptions(optionsWithoutSlug)
 
       console.log(`[Watermark] Processing ${files.length} files`)
@@ -817,10 +819,15 @@ export async function POST(
         const file = files[i]
         console.log(`[Watermark] Processing file ${i + 1}/${files.length}: ${file.filename}`)
 
+        const fileOptions = { ...cleanOptions }
+        if (filePages[i]) {
+          fileOptions.pages = filePages[i]
+        }
+
         const runToolInput: Parameters<typeof runTool>[0] = {
           tool: "watermark",
           files: [file],
-          options: cleanOptions as unknown as Record<string, unknown>,
+          options: fileOptions as unknown as Record<string, unknown>,
         }
         if (watermarkImage) {
           runToolInput.watermarkImage = watermarkImage
@@ -859,6 +866,69 @@ export async function POST(
     } catch (err) {
       console.error("Watermark PDF (multiple) processing error:", err)
       return NextResponse.json({ error: "Failed to watermark PDF files" }, { status: 500 })
+    }
+  }
+
+  if (tool === "add-page-numbers" && files.length > 1) {
+    try {
+      const start = Date.now()
+      const JSZip = (await import("jszip")).default
+      const zip = new JSZip()
+
+      const optionsWithoutSlug = { ...options }
+      delete optionsWithoutSlug._toolSlug
+      const filePages = (optionsWithoutSlug.filePages as Record<number, string>) || {}
+      delete optionsWithoutSlug.filePages
+      const cleanOptions = mapPageNumberOptions(optionsWithoutSlug)
+
+      console.log(`[PageNumber] Processing ${files.length} files`)
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        console.log(`[PageNumber] Processing file ${i + 1}/${files.length}: ${file.filename}`)
+
+        const fileOptions = { ...cleanOptions }
+        if (filePages[i]) {
+          fileOptions.pages = filePages[i]
+        }
+
+        const singleResult = await runTool({
+          tool: "pagenumber",
+          files: [file],
+          options: fileOptions as unknown as Record<string, unknown>,
+        })
+        const pdfBuffer = singleResult.buffer instanceof Uint8Array
+          ? singleResult.buffer
+          : new Uint8Array(singleResult.buffer as ArrayBuffer)
+        const pagenumberFilename = `pagenumber_${i + 1}.pdf`
+        console.log(`[PageNumber] Adding to zip as: ${pagenumberFilename}`)
+        zip.file(pagenumberFilename, pdfBuffer)
+      }
+
+      const zipBuffer = await zip.generateAsync({ type: "uint8array" })
+      console.log(`[PageNumber] ZIP generated, size: ${zipBuffer.length} bytes`)
+      const elapsed = ((Date.now() - start) / 1000).toFixed(2)
+      await recordProcessingEvent({
+        userId,
+        toolSlug: tool,
+        status: "success",
+        engine: "iloveapi",
+        inputFilesCount: files.length,
+        outputFilename: "paged-pdfs.zip",
+        outputSizeBytes: zipBuffer.byteLength,
+        processingTimeMs: Date.now() - start,
+      })
+      const zipBase64 = Buffer.from(zipBuffer).toString("base64")
+
+      return NextResponse.json({
+        fileData: zipBase64,
+        filename: "paged-pdfs.zip",
+        processingTime: elapsed,
+        outputSize: zipBuffer.byteLength,
+      })
+    } catch (err) {
+      console.error("Add Page Numbers (multiple) processing error:", err)
+      return NextResponse.json({ error: "Failed to add page numbers to PDF files" }, { status: 500 })
     }
   }
 

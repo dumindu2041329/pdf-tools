@@ -336,11 +336,25 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
               <WatermarkPreview
                 files={files}
                 options={options}
+                onFileSelect={(fileIndex, pageCount) => {
+                  setOptions((prev) => ({
+                    ...prev,
+                    selectedPreviewFileIndex: fileIndex,
+                    selectedPreviewPageCount: pageCount,
+                  }))
+                }}
               />
             ) : tool.slug === "add-page-numbers" && files.length > 0 ? (
               <PageNumberPreview
                 files={files}
                 options={options}
+                onFileSelect={(fileIndex, pageCount) => {
+                  setOptions((prev) => ({
+                    ...prev,
+                    selectedPreviewFileIndex: fileIndex,
+                    selectedPreviewPageCount: pageCount,
+                  }))
+                }}
               />
             ) : (
               <div className="flex flex-col gap-6">

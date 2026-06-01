@@ -4,7 +4,6 @@ import { useEffect, useState, useRef, useCallback } from "react"
 import { Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
-
 let pdfjsLib: typeof import("pdfjs-dist") | null = null
 
 async function getPdfJs() {
@@ -19,6 +18,7 @@ interface Props {
   files: File[]
   options: Record<string, unknown>
   className?: string
+  onFileSelect?: (fileIndex: number, pageCount: number) => void
 }
 
 interface PageItem {
@@ -162,18 +162,35 @@ function drawImageWatermark(
   img.src = URL.createObjectURL(imageFile)
 }
 
-export function WatermarkPreview({ files, options, className }: Props) {
+export function WatermarkPreview({ files, options, className, onFileSelect }: Props) {
   const [items, setItems] = useState<PageItem[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [selectedFileIndex, setSelectedFileIndex] = useState(0)
   const pagesDataRef = useRef<Map<string, string>>(new Map())
+  const filePageCountsRef = useRef<Map<number, number>>(new Map())
+  const prevFileIndexRef = useRef<number>(-1)
 
   const mode = (options.mode as string) || "text"
 
   // Reset selected file index when files change
   useEffect(() => {
     setSelectedFileIndex(0)
+    prevFileIndexRef.current = -1
   }, [files])
+
+  // Call onFileSelect when selected file index actually changes
+  useEffect(() => {
+    if (prevFileIndexRef.current === selectedFileIndex) return
+    if (onFileSelect && files.length > 0) {
+      const pageCount = filePageCountsRef.current.get(selectedFileIndex) || 0
+      onFileSelect(selectedFileIndex, pageCount)
+    }
+    prevFileIndexRef.current = selectedFileIndex
+  }, [selectedFileIndex, files, onFileSelect])
+
+  const handleFileSelect = (index: number) => {
+    setSelectedFileIndex(index)
+  }
 
   useEffect(() => {
     if (!files || files.length === 0) {
@@ -194,6 +211,7 @@ export function WatermarkPreview({ files, options, className }: Props) {
         pdfjs
           .getDocument(objUrl)
           .promise.then(async (pdf) => {
+            filePageCountsRef.current.set(fileIdx, pdf.numPages)
             for (let pageIdx = 1; pageIdx <= pdf.numPages; pageIdx++) {
               const page = await pdf.getPage(pageIdx)
               const viewport = page.getViewport({ scale: 1 })
@@ -305,7 +323,7 @@ export function WatermarkPreview({ files, options, className }: Props) {
       {files.length > 1 && (
         <select
           value={selectedFileIndex}
-          onChange={(e) => setSelectedFileIndex(Number(e.target.value))}
+          onChange={(e) => handleFileSelect(Number(e.target.value))}
           className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none cursor-pointer"
         >
           {files.map((file, idx) => (

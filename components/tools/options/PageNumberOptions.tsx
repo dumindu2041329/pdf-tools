@@ -3,6 +3,7 @@
 import { cn } from "@/lib/utils"
 import { CheckCircle2 } from "lucide-react"
 import { useCallback, useEffect, useRef } from "react"
+import React from "react"
 
 let pdfjsLib: typeof import("pdfjs-dist") | null = null
 
@@ -37,49 +38,61 @@ const textFormats = [
 export function PageNumberOptions({ options, onChange, files }: Props) {
   const update = useCallback((key: string, val: unknown) => onChange({ ...options, [key]: val }), [options, onChange])
 
-  const autoFilledRef = useRef(false)
+  const selectedFileIndex = (options.selectedPreviewFileIndex as number) || 0
+  const selectedPageCount = (options.selectedPreviewPageCount as number) || 0
+  const prevSelectedFileIndexRef = useRef<number>(selectedFileIndex)
+
+  const filePages = React.useMemo(() => (options.filePages as Record<number, string>) || {}, [options.filePages])
 
   useEffect(() => {
-    if (!files || files.length === 0) {
-      autoFilledRef.current = false
+    if (!files || files.length === 0) return
+    const targetIndex = selectedFileIndex < files.length ? selectedFileIndex : 0
+    const file = files[targetIndex]
+    if (!file) return
+
+    const fileChanged = prevSelectedFileIndexRef.current !== selectedFileIndex
+    prevSelectedFileIndexRef.current = selectedFileIndex
+
+    if (fileChanged) {
+      if (filePages[selectedFileIndex]) {
+        update("pages", filePages[selectedFileIndex])
+      } else if (selectedPageCount > 0) {
+        const newPages = `1-${selectedPageCount}`
+        onChange({
+          ...options,
+          pages: newPages,
+          filePages: { ...filePages, [selectedFileIndex]: newPages }
+        })
+      }
       return
     }
 
-    let isMounted = true
-    let total = 0
-    let completed = 0
-
-    files.forEach((file) => {
-      const objUrl = URL.createObjectURL(file)
-      getPdfJs().then((pdfjs) => {
-        pdfjs
-          .getDocument(objUrl)
-          .promise.then((pdf) => {
-            if (isMounted) {
-              total += pdf.numPages
-            }
-          })
-          .catch((err) => {
-            console.error("Failed to read PDF pages", err)
-          })
-          .finally(() => {
-            URL.revokeObjectURL(objUrl)
-            completed++
-            if (completed === files.length && isMounted) {
-              if (!autoFilledRef.current) {
-                onChange({ ...options, pages: `1-${total}` })
-                autoFilledRef.current = true
-              }
-            }
-          })
-      })
-    })
-
-    return () => {
-      isMounted = false
+    if (!options.pages && !filePages[selectedFileIndex]) {
+      if (selectedPageCount > 0) {
+        const newPages = `1-${selectedPageCount}`
+        onChange({
+          ...options,
+          pages: newPages,
+          filePages: { ...filePages, [selectedFileIndex]: newPages }
+        })
+      } else {
+        const objUrl = URL.createObjectURL(file)
+        getPdfJs().then((pdfjs) => {
+          pdfjs
+            .getDocument(objUrl)
+            .promise.then((pdf) => {
+              const newPages = `1-${pdf.numPages}`
+              onChange({
+                ...options,
+                pages: newPages,
+                filePages: { ...filePages, [selectedFileIndex]: newPages }
+              })
+            })
+            .finally(() => URL.revokeObjectURL(objUrl))
+        })
+      }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [files])
+  }, [files, options, options.pages, update, onChange, selectedFileIndex, selectedPageCount, filePages])
 
   const pageMode = (options.page_mode as string) || "single"
   const margin = (options.margin as string) || "recommended"
@@ -100,11 +113,15 @@ export function PageNumberOptions({ options, onChange, files }: Props) {
   const toPage = toPageStr || ""
 
   const updatePages = (from: string, to: string) => {
-    if (!from && !to) {
-      update("pages", "")
-    } else {
-      update("pages", `${from || 1}-${to || ""}`)
-    }
+    const newPages = (!from && !to) ? "" : `${from || 1}-${to || ""}`
+    onChange({
+      ...options,
+      pages: newPages,
+      filePages: {
+        ...filePages,
+        [selectedFileIndex]: newPages
+      }
+    })
   }
 
   return (

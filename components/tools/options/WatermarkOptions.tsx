@@ -3,6 +3,7 @@
 import { cn } from "@/lib/utils"
 import { Image as ImageIcon, CheckCircle2, Layers } from "lucide-react"
 import { useRef, useEffect, useCallback } from "react"
+import React from "react"
 import { toast } from "sonner"
 
 let pdfjsLib: typeof import("pdfjs-dist") | null = null
@@ -26,24 +27,63 @@ const fonts = ["Arial", "Arial Unicode MS", "Verdana", "Courier", "Times New Rom
 export function WatermarkOptions({ options, onChange, files }: Props) {
   const mode = (options.mode as string) || "text"
   const update = useCallback((key: string, val: unknown) => onChange({ ...options, [key]: val }), [options, onChange])
-  
+
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const selectedFileIndex = (options.selectedPreviewFileIndex as number) || 0
+  const selectedPageCount = (options.selectedPreviewPageCount as number) || 0
+  const prevSelectedFileIndexRef = useRef<number>(selectedFileIndex)
+
+  const filePages = React.useMemo(() => (options.filePages as Record<number, string>) || {}, [options.filePages])
 
   useEffect(() => {
     if (!files || files.length === 0) return
-    const file = files[0]
-    const objUrl = URL.createObjectURL(file)
-    getPdfJs().then((pdfjs) => {
-      pdfjs
-        .getDocument(objUrl)
-        .promise.then((pdf) => {
-          if (!options.pages) {
-            update("pages", `1-${pdf.numPages}`)
-          }
+    const targetIndex = selectedFileIndex < files.length ? selectedFileIndex : 0
+    const file = files[targetIndex]
+    if (!file) return
+
+    const fileChanged = prevSelectedFileIndexRef.current !== selectedFileIndex
+    prevSelectedFileIndexRef.current = selectedFileIndex
+
+    if (fileChanged) {
+      if (filePages[selectedFileIndex]) {
+        update("pages", filePages[selectedFileIndex])
+      } else if (selectedPageCount > 0) {
+        const newPages = `1-${selectedPageCount}`
+        onChange({
+          ...options,
+          pages: newPages,
+          filePages: { ...filePages, [selectedFileIndex]: newPages }
         })
-        .finally(() => URL.revokeObjectURL(objUrl))
-    })
-  }, [files, options.pages, update])
+      }
+      return
+    }
+
+    if (!options.pages && !filePages[selectedFileIndex]) {
+      if (selectedPageCount > 0) {
+        const newPages = `1-${selectedPageCount}`
+        onChange({
+          ...options,
+          pages: newPages,
+          filePages: { ...filePages, [selectedFileIndex]: newPages }
+        })
+      } else {
+        const objUrl = URL.createObjectURL(file)
+        getPdfJs().then((pdfjs) => {
+          pdfjs
+            .getDocument(objUrl)
+            .promise.then((pdf) => {
+              const newPages = `1-${pdf.numPages}`
+              onChange({
+                ...options,
+                pages: newPages,
+                filePages: { ...filePages, [selectedFileIndex]: newPages }
+              })
+            })
+            .finally(() => URL.revokeObjectURL(objUrl))
+        })
+      }
+    }
+  }, [files, options, options.pages, update, onChange, selectedFileIndex, selectedPageCount, filePages])
 
   // Derive current position for the 3x3 grid
   const vPos = (options.vertical_position as string) || "middle"
@@ -60,11 +100,15 @@ export function WatermarkOptions({ options, onChange, files }: Props) {
   const toPage = toPageStr || ""
 
   const updatePages = (from: string, to: string) => {
-    if (!from && !to) {
-      update("pages", "")
-    } else {
-      update("pages", `${from || 1}-${to || ""}`)
-    }
+    const newPages = (!from && !to) ? "" : `${from || 1}-${to || ""}`
+    onChange({
+      ...options,
+      pages: newPages,
+      filePages: {
+        ...filePages,
+        [selectedFileIndex]: newPages
+      }
+    })
   }
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {

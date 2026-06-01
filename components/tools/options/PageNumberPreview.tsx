@@ -18,6 +18,7 @@ interface Props {
   files: File[]
   options: Record<string, unknown>
   className?: string
+  onFileSelect?: (fileIndex: number, pageCount: number) => void
 }
 
 interface PageItem {
@@ -68,10 +69,32 @@ function drawPageNumber(
   ctx.restore()
 }
 
-export function PageNumberPreview({ files, options, className }: Props) {
+export function PageNumberPreview({ files, options, className, onFileSelect }: Props) {
   const [items, setItems] = useState<PageItem[]>([])
   const [isLoading, setIsLoading] = useState(false)
+  const [selectedFileIndex, setSelectedFileIndex] = useState(0)
   const pagesDataRef = useRef<Map<string, string>>(new Map())
+  const filePageCountsRef = useRef<Map<number, number>>(new Map())
+  const prevFileIndexRef = useRef<number>(-1)
+
+  useEffect(() => {
+    setSelectedFileIndex(0)
+    prevFileIndexRef.current = -1
+  }, [files])
+
+  // Call onFileSelect when selected file index actually changes
+  useEffect(() => {
+    if (prevFileIndexRef.current === selectedFileIndex) return
+    if (onFileSelect && files.length > 0) {
+      const pageCount = filePageCountsRef.current.get(selectedFileIndex) || 0
+      onFileSelect(selectedFileIndex, pageCount)
+    }
+    prevFileIndexRef.current = selectedFileIndex
+  }, [selectedFileIndex, files, onFileSelect])
+
+  const handleFileSelect = (index: number) => {
+    setSelectedFileIndex(index)
+  }
 
   useEffect(() => {
     if (!files || files.length === 0) {
@@ -92,6 +115,7 @@ export function PageNumberPreview({ files, options, className }: Props) {
         pdfjs
           .getDocument(objUrl)
           .promise.then(async (pdf) => {
+            filePageCountsRef.current.set(fileIdx, pdf.numPages)
             for (let pageIdx = 1; pageIdx <= pdf.numPages; pageIdx++) {
               const page = await pdf.getPage(pageIdx)
               const viewport = page.getViewport({ scale: 1 })
@@ -207,7 +231,7 @@ export function PageNumberPreview({ files, options, className }: Props) {
 
       img.src = pageDataUrl
     })
-  }, [items, options])
+  }, [items, options, selectedFileIndex])
 
   if (isLoading) {
     return (
@@ -229,17 +253,19 @@ export function PageNumberPreview({ files, options, className }: Props) {
   }
 
   const spreads: Spread[] = []
+  const visibleItems = files.length > 1 ? items.filter((item) => item.fileIndex === selectedFileIndex) : items
+
   if (pageMode === "facing") {
     let i = 0
-    if (firstCover && items.length > 0) {
-      spreads.push({ id: `spread-cover`, rightPage: items[0] })
+    if (firstCover && visibleItems.length > 0) {
+      spreads.push({ id: `spread-cover`, rightPage: visibleItems[0] })
       i = 1
     }
-    for (; i < items.length; i += 2) {
+    for (; i < visibleItems.length; i += 2) {
       spreads.push({
         id: `spread-${i}`,
-        leftPage: items[i],
-        rightPage: i + 1 < items.length ? items[i + 1] : undefined,
+        leftPage: visibleItems[i],
+        rightPage: i + 1 < visibleItems.length ? visibleItems[i + 1] : undefined,
       })
     }
   }
@@ -247,6 +273,17 @@ export function PageNumberPreview({ files, options, className }: Props) {
   if (pageMode === "facing") {
     return (
       <div className={cn("flex flex-col gap-3", className)}>
+        {files.length > 1 && (
+          <select
+            value={selectedFileIndex}
+            onChange={(e) => handleFileSelect(Number(e.target.value))}
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none cursor-pointer"
+          >
+            {files.map((file, idx) => (
+              <option key={idx} value={idx}>{file.name}</option>
+            ))}
+          </select>
+        )}
         <div className="flex flex-col gap-4 overflow-y-auto max-h-96">
           {spreads.map((spread) => (
             <div
@@ -284,8 +321,19 @@ export function PageNumberPreview({ files, options, className }: Props) {
 
   return (
     <div className={cn("flex flex-col gap-3", className)}>
+      {files.length > 1 && (
+        <select
+          value={selectedFileIndex}
+          onChange={(e) => handleFileSelect(Number(e.target.value))}
+          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none cursor-pointer"
+        >
+          {files.map((file, idx) => (
+            <option key={idx} value={idx}>{file.name}</option>
+          ))}
+        </select>
+      )}
       <div className="grid grid-cols-2 gap-3 overflow-y-auto max-h-96 pr-1">
-        {items.map((item) => (
+        {visibleItems.map((item) => (
           <div
             key={item.id}
             className="relative rounded-lg overflow-hidden border border-border bg-muted/20 flex items-center justify-center p-2"
