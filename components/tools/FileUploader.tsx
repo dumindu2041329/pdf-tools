@@ -369,7 +369,7 @@ export function FileUploader({
                       })}
                     </div>
                   ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 max-h-85 overflow-y-auto custom-scrollbar">
                       {files.map((file, i) => {
                         const fileColor = colorCodeBySourceFile ? FILE_COLORS[i % FILE_COLORS.length] : null
                         return (
@@ -411,7 +411,7 @@ export function FileUploader({
                 </DragOverlay>
               </DndContext>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 max-h-85 overflow-y-auto custom-scrollbar">
                 {files.map((file, i) => {
                   const fileColor = colorCodeBySourceFile ? FILE_COLORS[i % FILE_COLORS.length] : null
                   return (

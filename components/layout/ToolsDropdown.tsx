@@ -1,7 +1,6 @@
 "use client"
 
 import Link from "next/link"
-import { ChevronRight } from "lucide-react"
 import { toolsConfig, toolCategories, type ToolCategory } from "@/lib/tools-config"
 
 interface ToolsDropdownProps {
@@ -69,15 +68,6 @@ export function ToolsDropdown({ isOpen, onClose, onMouseEnter, onMouseLeave }: T
               </div>
             )
           })}
-        </div>
-        <div className="mt-4 pt-3 border-t border-border/50">
-          <Link
-            href="/#tools"
-            className="flex items-center justify-center gap-1 text-sm font-medium text-primary hover:text-primary/80 transition-colors"
-          >
-            View All Tools
-            <ChevronRight className="h-4 w-4" />
-          </Link>
         </div>
       </div>
     </div>
