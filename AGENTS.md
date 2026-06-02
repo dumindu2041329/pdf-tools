@@ -212,7 +212,7 @@ Indexes: `workflow_user_created_at_idx`, `workflow_step_workflow_step_index_idx`
 | `split-pdf`, `remove-pages`, `organize-pdf` | Client-side | pdf-lib (`split-client.ts`) |
 | `rotate-pdf` | Server | pdf-lib (`rotate-client.ts`) |
 | `compress-pdf`, `repair-pdf`, `watermark-pdf`, `add-page-numbers`, `edit-pdf` | Server | iLoveAPI |
-| `extract-pages` | Server | iLoveAPI (`extract`) |
+| `extract-data` | Server | iLoveAPI (`extract`) |
 | `scan-to-pdf`, `jpg-to-pdf` | Server | iLoveAPI (`imagepdf`) |
 | `word-to-pdf`, `excel-to-pdf`, `powerpoint-to-pdf` | Server | iLoveAPI (`officepdf`) |
 | `html-to-pdf` | Server | iLoveAPI (`htmlpdf`) |
@@ -282,7 +282,7 @@ The `add-page-numbers` tool uses `mapPageNumberOptions()` from `lib/iloveapi/pag
 ### Tool Categories (29 tools total)
 | Category | Tools |
 |---|---|
-| organize (6) | merge-pdf, split-pdf, remove-pages, extract-pages, organize-pdf, scan-to-pdf |
+| organize (6) | merge-pdf, split-pdf, remove-pages, extract-data, organize-pdf, scan-to-pdf |
 | optimize (3) | compress-pdf, repair-pdf, ocr-pdf |
 | convert-to (5) | word-to-pdf, excel-to-pdf, powerpoint-to-pdf, jpg-to-pdf, html-to-pdf |
 | convert-from (6) | pdf-to-word, pdf-to-jpg, pdf-to-excel, pdf-to-powerpoint, pdf-to-pdfa, validate-pdfa |

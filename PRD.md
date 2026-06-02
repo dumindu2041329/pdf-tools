@@ -164,7 +164,7 @@ pdf-tools-platform/
 │   │   ├── add-page-numbers/page.tsx      # pagenumber tool
 │   │   ├── edit-pdf/page.tsx              # editpdf tool
 │   │   ├── remove-pages/page.tsx          # split + remove_pages mode
-│   │   ├── extract-pages/page.tsx         # extract tool
+│   │   ├── extract-data/page.tsx         # extract tool
 │   │   ├── organize-pdf/page.tsx
 │   │   ├── scan-to-pdf/page.tsx
 │   │   ├── repair-pdf/page.tsx

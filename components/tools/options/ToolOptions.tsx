@@ -42,7 +42,7 @@ const optionsMap: Record<
   "pdf-to-pdfa": PdfaOptions,
   "validate-pdfa": PdfaOptions,
   "ocr-pdf": OcrOptions,
-  "extract-pages": ExtractOptions,
+  "extract-data": ExtractOptions,
   "organize-pdf": OrganizeOptions,
   "pdf-to-jpg": PdfToJpgOptions,
 }

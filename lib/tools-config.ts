@@ -102,8 +102,8 @@ export const toolsConfig: ToolConfig[] = [
     maxFiles: 1
   },
   {
-    slug: "extract-pages",
-    title: "Extract Pages",
+    slug: "extract-data",
+    title: "Extract Data",
     description: "Extract text and data from PDFs",
     seoDescription:
       "Extract text content from PDF documents. Plain text and position data extraction.",
