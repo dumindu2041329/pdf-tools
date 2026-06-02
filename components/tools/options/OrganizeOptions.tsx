@@ -137,12 +137,28 @@ export function OrganizeOptions({ files, options, onChange }: Props) {
 
   // Register the interceptor
   useEffect(() => {
-    // Pass the ranges and rotations to the splitting logic
-    const ranges = itemsRef.current.map(item => item.pageIndex + 1).join(",")
-    const rotations = itemsRef.current.map(item => item.rotation).join(",")
-    
-    if (options.ranges !== ranges || options.rotations !== rotations || options.split_mode !== 'ranges' || options.merge_after !== true) {
-      onChange({ ...options, ranges, rotations, split_mode: 'ranges', merge_after: true })
+    const currentItems = itemsRef.current
+    // Compute per-file page counts from the loaded items (these are the original page counts per file)
+    const filePageCounts: Record<number, number> = {}
+    for (const item of currentItems) {
+      const count = filePageCounts[item.fileIndex] ?? 0
+      if (item.pageIndex + 1 > count) filePageCounts[item.fileIndex] = item.pageIndex + 1
+    }
+    // Build cumulative offset: how many pages come before each fileIndex in the merged PDF
+    const fileOffsets: Record<number, number> = {}
+    // We need the offsets in original file order (0, 1, 2, ...)
+    const maxFileIndex = Math.max(-1, ...Object.keys(filePageCounts).map(Number))
+    let offset = 0
+    for (let fi = 0; fi <= maxFileIndex; fi++) {
+      fileOffsets[fi] = offset
+      offset += filePageCounts[fi] ?? 0
+    }
+    // Absolute 1-based page number in the merged PDF
+    const ranges = currentItems.map(item => fileOffsets[item.fileIndex] + item.pageIndex + 1).join(",")
+    const rotations = currentItems.map(item => item.rotation).join(",")
+
+    if (options.ranges !== ranges || options.rotations !== rotations || options.split_mode !== "ranges" || options.merge_after !== true) {
+      onChange({ ...options, ranges, rotations, split_mode: "ranges", merge_after: true })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, onChange, options.ranges, options.rotations, options.split_mode, options.merge_after])

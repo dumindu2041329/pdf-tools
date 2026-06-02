@@ -75,12 +75,22 @@ export function useTool(toolSlug: string) {
           setState({ status: "processing", step: "process" })
 
           if (files.length === 0) throw new Error("No file provided");
-          const file = files[0];
-          const arrayBuffer = await file.arrayBuffer();
+
+          let arrayBuffer: ArrayBuffer;
+          const firstName = files[0].name;
+          if (toolSlug === "organize-pdf" && files.length > 1) {
+            const { processMergeLocal } = await import("@/lib/pdf/merge-client");
+            const fileBuffers = await Promise.all(files.map(async f => ({ buffer: await f.arrayBuffer(), filename: f.name })));
+            const merged = await processMergeLocal(fileBuffers, {});
+            // merged.buffer is Uint8Array from pdf-lib; read via Response to get a typed ArrayBuffer
+            arrayBuffer = await new Response(merged.buffer as BlobPart).arrayBuffer();
+          } else {
+            arrayBuffer = await files[0].arrayBuffer();
+          }
 
           const start = Date.now();
           const { processSplitLocal } = await import("@/lib/pdf/split-client");
-          const result = await processSplitLocal(arrayBuffer, options, file.name);
+          const result = await processSplitLocal(arrayBuffer, options, firstName);
           const end = Date.now();
 
           setState({ status: "processing", step: "download" })
