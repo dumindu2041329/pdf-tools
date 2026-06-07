@@ -17,6 +17,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { cn } from "@/lib/utils"
 
 export function UserMenu() {
   const { user } = useUser()
@@ -31,6 +32,8 @@ export function UserMenu() {
 
   const fullName = [user.firstName, user.lastName].filter(Boolean).join(" ") || "User"
   const email = user.primaryEmailAddress?.emailAddress ?? user.emailAddresses[0]?.emailAddress ?? ""
+  const plan = ((user.publicMetadata as Record<string, unknown>)?.plan as string) ?? "free"
+  const isPremium = plan === "premium"
 
   return (
     <DropdownMenu>
@@ -56,9 +59,21 @@ export function UserMenu() {
         <DropdownMenuLabel className="font-normal">
           <div className="flex flex-col gap-1">
             <p className="text-sm font-medium leading-none">{fullName}</p>
-            <p className="text-xs leading-none text-muted-foreground">
-              {email}
-            </p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs leading-none text-muted-foreground truncate">
+                {email}
+              </p>
+              <span
+                className={cn(
+                  "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                  isPremium
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted text-muted-foreground"
+                )}
+              >
+                {plan}
+              </span>
+            </div>
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />

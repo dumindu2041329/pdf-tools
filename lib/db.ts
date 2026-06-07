@@ -20,6 +20,7 @@ export async function ensureDbSchema(): Promise<void> {
       await sql`
         CREATE TABLE IF NOT EXISTS app_user (
           clerk_user_id text PRIMARY KEY,
+          plan text NOT NULL DEFAULT 'free',
           created_at timestamptz NOT NULL DEFAULT now()
         )
       `
@@ -64,4 +65,26 @@ export async function upsertUser(clerkUserId: string): Promise<void> {
     VALUES (${clerkUserId})
     ON CONFLICT (clerk_user_id) DO NOTHING
   `
+}
+
+export async function setUserPlan(
+  clerkUserId: string,
+  plan: "free" | "premium"
+): Promise<void> {
+  await ensureDbSchema()
+  await sql`
+    UPDATE app_user
+    SET plan = ${plan}
+    WHERE clerk_user_id = ${clerkUserId}
+  `
+}
+
+export async function getUserPlanFromDb(
+  clerkUserId: string
+): Promise<"free" | "premium" | null> {
+  await ensureDbSchema()
+  const rows = await sql<{ plan: "free" | "premium" }[]>`
+    SELECT plan FROM app_user WHERE clerk_user_id = ${clerkUserId} LIMIT 1
+  `
+  return rows[0]?.plan ?? null
 }

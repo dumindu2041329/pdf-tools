@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { useUser } from "@clerk/nextjs"
 import { getToolBySlug } from "@/lib/tools-config"
 import { getLimitsForPlan } from "@/lib/usageLimits"
+import { getStats } from "@/lib/activityStore"
 import { FileUploader } from "@/components/tools/FileUploader"
 import { ProcessingModal } from "@/components/tools/ProcessingModal"
 import { DownloadCard } from "@/components/tools/DownloadCard"
@@ -13,6 +14,7 @@ import { RotatePreview } from "@/components/tools/options/RotatePreview"
 import { WatermarkPreview } from "@/components/tools/options/WatermarkPreview"
 import { PageNumberPreview } from "@/components/tools/options/PageNumberPreview"
 import { Button } from "@/components/ui/button"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { useTool } from "@/hooks/useTool"
 import { validateToolOptions } from "@/lib/toolValidation"
 import type { Workflow } from "@/lib/workflowStore"
@@ -86,6 +88,8 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
   const [filesLoaded, setFilesLoaded] = useState(false)
   const [isSavingAndRedirecting, setIsSavingAndRedirecting] = useState(false)
   const [options, setOptions] = useState<Record<string, unknown>>({})
+  const [dailyLimitOpen, setDailyLimitOpen] = useState(false)
+  const [upgradeLoading, setUpgradeLoading] = useState(false)
   const { state, process, reset } = useTool(tool.slug)
   const isProcessingRef = useRef(false)
 
@@ -162,6 +166,17 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
   const handleProcess = () => {
     if ((files.length === 0 && tool.slug !== "html-to-pdf") || isProcessingRef.current) return
 
+    // Enforce the daily file limit before sending anything to the server.
+    // Premium has daily = -1 (unlimited) so this check only blocks free users.
+    const dailyLimit = planLimits.daily
+    if (dailyLimit > 0) {
+      const { filesToday } = getStats()
+      if (filesToday >= dailyLimit) {
+        setDailyLimitOpen(true)
+        return
+      }
+    }
+
     const validationMsg = validateToolOptions(tool.slug, options, files)
     if (validationMsg) {
       toast.error(validationMsg)
@@ -207,6 +222,27 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
     isProcessingRef.current = false
     setIsSavingAndRedirecting(false)
     reset()
+  }
+
+  const handleUpgrade = async () => {
+    if (upgradeLoading) return
+    setUpgradeLoading(true)
+    try {
+      const res = await fetch("/api/billing/checkout", { method: "POST" })
+      const data = (await res.json().catch(() => ({}))) as {
+        url?: string
+        error?: string
+      }
+      if (!res.ok || !data.url) {
+        toast.error(data.error ?? "Could not start checkout.")
+        return
+      }
+      window.location.href = data.url
+    } catch {
+      toast.error("Could not start checkout.")
+    } finally {
+      setUpgradeLoading(false)
+    }
   }
 
   const handleContinue = useCallback(() => {
@@ -678,6 +714,18 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
         currentStep={isSavingAndRedirecting ? "done" : (isProcessing ? state.step : "start")}
         uploadProgress={isProcessing ? state.uploadProgress : undefined}
         isOpen={isProcessing || isSavingAndRedirecting}
+      />
+
+      <ConfirmDialog
+        isOpen={dailyLimitOpen}
+        title="Daily limit reached"
+        description="You've used up your daily limit. You can process more files tomorrow, or upgrade your plan to Premium for unlimited processing."
+        confirmLabel="Upgrade to Premium"
+        cancelLabel="Close"
+        loading={upgradeLoading}
+        loadingLabel="Redirecting to checkout..."
+        onConfirm={handleUpgrade}
+        onCancel={() => setDailyLimitOpen(false)}
       />
     </div>
   )

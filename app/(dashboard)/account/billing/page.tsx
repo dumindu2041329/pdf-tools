@@ -1,8 +1,9 @@
 "use client"
 
 import { useUser } from "@clerk/nextjs"
-import Link from "next/link"
-import { useEffect, useState } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
+import { useEffect, useRef, useState } from "react"
+import { toast } from "sonner"
 import {
   Crown,
   Zap,
@@ -15,6 +16,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { UsageMeter } from "@/components/shared/UsageMeter"
 import { getLimitsForPlan } from "@/lib/usageLimits"
+import { getStats } from "@/lib/activityStore"
 
 const plans = [
   {
@@ -54,30 +56,114 @@ const plans = [
 
 export default function BillingPage() {
   const { user, isLoaded } = useUser()
+  const router = useRouter()
+  const searchParams = useSearchParams()
   const [stats, setStats] = useState<{ filesToday: number; filesThisMonth: number }>({
     filesToday: 0,
     filesThisMonth: 0,
   })
+  const [checkoutLoading, setCheckoutLoading] = useState(false)
+  const [verifying, setVerifying] = useState(false)
 
   useEffect(() => {
     if (!isLoaded || !user) return
-    fetch("/api/usage")
-      .then((r) => r.json())
-      .then((data: unknown) => {
-        if (typeof data === "object" && data !== null) {
-          const d = data as Record<string, unknown>
-          const filesToday = typeof d.filesProcessedToday === "number" ? d.filesProcessedToday : 0
-          const filesThisMonth = typeof d.filesProcessedThisMonth === "number" ? d.filesProcessedThisMonth : 0
-          setStats({ filesToday, filesThisMonth })
-        }
-      })
-      .catch(() => {})
+
+    const refresh = () => setStats(getStats())
+    refresh()
+    window.addEventListener("activity-update", refresh)
+
+    // Also refresh when this tab regains focus or another tab fires a
+    // `storage` event, so the meter stays in sync across tabs.
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "pdf-tools-activity" || e.key === null) refresh()
+    }
+    window.addEventListener("storage", onStorage)
+    window.addEventListener("focus", refresh)
+
+    return () => {
+      window.removeEventListener("activity-update", refresh)
+      window.removeEventListener("storage", onStorage)
+      window.removeEventListener("focus", refresh)
+    }
   }, [isLoaded, user])
 
-  if (!isLoaded || !user) {
+  // After a successful Stripe checkout, verify the session and refresh the user.
+  // We use a ref to ensure the request fires at most once per session, and we
+  // unconditionally clear `verifying` in `.finally` so router.replace() (which
+  // changes searchParams and re-runs this effect) can never leave the page
+  // stuck on the "Confirming your payment…" loading screen.
+  const verifyingRef = useRef(false)
+  const searchParamsRef = useRef(searchParams)
+  searchParamsRef.current = searchParams
+
+  useEffect(() => {
+    if (!isLoaded || !user) return
+    if (verifyingRef.current) return
+
+    const success = searchParamsRef.current.get("success") === "true"
+    const sessionId = searchParamsRef.current.get("session_id")
+    if (!success || !sessionId) return
+
+    verifyingRef.current = true
+    setVerifying(true)
+
+    void (async () => {
+      try {
+        const r = await fetch("/api/billing/verify-session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId }),
+        })
+        if (!r.ok) {
+          const data = (await r.json().catch(() => ({}))) as { error?: string }
+          toast.error(data.error ?? "Could not verify your payment.")
+          return
+        }
+        await user.reload()
+        toast.success("Welcome to Premium! Your plan has been upgraded.")
+        router.replace("/account/billing")
+      } catch {
+        toast.error("Could not verify your payment.")
+      } finally {
+        setVerifying(false)
+      }
+    })()
+  }, [isLoaded, user, router])
+
+  // Show a toast if the user cancelled checkout.
+  useEffect(() => {
+    if (searchParams.get("canceled") === "true") {
+      toast.message("Checkout cancelled. You can upgrade anytime.")
+      router.replace("/account/billing")
+    }
+  }, [searchParams, router])
+
+  async function startCheckout() {
+    if (checkoutLoading) return
+    setCheckoutLoading(true)
+    try {
+      const res = await fetch("/api/billing/checkout", { method: "POST" })
+      const data = (await res.json().catch(() => ({}))) as {
+        url?: string
+        error?: string
+      }
+      if (!res.ok || !data.url) {
+        toast.error(data.error ?? "Could not start checkout.")
+        return
+      }
+      window.location.href = data.url
+    } catch {
+      toast.error("Could not start checkout.")
+    } finally {
+      setCheckoutLoading(false)
+    }
+  }
+
+  if (!isLoaded || !user || verifying) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      <div className="flex items-center justify-center py-20 gap-2 text-muted-foreground">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        <span>{verifying ? "Confirming your payment…" : "Loading…"}</span>
       </div>
     )
   }
@@ -188,18 +274,17 @@ export default function BillingPage() {
                     </li>
                   ))}
                 </ul>
-                {!isCurrent && (
+                {!isCurrent && p.id === "premium" && (
                   <Button
                     className="mt-4 w-full"
-                    variant={p.id === "premium" ? "default" : "outline"}
-                    asChild
+                    variant="default"
+                    onClick={startCheckout}
+                    disabled={checkoutLoading}
                   >
-                    <Link href="/#pricing">
-                      {plans.indexOf(p) > plans.findIndex((x) => x.id === plan)
-                        ? "Upgrade"
-                        : "Downgrade"}{" "}
-                      to {p.name}
-                    </Link>
+                    {checkoutLoading && (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    )}
+                    Upgrade to {p.name}
                   </Button>
                 )}
               </div>

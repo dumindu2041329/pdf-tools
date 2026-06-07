@@ -240,6 +240,9 @@ Indexes: `workflow_user_created_at_idx`, `workflow_step_workflow_step_index_idx`
 | `/api/workflows/[id]` | GET/PATCH/DELETE | Get/update/delete single workflow |
 | `/api/workflows/[id]/run` | POST | Increment workflow `run_count`, update `last_run` |
 | `/api/webhooks/iloveapi` | POST | iLoveAPI webhooks (logs events only) |
+| `/api/billing/checkout` | POST | Create Stripe Checkout Session for Premium |
+| `/api/billing/verify-session` | POST | Verify a completed Stripe session, grant premium access |
+| `/api/webhooks/stripe` | POST | Stripe subscription lifecycle webhook (grants/revokes premium) |
 
 Note: `/api/user/plan` and `/api/preview` directories exist in the filesystem but contain no route files.
 
@@ -362,6 +365,10 @@ Plan is stored in Clerk user metadata (`publicMetadata.plan`). `getLimitsForPlan
 ### Optional
 - `PDF_SERVICES_CLIENT_ID` — Adobe PDF Services client ID (for pdf-to-excel, pdf-to-powerpoint, ocr-pdf)
 - `PDF_SERVICES_CLIENT_SECRET` — Adobe PDF Services client secret
+- `STRIPE_SECRET_KEY` — Stripe secret key (for Premium upgrade checkout)
+- `STRIPE_PREMIUM_PRICE_ID` — Stripe price ID for the Premium plan
+- `STRIPE_WEBHOOK_SECRET` — Stripe webhook signing secret (for subscription lifecycle events)
+- `NEXT_PUBLIC_APP_URL` — Public app URL used to build Stripe `success_url` / `cancel_url` (defaults to `http://localhost:3000` in dev)
 
 ## Agent Rules
 
