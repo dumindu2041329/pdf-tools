@@ -204,10 +204,15 @@ export async function setUserPlan(
   plan: "free" | "premium"
 ): Promise<void> {
   await ensureDbSchema()
+  // UPSERT: create the app_user row if it doesn't exist, otherwise update
+  // the plan. This ensures the DB always reflects the latest plan even when
+  // the user has never triggered an INSERT (e.g. they upgraded before ever
+  // processing a file or creating a workflow).
   await sql`
-    UPDATE app_user
-    SET plan = ${plan}
-    WHERE clerk_user_id = ${clerkUserId}
+    INSERT INTO app_user (clerk_user_id, plan)
+    VALUES (${clerkUserId}, ${plan})
+    ON CONFLICT (clerk_user_id) DO UPDATE
+    SET plan = EXCLUDED.plan
   `
 }
 
