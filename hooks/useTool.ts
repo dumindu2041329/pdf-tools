@@ -212,8 +212,9 @@ export function useTool(toolSlug: string) {
           processingTime: data.processingTime || "0",
           outputSize: Number(data.outputSize || 0),
         })
+        // Server tools: /api/tools/[tool] already records the event server-side.
+        // We only update the local activity feed here.
         recordActivity(toolSlug, data.filename || "output.pdf", Number(data.outputSize || 0))
-        postActivity(toolSlug, data.filename || "output.pdf", Number(data.outputSize || 0))
       } catch {
         setState({ status: "error", message: "A network error occurred. Please try again.", retryable: true })
       }

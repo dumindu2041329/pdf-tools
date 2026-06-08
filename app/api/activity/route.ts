@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { auth } from "@clerk/nextjs/server"
 import { recordProcessingEvent } from "@/lib/usage"
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -25,8 +26,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "toolSlug is required" }, { status: 400 })
   }
 
+  const { userId } = await auth()
+
   await recordProcessingEvent({
-    userId: null,
+    userId,
     toolSlug,
     status: "success",
     engine: "client",

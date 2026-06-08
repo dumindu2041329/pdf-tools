@@ -16,7 +16,6 @@ import {
 import { Button } from "@/components/ui/button"
 import { UsageMeter } from "@/components/shared/UsageMeter"
 import { getLimitsForPlan } from "@/lib/usageLimits"
-import { getStats } from "@/lib/activityStore"
 
 const plans = [
   {
@@ -68,22 +67,39 @@ export default function BillingPage() {
   useEffect(() => {
     if (!isLoaded || !user) return
 
-    const refresh = () => setStats(getStats())
-    refresh()
-    window.addEventListener("activity-update", refresh)
-
-    // Also refresh when this tab regains focus or another tab fires a
-    // `storage` event, so the meter stays in sync across tabs.
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === "pdf-tools-activity" || e.key === null) refresh()
+    let cancelled = false
+    const refresh = async () => {
+      try {
+        const r = await fetch("/api/usage", { cache: "no-store" })
+        if (!r.ok || cancelled) return
+        const data = (await r.json()) as {
+          filesProcessedToday?: number
+          filesProcessedThisMonth?: number
+        }
+        setStats({
+          filesToday: typeof data.filesProcessedToday === "number" ? data.filesProcessedToday : 0,
+          filesThisMonth:
+            typeof data.filesProcessedThisMonth === "number"
+              ? data.filesProcessedThisMonth
+              : 0,
+        })
+      } catch {
+        // network error — leave existing values
+      }
     }
-    window.addEventListener("storage", onStorage)
-    window.addEventListener("focus", refresh)
+    void refresh()
+
+    // Refresh when the activity store changes (a tool just finished) and when
+    // the tab regains focus, so the meter stays in sync with the server.
+    const onActivity = () => void refresh()
+    const onFocus = () => void refresh()
+    window.addEventListener("activity-update", onActivity)
+    window.addEventListener("focus", onFocus)
 
     return () => {
-      window.removeEventListener("activity-update", refresh)
-      window.removeEventListener("storage", onStorage)
-      window.removeEventListener("focus", refresh)
+      cancelled = true
+      window.removeEventListener("activity-update", onActivity)
+      window.removeEventListener("focus", onFocus)
     }
   }, [isLoaded, user])
 

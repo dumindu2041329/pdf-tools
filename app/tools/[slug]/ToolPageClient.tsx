@@ -5,7 +5,6 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { useUser } from "@clerk/nextjs"
 import { getToolBySlug } from "@/lib/tools-config"
 import { getLimitsForPlan } from "@/lib/usageLimits"
-import { getStats } from "@/lib/activityStore"
 import { FileUploader } from "@/components/tools/FileUploader"
 import { ProcessingModal } from "@/components/tools/ProcessingModal"
 import { DownloadCard } from "@/components/tools/DownloadCard"
@@ -163,17 +162,29 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
     }
   }, [isWorkflowMode, workflowSession, stepIndex, filesLoaded])
 
-  const handleProcess = () => {
+  const handleProcess = async () => {
     if ((files.length === 0 && tool.slug !== "html-to-pdf") || isProcessingRef.current) return
 
     // Enforce the daily file limit before sending anything to the server.
     // Premium has daily = -1 (unlimited) so this check only blocks free users.
+    // The server is the source of truth (canProcessFile) and will reject again
+    // if the client check is stale.
     const dailyLimit = planLimits.daily
     if (dailyLimit > 0) {
-      const { filesToday } = getStats()
-      if (filesToday >= dailyLimit) {
-        setDailyLimitOpen(true)
-        return
+      try {
+        const res = await fetch("/api/usage", { cache: "no-store" })
+        if (res.ok) {
+          const data = (await res.json()) as { filesProcessedToday?: number }
+          const usedToday = typeof data.filesProcessedToday === "number"
+            ? data.filesProcessedToday
+            : 0
+          if (usedToday >= dailyLimit) {
+            setDailyLimitOpen(true)
+            return
+          }
+        }
+      } catch {
+        // If the usage check fails, fall through and let the server enforce it.
       }
     }
 

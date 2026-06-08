@@ -183,11 +183,12 @@ The app connects to Neon via `@neondatabase/serverless`. The connection is confi
 
 | Table | Primary Key | Purpose |
 |---|---|---|
-| `app_user` | `clerk_user_id text` | Clerk userId mapping |
+| `app_user` | `clerk_user_id text` | Clerk userId mapping (stores `plan`) |
 | `workflow` | `id UUID` | Workflow records (name, last_run, run_count, user_id FK) |
 | `workflow_step` | `id UUID` | Ordered steps per workflow (FK → workflow, options jsonb) |
+| `usage_event` | `id UUID` | One row per processed file (user_id FK, status, created_at) — powers daily/monthly counters |
 
-Indexes: `workflow_user_created_at_idx`, `workflow_step_workflow_step_index_idx`.
+Indexes: `workflow_user_created_at_idx`, `workflow_step_workflow_step_index_idx`, `usage_event_user_created_at_idx`.
 
 #### DB Helper Functions (lib/db.ts)
 
@@ -336,7 +337,12 @@ Auth is handled via `proxy.ts` (Clerk middleware). No routes are currently in `i
 | free | 5 | 30 | 20 MB |
 | premium | unlimited (-1) | unlimited (-1) | 4096 MB (4 GB) |
 
-Plan is stored in Clerk user metadata (`publicMetadata.plan`). `getLimitsForPlan()` in `usageLimits.ts` is the source of truth. The `canProcessFile()` function in `usage.ts` enforces file size limits only (daily/monthly counts are not currently tracked — `recordProcessingEvent` is a stub).
+Plan is stored in Clerk user metadata (`publicMetadata.plan`) and mirrored to `app_user.plan`. `getLimitsForPlan()` in `usageLimits.ts` is the source of truth for the limits themselves. **Usage counts live in the `usage_event` table** in Neon — every successful processing (server tools and local tools alike) inserts a row. `canProcessFile()` in `usage.ts` checks the user's `filesProcessedToday` / `filesProcessedThisMonth` against `planLimits.daily` / `planLimits.monthly` (and also file size). `getUsageStats(userId)` aggregates the table for the billing page and the tool page's pre-flight check.
+
+#### Where each processing path records the event
+- **Server tools** (`/api/tools/[tool]`): the API route handler calls `recordProcessingEvent()` once on success, before returning.
+- **Local tools** (merge, split, rotate client-side, plus `forceSuccess`): `useTool` calls `postActivity()` which POSTs to `/api/activity`, where the server reads the Clerk user via `auth()` and inserts the row.
+- **Client-side pre-flight check** (`handleProcess` in `app/tools/[slug]/ToolPageClient.tsx`): `fetch("/api/usage")` returns today's count; if it meets or exceeds the plan's `daily` limit, a "Daily limit reached" dialog is shown before any upload starts. The server re-enforces the limit as a safety net via `canProcessFile()`.
 
 ### Next.js Config (next.config.ts)
 - **Turbopack** enabled with `root: path.resolve(".")`
