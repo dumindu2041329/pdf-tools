@@ -1,4 +1,10 @@
-import { ensureDbSchema, sql, upsertUser } from "@/lib/db"
+import {
+  ensureDbSchema,
+  isMissingRelationError,
+  resetSchemaInit,
+  sql,
+  upsertUser,
+} from "@/lib/db"
 import { getUserPlan } from "@/lib/auth"
 import type { UserPlan } from "@/lib/auth"
 import { getLimitsForPlan } from "@/lib/usageLimits"
@@ -182,6 +188,22 @@ export async function recordProcessingEvent(
 
     return rows[0]?.id ?? ""
   } catch (err) {
+    // If a usage table is missing (e.g. it was dropped externally), the
+    // cached schema-init promise is still resolved, so the DDL never re-ran.
+    // Reset it and retry once: the next ensureDbSchema() will recreate
+    // usage_event (and its partitions) and usage_counter.
+    if (isMissingRelationError(err)) {
+      console.warn(
+        "[usage] missing relation detected, re-initialising schema and retrying"
+      )
+      resetSchemaInit()
+      try {
+        return await recordProcessingEvent(input)
+      } catch (retryErr) {
+        console.error("[usage] failed to record event (retry):", retryErr)
+        return ""
+      }
+    }
     console.error("[usage] failed to record event:", err)
     return ""
   }

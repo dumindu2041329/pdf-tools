@@ -190,6 +190,29 @@ export async function ensureDbSchema(): Promise<void> {
   await globalForSchema.__pdfToolsSchemaInitPromise
 }
 
+/**
+ * Clears the cached schema-init promise. Call this when an operation fails
+ * with a missing-relation error so the next caller re-runs the DDL and
+ * recreates tables that were dropped externally (e.g. via the Neon console).
+ */
+export function resetSchemaInit(): void {
+  globalForSchema.__pdfToolsSchemaInitPromise = undefined
+}
+
+/**
+ * Returns true if the error indicates a missing Postgres relation
+ * (e.g. `relation "usage_event" does not exist`). The driver's error has
+ * a `.code` property of `42P01` for `undefined_table`.
+ */
+export function isMissingRelationError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false
+  const code = (err as { code?: unknown }).code
+  if (code === "42P01") return true
+  // Some drivers surface the SQLSTATE on a nested field
+  const sqlState = (err as { sqlState?: unknown }).sqlState
+  return sqlState === "42P01"
+}
+
 export async function upsertUser(clerkUserId: string): Promise<void> {
   await ensureDbSchema()
   await sql`
