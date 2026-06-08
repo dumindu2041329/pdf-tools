@@ -17,6 +17,39 @@ import { Button } from "@/components/ui/button"
 import { UsageMeter } from "@/components/shared/UsageMeter"
 import { getLimitsForPlan } from "@/lib/usageLimits"
 
+const VERIFIED_SESSIONS_KEY = "billing:verified-sessions"
+
+function readVerifiedSessions(): string[] {
+  if (typeof window === "undefined") return []
+  try {
+    const raw = window.sessionStorage.getItem(VERIFIED_SESSIONS_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as unknown
+    return Array.isArray(parsed)
+      ? parsed.filter((s): s is string => typeof s === "string")
+      : []
+  } catch {
+    return []
+  }
+}
+
+function markSessionVerified(sessionId: string): void {
+  if (typeof window === "undefined") return
+  try {
+    const list = readVerifiedSessions()
+    if (!list.includes(sessionId)) {
+      list.push(sessionId)
+      window.sessionStorage.setItem(VERIFIED_SESSIONS_KEY, JSON.stringify(list))
+    }
+  } catch {
+    // best-effort dedupe
+  }
+}
+
+function isSessionVerified(sessionId: string): boolean {
+  return readVerifiedSessions().includes(sessionId)
+}
+
 const plans = [
   {
     id: "free",
@@ -104,23 +137,40 @@ export default function BillingPage() {
   }, [isLoaded, user])
 
   // After a successful Stripe checkout, verify the session and refresh the user.
-  // We use a ref to ensure the request fires at most once per session, and we
-  // unconditionally clear `verifying` in `.finally` so router.replace() (which
-  // changes searchParams and re-runs this effect) can never leave the page
-  // stuck on the "Confirming your payment…" loading screen.
-  const verifyingRef = useRef(false)
+  // We remember verified session IDs in sessionStorage so the verify-session
+  // call is never repeated for the same Stripe checkout, even if the component
+  // remounts (page refresh, route re-render after user.reload(), etc.). We also
+  // skip verification entirely if the user is already premium — in that case
+  // the Stripe webhook has already granted access and the network call is
+  // unnecessary. The URL is always cleaned up so the success params don't
+  // linger and trigger the flow again on subsequent visits.
   const searchParamsRef = useRef(searchParams)
   searchParamsRef.current = searchParams
+  const handledSessionIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!isLoaded || !user) return
-    if (verifyingRef.current) return
 
     const success = searchParamsRef.current.get("success") === "true"
     const sessionId = searchParamsRef.current.get("session_id")
     if (!success || !sessionId) return
 
-    verifyingRef.current = true
+    // Don't handle the same session_id more than once per mount, and don't
+    // re-fire for session IDs we've already verified in this browser session.
+    if (handledSessionIdRef.current === sessionId) return
+    handledSessionIdRef.current = sessionId
+
+    const currentPlan =
+      ((user.publicMetadata as Record<string, unknown>)?.plan as string) ?? "free"
+
+    // If this session was already verified, or the webhook has already
+    // upgraded the user, just clean the URL and bail out.
+    if (isSessionVerified(sessionId) || currentPlan === "premium") {
+      markSessionVerified(sessionId)
+      router.replace("/account/billing")
+      return
+    }
+
     setVerifying(true)
 
     void (async () => {
@@ -135,13 +185,16 @@ export default function BillingPage() {
           toast.error(data.error ?? "Could not verify your payment.")
           return
         }
+        markSessionVerified(sessionId)
         await user.reload()
         toast.success("Welcome to Premium! Your plan has been upgraded.")
-        router.replace("/account/billing")
       } catch {
         toast.error("Could not verify your payment.")
       } finally {
         setVerifying(false)
+        // Always strip the success params so they don't trigger verification
+        // again on subsequent navigations/remounts.
+        router.replace("/account/billing")
       }
     })()
   }, [isLoaded, user, router])
