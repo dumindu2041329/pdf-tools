@@ -79,7 +79,12 @@ export async function POST(
           allowedPathnamePattern: `^tools/${tool.replace(/[^a-z0-9-]/gi, "-")}/[A-Za-z0-9._-]+$`,
           maximumSizeInBytes: maxBytes,
           tokenPayload: JSON.stringify({ userId, tool, plan: userPlan ?? "free" }),
-          addRandomSuffix: true,
+          // NOTE: do NOT enable `addRandomSuffix` here. The @vercel/blob client
+          // sends the original (unsuffixed) pathname in the PUT URL, but with
+          // `addRandomSuffix: true` the server mints the token for the
+          // suffixed pathname, so the Vercel Blob API returns 400
+          // (`client_token_pathname_mismatch`). Blobs are deleted server-side
+          // after processing, so collision is not a concern.
         }
       },
       onUploadCompleted: async ({ blob, tokenPayload }) => {
