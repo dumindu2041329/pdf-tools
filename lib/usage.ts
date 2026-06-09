@@ -1,5 +1,6 @@
 import {
   ensureDbSchema,
+  ensureDbSchemaIfStale,
   isMissingRelationError,
   resetSchemaInit,
   sql,
@@ -118,6 +119,12 @@ export async function recordProcessingEvent(
   input: ProcessingEventInput
 ): Promise<string> {
   if (!input.userId) return ""
+
+  // Fire-and-forget proactive self-heal: at most once per hour per server
+  // instance, checks that ALL expected tables (app_user, workflow,
+  // workflow_step, usage_counter) still exist. If any are missing,
+  // triggers a schema re-init so the next call can write successfully.
+  ensureDbSchemaIfStale()
 
   try {
     await ensureDbSchema()
