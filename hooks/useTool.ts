@@ -139,11 +139,17 @@ async function buildUploadPayload({
   // URLs (plus the original filenames) to the tool API. The Blob upload
   // URL is `…/api/tools/<tool>/upload-url` and the server uses
   // `@vercel/blob`'s `handleUpload` to mint the signed upload token.
+  // The pathname must match `tools/<slug>/<filename>` on the server, so we
+  // strip any path components from the client-supplied filename first.
+  const safeToolSlug = toolSlug.replace(/[^a-z0-9-]/gi, "-")
+  const sanitizeFilename = (name: string) =>
+    (name.split(/[/\\]/).pop() || "upload.pdf").replace(/[^A-Za-z0-9._-]/g, "_")
   const blobFiles: Array<{ url: string; filename: string }> = []
   let uploadedBytes = 0
 
   for (const file of files) {
-    const blob = await uploadToBlob(file.name, file, {
+    const safeName = sanitizeFilename(file.name)
+    const blob = await uploadToBlob(`tools/${safeToolSlug}/${safeName}`, file, {
       access: "public",
       handleUploadUrl: `/api/tools/${toolSlug}/upload-url`,
       contentType: file.type || undefined,
@@ -160,16 +166,21 @@ async function buildUploadPayload({
   form.append("blobFiles", JSON.stringify(blobFiles))
 
   if (watermarkImage) {
-    const blob = await uploadToBlob(watermarkImage.name, watermarkImage, {
-      access: "public",
-      handleUploadUrl: `/api/tools/${toolSlug}/upload-url`,
-      contentType: watermarkImage.type || undefined,
-      onUploadProgress: (event) => {
-        const loaded = uploadedBytes + event.loaded
-        const percent = Math.min(100, Math.round((loaded / totalSize) * 100))
-        onProgress(percent, loaded, totalSize)
-      },
-    })
+    const safeName = sanitizeFilename(watermarkImage.name)
+    const blob = await uploadToBlob(
+      `tools/${safeToolSlug}/${safeName}`,
+      watermarkImage,
+      {
+        access: "public",
+        handleUploadUrl: `/api/tools/${toolSlug}/upload-url`,
+        contentType: watermarkImage.type || undefined,
+        onUploadProgress: (event) => {
+          const loaded = uploadedBytes + event.loaded
+          const percent = Math.min(100, Math.round((loaded / totalSize) * 100))
+          onProgress(percent, loaded, totalSize)
+        },
+      }
+    )
     form.append(
       "blobWatermark",
       JSON.stringify({ url: blob.url, filename: watermarkImage.name })
