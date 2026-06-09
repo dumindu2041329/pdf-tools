@@ -395,7 +395,6 @@ export function useTool(toolSlug: string) {
 
         const data = response.json() as {
           fileData?: string
-          fileUrl?: string
           downloadId?: string
           filename?: string
           processingTime?: string
@@ -416,12 +415,7 @@ export function useTool(toolSlug: string) {
         }
 
         let downloadUrl: string
-        if (data.fileUrl) {
-          // Server uploaded the result to Vercel Blob — point the browser
-          // directly at it. This avoids base64-decoding potentially-large
-          // PDF bytes on the client.
-          downloadUrl = data.fileUrl
-        } else if (data.fileData) {
+        if (data.fileData) {
           const binaryString = atob(data.fileData)
           const bytes = new Uint8Array(binaryString.length)
           for (let i = 0; i < binaryString.length; i++) {
