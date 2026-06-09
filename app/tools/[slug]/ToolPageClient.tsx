@@ -724,6 +724,8 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
       <ProcessingModal
         currentStep={isSavingAndRedirecting ? "done" : (isProcessing ? state.step : "start")}
         uploadProgress={isProcessing ? state.uploadProgress : undefined}
+        uploadBytes={isProcessing ? state.uploadBytes : undefined}
+        serverProcessing={isProcessing ? state.serverProcessing : undefined}
         isOpen={isProcessing || isSavingAndRedirecting}
       />
 

@@ -12,21 +12,82 @@ function postActivity(toolSlug: string, fileName: string, outputSize: number): v
   }).catch(() => {})
 }
 
+export type UploadProgress = {
+  loaded: number
+  total: number
+}
+
 export type ToolState =
   | { status: "idle" }
   | { status: "files-selected"; files: File[] }
-  | { status: "processing"; step: ProcessingStep; uploadProgress?: number }
+  | {
+      status: "processing"
+      step: ProcessingStep
+      uploadProgress?: number
+      uploadBytes?: UploadProgress
+      /**
+       * True when the browser-to-server upload (XHR) is finished but the
+       * server has not yet responded. During this window the server is
+       * forwarding the file to iLoveAPI/Adobe, so the progress bar should
+       * show an indeterminate animation rather than a static 100%.
+       */
+      serverProcessing?: boolean
+    }
   | { status: "success"; downloadUrl: string; filename: string; processingTime: string; outputSize: number }
   | { status: "validation-success"; message: string; result?: string; processingTime: string }
   | { status: "error"; message: string; retryable: boolean; upgradeRequired?: boolean }
 
+// Minimum display time per step so the user can see each transition
+// (the actual upload + processing work is on top of these).
+const STEP_DELAY_START_MS = 500
+const STEP_DELAY_UPLOAD_LOCAL_MS = 300
+const STEP_DELAY_DOWNLOAD_MS = 400
+const STEP_DELAY_DONE_MS = 600
+
+const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+
+interface UploadResult {
+  ok: boolean
+  status: number
+  json: () => unknown
+}
+
+/**
+ * POSTs FormData using XMLHttpRequest so we get real upload progress
+ * events (the `fetch` API does not expose upload progress). Returns an
+ * object with the same surface as `Response.ok` / `Response.json()` so
+ * the rest of the flow is unchanged.
+ */
 function uploadWithProgress(
   url: string,
-  formData: FormData
-): Promise<Response> {
-  return fetch(url, {
-    method: "POST",
-    body: formData,
+  formData: FormData,
+  onProgress: (percent: number, loaded: number, total: number) => void
+): Promise<UploadResult> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open("POST", url)
+    xhr.upload.addEventListener("progress", (e) => {
+      if (e.lengthComputable && e.total > 0) {
+        const percent = Math.min(100, Math.round((e.loaded / e.total) * 100))
+        onProgress(percent, e.loaded, e.total)
+      }
+    })
+    xhr.addEventListener("load", () => {
+      resolve({
+        ok: xhr.status >= 200 && xhr.status < 300,
+        status: xhr.status,
+        json: () => {
+          try {
+            return JSON.parse(xhr.responseText)
+          } catch {
+            return {}
+          }
+        },
+      })
+    })
+    xhr.addEventListener("error", () => reject(new Error("Network error")))
+    xhr.addEventListener("abort", () => reject(new Error("Aborted")))
+    xhr.send(formData)
   })
 }
 
@@ -40,7 +101,9 @@ export function useTool(toolSlug: string) {
         return
       }
 
+      // Step 1: "Connecting to server..."
       setState({ status: "processing", step: "start" })
+      await delay(STEP_DELAY_START_MS)
 
       const form = new FormData()
       for (const file of files) {
@@ -66,12 +129,13 @@ export function useTool(toolSlug: string) {
 
       console.log("[DEBUG] FormData entries:", Array.from(form.entries()).map(e => [e[0], typeof e[1]]))
 
-      setState({ status: "processing", step: "upload", uploadProgress: 0 })
-
-
-
       if (toolSlug === "split-pdf" || toolSlug === "remove-pages" || toolSlug === "organize-pdf") {
         try {
+          // Local tools: there's no real upload, but show the step briefly
+          // for visual consistency with server tools.
+          setState({ status: "processing", step: "upload", uploadProgress: 0 })
+          await delay(STEP_DELAY_UPLOAD_LOCAL_MS)
+
           setState({ status: "processing", step: "process" })
 
           if (files.length === 0) throw new Error("No file provided");
@@ -94,11 +158,16 @@ export function useTool(toolSlug: string) {
           const end = Date.now();
 
           setState({ status: "processing", step: "download" })
+          await delay(STEP_DELAY_DOWNLOAD_MS)
 
           const blob = new Blob([result.buffer as unknown as BlobPart], {
             type: result.downloadFilename.endsWith(".zip") ? "application/zip" : "application/pdf"
           });
           const downloadUrl = URL.createObjectURL(blob);
+
+          // Show "Ready!" briefly before the modal closes
+          setState({ status: "processing", step: "done" })
+          await delay(STEP_DELAY_DONE_MS)
 
           setState({
             status: "success",
@@ -119,6 +188,9 @@ export function useTool(toolSlug: string) {
 
       if (toolSlug === "merge-pdf") {
         try {
+          setState({ status: "processing", step: "upload", uploadProgress: 0 })
+          await delay(STEP_DELAY_UPLOAD_LOCAL_MS)
+
           setState({ status: "processing", step: "process" })
 
           if (files.length === 0) throw new Error("No files provided");
@@ -135,9 +207,13 @@ export function useTool(toolSlug: string) {
           const end = Date.now();
 
           setState({ status: "processing", step: "download" })
+          await delay(STEP_DELAY_DOWNLOAD_MS)
 
           const blob = new Blob([result.buffer as unknown as BlobPart], { type: "application/pdf" });
           const downloadUrl = URL.createObjectURL(blob);
+
+          setState({ status: "processing", step: "done" })
+          await delay(STEP_DELAY_DONE_MS)
 
           setState({
             status: "success",
@@ -157,18 +233,43 @@ export function useTool(toolSlug: string) {
       }
 
       try {
+        // Step 2: "Uploading your file..." with real XHR progress.
+        // We keep the "upload" step pinned (with progress at 100%) until the
+        // server has actually finished — for large files the browser-to-server
+        // leg finishes quickly, but the server then has to forward the file to
+        // iLoveAPI/Adobe which can take a long time. Showing the upload
+        // progress bar for the full round-trip gives the user honest feedback.
+        setState({ status: "processing", step: "upload", uploadProgress: 0 })
+
         const response = await uploadWithProgress(
           `/api/tools/${toolSlug}`,
-          form
+          form,
+          (percent, loaded, total) => {
+            const safeTotal = total > 0 ? total : loaded
+            // The last XHR progress event fires when the browser has sent all
+            // bytes; the server then takes over to forward the file to
+            // iLoveAPI/Adobe. Mark that handoff so the UI can switch from a
+            // concrete percent to an indeterminate animation.
+            const serverProcessing = total > 0 && loaded >= total
+            setState({
+              status: "processing",
+              step: "upload",
+              uploadProgress: percent,
+              uploadBytes: { loaded, total: safeTotal },
+              serverProcessing,
+            })
+          }
         )
 
+        // Step 3: "Processing with iLoveAPI..." — server has acknowledged the
+        // upload, so the file is actually on the server now. Move instantly.
         setState({ status: "processing", step: "process" })
 
         if (!response.ok) {
           let errMsg = "Processing failed"
           let upgradeRequired = false
           try {
-            const err = await response.json()
+            const err = response.json() as { error?: string; upgradeRequired?: boolean }
             errMsg = err.error || errMsg
             upgradeRequired = !!err.upgradeRequired
           } catch {
@@ -178,9 +279,20 @@ export function useTool(toolSlug: string) {
           return
         }
 
+        // Step 4: "Preparing download..."
         setState({ status: "processing", step: "download" })
+        await delay(STEP_DELAY_DOWNLOAD_MS)
 
-        const data = await response.json()
+        const data = response.json() as {
+          fileData?: string
+          downloadId?: string
+          filename?: string
+          processingTime?: string
+          outputSize?: number | string
+          validationSuccess?: boolean
+          message?: string
+          result?: string
+        }
 
         if (data.validationSuccess !== undefined) {
           setState({
@@ -204,6 +316,10 @@ export function useTool(toolSlug: string) {
         } else {
           downloadUrl = `/api/download/${data.downloadId}`
         }
+
+        // Step 5: "Ready!" — shown briefly before the modal closes
+        setState({ status: "processing", step: "done" })
+        await delay(STEP_DELAY_DONE_MS)
 
         setState({
           status: "success",

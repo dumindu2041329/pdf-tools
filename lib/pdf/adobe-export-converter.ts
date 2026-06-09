@@ -11,6 +11,7 @@ import {
   OCRResult,
   OCRSupportedLocale,
   OCRSupportedType,
+  ClientConfig,
 } from "@adobe/pdfservices-node-sdk"
 import { Readable } from "stream"
 import { getSafeBaseName } from "./office-converter"
@@ -18,12 +19,22 @@ import { getSafeBaseName } from "./office-converter"
 const PDF_SERVICES_CLIENT_ID = process.env.PDF_SERVICES_CLIENT_ID ?? ""
 const PDF_SERVICES_CLIENT_SECRET = process.env.PDF_SERVICES_CLIENT_SECRET ?? ""
 
+// The SDK's default request timeout is 10 seconds, which is far too short
+// for uploading PDFs to the Adobe asset service. Adobe rejects input
+// assets over 100 MB, so the largest file we ever upload is ~100 MB.
+// 10 minutes is enough for a 100 MB upload at ~1.4 Mbps (a slow but
+// realistic broadband speed).
+const ADOBE_REQUEST_TIMEOUT_MS = 10 * 60 * 1000
+
 function createPDFServices(): PDFServices {
   const credentials = new ServicePrincipalCredentials({
     clientId: PDF_SERVICES_CLIENT_ID,
     clientSecret: PDF_SERVICES_CLIENT_SECRET,
   })
-  return new PDFServices({ credentials })
+  return new PDFServices({
+    credentials,
+    clientConfig: new ClientConfig({ timeout: ADOBE_REQUEST_TIMEOUT_MS }),
+  })
 }
 
 async function runExportPDF(

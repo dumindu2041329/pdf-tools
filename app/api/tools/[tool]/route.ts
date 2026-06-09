@@ -5,13 +5,67 @@ import { ILoveAPIError, mapILoveAPIError } from "@/lib/iloveapi/errors"
 import { convertExtractFormat } from "@/lib/extractFormatConverter"
 import { convertPdfToExcel } from "@/lib/pdf/office-converter"
 import { convertPdfToWordAdobe, convertPdfToPowerpointAdobe, ocrPdfAdobe } from "@/lib/pdf/adobe-export-converter"
-import { OCRSupportedLocale } from "@adobe/pdfservices-node-sdk"
+import { OCRSupportedLocale, ServiceApiError } from "@adobe/pdfservices-node-sdk"
 import { processRotateLocal } from "@/lib/pdf/rotate-client"
 import { getToolBySlug } from "@/lib/tools-config"
 import { mapWatermarkOptions } from "@/lib/iloveapi/watermark-mapper"
 import { mapPageNumberOptions } from "@/lib/iloveapi/page-number-mapper"
 import { canProcessFile, recordProcessingEvent } from "@/lib/usage"
 import { getUserPlan } from "@/lib/auth"
+
+/**
+ * Map an error thrown by the Adobe PDF Services SDK into a user-friendly
+ * JSON response. In particular, the SDK throws a `ServiceApiError` with
+ * `errorCode === "INPUT_TOO_LARGE"` when the input asset exceeds Adobe's
+ * per-file limit (currently ~100 MB for Export PDF / OCR). Surfacing that
+ * as a generic 500 hides the real cause from the user.
+ */
+function adobeErrorResponse(err: unknown, fallbackMessage: string): NextResponse {
+  if (err instanceof ServiceApiError) {
+    if (err.errorCode === "INPUT_TOO_LARGE") {
+      console.warn(`[Adobe] Input too large: ${err.message}`)
+      return NextResponse.json(
+        {
+          error:
+            "This PDF is too large for Adobe's processing service (limit ~100 MB). Try splitting the file or using a smaller PDF.",
+        },
+        { status: 413 }
+      )
+    }
+    console.error(`[Adobe] Service API error (${err.errorCode}): ${err.message}`)
+    return NextResponse.json(
+      { error: `${fallbackMessage} (${err.errorCode})` },
+      { status: err.statusCode >= 400 && err.statusCode < 600 ? err.statusCode : 500 }
+    )
+  }
+  console.error(fallbackMessage + ":", err)
+  return NextResponse.json({ error: fallbackMessage }, { status: 500 })
+}
+
+// Adobe PDF Services rejects input assets larger than this. Returning a 413
+// up front saves the user from waiting through a multi-minute upload only to
+// get a generic 500.
+const ADOBE_MAX_INPUT_BYTES = 100 * 1024 * 1024
+
+function adobePreflightCheck(
+  files: Array<{ buffer: Buffer; filename: string }>,
+  fallbackName: string
+): NextResponse | null {
+  for (const file of files) {
+    if (file.buffer.length > ADOBE_MAX_INPUT_BYTES) {
+      console.warn(
+        `[Adobe] Preflight reject: ${file.filename} is ${file.buffer.length} bytes (max ${ADOBE_MAX_INPUT_BYTES})`
+      )
+      return NextResponse.json(
+        {
+          error: `"${file.filename}" is ${(file.buffer.length / (1024 * 1024)).toFixed(1)} MB, which exceeds Adobe's ${fallbackName} limit of 100 MB. Try splitting the PDF first.`,
+        },
+        { status: 413 }
+      )
+    }
+  }
+  return null
+}
 
 export const maxDuration = 60
 
@@ -181,6 +235,8 @@ export async function POST(
   }
 
   if (tool === "ocr-pdf") {
+    const preflight = adobePreflightCheck(files, "OCR")
+    if (preflight) return preflight
     try {
       const start = Date.now()
 
@@ -258,12 +314,13 @@ export async function POST(
         outputSize: result.buffer.byteLength,
       })
     } catch (err) {
-      console.error("Adobe OCR processing error:", err)
-      return NextResponse.json({ error: "Failed to process PDF with OCR" }, { status: 500 })
+      return adobeErrorResponse(err, "Failed to process PDF with OCR")
     }
   }
 
   if (tool === "pdf-to-excel") {
+    const preflight = adobePreflightCheck(files, "PDF to Excel")
+    if (preflight) return preflight
     try {
       const start = Date.now()
 
@@ -334,12 +391,13 @@ export async function POST(
         outputSize: result.buffer.byteLength,
       })
     } catch (err) {
-      console.error("Adobe Excel conversion error:", err)
-      return NextResponse.json({ error: "Failed to convert PDF to Excel format" }, { status: 500 })
+      return adobeErrorResponse(err, "Failed to convert PDF to Excel format")
     }
   }
 
   if (tool === "pdf-to-word") {
+    const preflight = adobePreflightCheck(files, "PDF to Word")
+    if (preflight) return preflight
     try {
       const start = Date.now()
 
@@ -410,12 +468,13 @@ export async function POST(
         outputSize: result.buffer.byteLength,
       })
     } catch (err) {
-      console.error("Adobe Word conversion error:", err)
-      return NextResponse.json({ error: "Failed to convert PDF to Word format" }, { status: 500 })
+      return adobeErrorResponse(err, "Failed to convert PDF to Word format")
     }
   }
 
   if (tool === "pdf-to-powerpoint") {
+    const preflight = adobePreflightCheck(files, "PDF to PowerPoint")
+    if (preflight) return preflight
     try {
       const start = Date.now()
 
@@ -486,8 +545,7 @@ export async function POST(
         outputSize: result.buffer.byteLength,
       })
     } catch (err) {
-      console.error("Adobe PowerPoint conversion error:", err)
-      return NextResponse.json({ error: "Failed to convert PDF to PowerPoint format" }, { status: 500 })
+      return adobeErrorResponse(err, "Failed to convert PDF to PowerPoint format")
     }
   }
 
