@@ -1,5 +1,6 @@
 import {
   ensureDbSchema,
+  ensureUsagePartitionsIfStale,
   isMissingRelationError,
   resetSchemaInit,
   sql,
@@ -142,6 +143,11 @@ export async function recordProcessingEvent(
   input: ProcessingEventInput
 ): Promise<string> {
   if (!input.userId) return ""
+
+  // Fire-and-forget daily safety net so the next 3 months of partitions
+  // exist even when the external cron is delayed or skipped. Never blocks
+  // the request and never throws.
+  ensureUsagePartitionsIfStale()
 
   try {
     await ensureDbSchema()

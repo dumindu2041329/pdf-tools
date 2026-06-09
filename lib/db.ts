@@ -213,6 +213,48 @@ export function isMissingRelationError(err: unknown): boolean {
   return sqlState === "42P01"
 }
 
+const globalForPartitionEnsure = globalThis as unknown as {
+  __pdfToolsPartitionLastEnsureDate?: string
+  __pdfToolsPartitionEnsurePromise?: Promise<void>
+}
+
+/**
+ * Lazy safety net for `usage_event` monthly partitions. Ensures partitions
+ * exist for the next 3 months at most once per UTC day. Safe to call from
+ * any hot path — the underlying SQL function uses CREATE TABLE IF NOT
+ * EXISTS so it is fully idempotent, and this function never throws.
+ *
+ * Why: the GitHub Actions cron (or Vercel cron) may be delayed or skipped,
+ * so we run it from inside the app as a fire-and-forget fallback. Any new
+ * row that arrives before the partition exists will be routed by Postgres
+ * into `usage_event_default`, and the next successful ensure will pick up
+ * the correct monthly partition from that point forward.
+ */
+export function ensureUsagePartitionsIfStale(): void {
+  // Compare on the UTC date string so the rollover happens at midnight UTC
+  // regardless of the server's local timezone.
+  const today = new Date().toISOString().slice(0, 10)
+  if (globalForPartitionEnsure.__pdfToolsPartitionLastEnsureDate === today) {
+    return
+  }
+  if (globalForPartitionEnsure.__pdfToolsPartitionEnsurePromise) {
+    return // already in flight
+  }
+  globalForPartitionEnsure.__pdfToolsPartitionEnsurePromise = (async () => {
+    try {
+      // ensureDbSchema() is cheap once cached but cheap is fine — it
+      // guarantees the SQL function `ensure_usage_event_partitions` exists.
+      await ensureDbSchema()
+      await sql`SELECT ensure_usage_event_partitions(3)`
+      globalForPartitionEnsure.__pdfToolsPartitionLastEnsureDate = today
+    } catch (err) {
+      console.error("[db] lazy partition ensure failed:", err)
+    } finally {
+      globalForPartitionEnsure.__pdfToolsPartitionEnsurePromise = undefined
+    }
+  })()
+}
+
 export async function upsertUser(clerkUserId: string): Promise<void> {
   await ensureDbSchema()
   await sql`
