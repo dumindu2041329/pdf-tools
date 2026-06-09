@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { auth } from "@clerk/nextjs/server"
-import { del } from "@vercel/blob"
+import { del, put } from "@vercel/blob"
 import { runTool } from "@/lib/iloveapi/tools"
 import { ILoveAPIError, mapILoveAPIError } from "@/lib/iloveapi/errors"
 import { convertExtractFormat } from "@/lib/extractFormatConverter"
@@ -1246,8 +1246,33 @@ async function processToolRequest(
     })
     const fileDataBase64 = Buffer.from(fileData).toString("base64")
 
+    // For larger results (anything over a few hundred KB) it's far cheaper to
+    // hand the client a Vercel Blob URL than to base64-encode the bytes into
+    // the JSON response. The official pattern is `put(name, body, { access })`
+    // — that writes a new Blob and returns its public URL. We pick `public`
+    // access (same as the input uploads) and namespace under
+    // `tools/<slug>/outputs/` so cleanup tooling can target it later.
+    const OUTPUT_BLOB_THRESHOLD_BYTES = 512 * 1024
+    let outputUrl: string | undefined
+    if (fileData.byteLength > OUTPUT_BLOB_THRESHOLD_BYTES) {
+      try {
+        const safeTool = tool.replace(/[^a-z0-9-]/gi, "-")
+        const safeName = downloadFilename.replace(/[^A-Za-z0-9._-]/g, "_")
+        const blob = await put(
+          `tools/${safeTool}/outputs/${Date.now()}-${safeName}`,
+          Buffer.from(fileData),
+          { access: "public", addRandomSuffix: true }
+        )
+        outputUrl = blob.url
+      } catch (err) {
+        console.warn(`[blob] failed to upload output for tool=${tool}:`, err)
+        // Fall through to base64 path so the user still gets their file.
+      }
+    }
+
     return NextResponse.json({
       fileData: fileDataBase64,
+      fileUrl: outputUrl,
       filename: downloadFilename,
       processingTime: String(result.timer),
       outputSize: result.outputFilesize,
