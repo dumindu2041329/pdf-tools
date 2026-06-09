@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { auth } from "@clerk/nextjs/server"
+import { del } from "@vercel/blob"
 import { runTool } from "@/lib/iloveapi/tools"
 import { ILoveAPIError, mapILoveAPIError } from "@/lib/iloveapi/errors"
 import { convertExtractFormat } from "@/lib/extractFormatConverter"
@@ -47,6 +48,12 @@ function adobeErrorResponse(err: unknown, fallbackMessage: string): NextResponse
 // get a generic 500.
 const ADOBE_MAX_INPUT_BYTES = 100 * 1024 * 1024
 
+// Vercel serverless functions cap the request body at 4.5 MB. Files larger
+// than this must be uploaded directly to Vercel Blob by the client and
+// referenced by URL. We preflight to 4 MB so a clean 413 surfaces in our
+// own logs (Vercel's edge layer also returns 413 around 4.5 MB).
+const VERCEL_MAX_BODY_BYTES = 4 * 1024 * 1024
+
 function adobePreflightCheck(
   files: Array<{ buffer: Buffer; filename: string }>,
   fallbackName: string
@@ -75,12 +82,64 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ tool: string }> }
 ) {
+  return await handleToolPost(req, params)
+}
+
+async function handleToolPost(
+  req: Request,
+  params: Promise<{ tool: string }>
+) {
+  // Track blob URLs so we can clean them up after processing.
+  const uploadedBlobUrls: string[] = []
+  let cleanupDone = false
+  const cleanupBlobs = async () => {
+    if (cleanupDone || uploadedBlobUrls.length === 0) return
+    cleanupDone = true
+    try {
+      await del(uploadedBlobUrls)
+    } catch (err) {
+      console.warn("[blob] cleanup failed:", err)
+    }
+  }
+
+  try {
+    return await processToolRequest(req, params, uploadedBlobUrls)
+  } finally {
+    await cleanupBlobs()
+  }
+}
+
+async function processToolRequest(
+  req: Request,
+  params: Promise<{ tool: string }>,
+  uploadedBlobUrls: string[]
+) {
   const { tool } = await params
   const { userId } = await auth()
 
   const contentType = req.headers.get("content-type")
   const contentLength = req.headers.get("content-length")
   console.log("[DEBUG] Content-Type:", contentType, "Content-Length:", contentLength)
+
+  // Preflight: Vercel serverless functions cap the request body at 4.5 MB.
+  // If the client tries to send a larger file directly, Vercel's edge layer
+  // will return 413 before this handler even runs. Catch it early with a
+  // clear message so the user knows to refresh and use the direct-to-Blob
+  // upload flow.
+  if (contentLength) {
+    const declaredBytes = parseInt(contentLength, 10)
+    if (Number.isFinite(declaredBytes) && declaredBytes > VERCEL_MAX_BODY_BYTES) {
+      console.warn(
+        `[preflight] Rejecting oversized direct upload: ${declaredBytes} bytes (limit ${VERCEL_MAX_BODY_BYTES})`
+      )
+      return NextResponse.json(
+        {
+          error: `This file is too large to upload directly (limit ${VERCEL_MAX_BODY_BYTES / (1024 * 1024)} MB). Refresh the page to retry with the cloud upload flow.`,
+        },
+        { status: 413 }
+      )
+    }
+  }
 
   let formData: FormData
   try {
@@ -108,7 +167,50 @@ export async function POST(
     }
   }
 
-  // Extract watermark image if provided
+  // Large-file path: the client uploaded the file(s) directly to Vercel Blob
+  // (because the request body limit on a Vercel serverless function is
+  // 4.5 MB) and now references them by URL. Download them into memory here.
+  const blobFilesRaw = formData.get("blobFiles")
+  if (typeof blobFilesRaw === "string" && blobFilesRaw.length > 0) {
+    let blobFiles: Array<{ url: string; filename: string }>
+    try {
+      blobFiles = JSON.parse(blobFilesRaw)
+    } catch {
+      return NextResponse.json({ error: "Invalid blobFiles payload" }, { status: 400 })
+    }
+    if (!Array.isArray(blobFiles) || blobFiles.length === 0) {
+      return NextResponse.json({ error: "No blob files provided" }, { status: 400 })
+    }
+    for (const entry of blobFiles) {
+      if (!entry?.url || !entry.filename) {
+        return NextResponse.json({ error: "Invalid blob file entry" }, { status: 400 })
+      }
+      try {
+        const res = await fetch(entry.url)
+        if (!res.ok) {
+          console.error(`[blob] download failed: ${entry.url} -> ${res.status}`)
+          return NextResponse.json(
+            { error: `Failed to download "${entry.filename}" from cloud storage` },
+            { status: 502 }
+          )
+        }
+        const arrayBuffer = await res.arrayBuffer()
+        files.push({
+          buffer: Buffer.from(arrayBuffer),
+          filename: entry.filename,
+        })
+        uploadedBlobUrls.push(entry.url)
+      } catch (err) {
+        console.error(`[blob] download error for ${entry.url}:`, err)
+        return NextResponse.json(
+          { error: `Failed to download "${entry.filename}" from cloud storage` },
+          { status: 502 }
+        )
+      }
+    }
+  }
+
+  // Extract watermark image if provided (also supports blob URL for large images)
   const watermarkImageFile = formData.get("watermark_image")
   if (watermarkImageFile && typeof watermarkImageFile === "object") {
     const file = watermarkImageFile as File
@@ -119,6 +221,30 @@ export async function POST(
       }
     } catch (err) {
       console.warn("Failed to read watermark image buffer:", err)
+    }
+  } else {
+    const blobWatermarkRaw = formData.get("blobWatermark")
+    if (typeof blobWatermarkRaw === "string" && blobWatermarkRaw.length > 0) {
+      try {
+        const entry = JSON.parse(blobWatermarkRaw) as { url: string; filename: string }
+        if (!entry?.url) {
+          return NextResponse.json({ error: "Invalid blobWatermark payload" }, { status: 400 })
+        }
+        const res = await fetch(entry.url)
+        if (!res.ok) {
+          return NextResponse.json(
+            { error: `Failed to download watermark image from cloud storage` },
+            { status: 502 }
+          )
+        }
+        watermarkImage = {
+          buffer: Buffer.from(await res.arrayBuffer()),
+          filename: entry.filename || "watermark.png",
+        }
+        uploadedBlobUrls.push(entry.url)
+      } catch (err) {
+        console.warn("Failed to read blob watermark image:", err)
+      }
     }
   }
 
