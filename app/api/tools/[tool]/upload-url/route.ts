@@ -79,6 +79,7 @@ export async function POST(
           allowedPathnamePattern: `^tools/${tool.replace(/[^a-z0-9-]/gi, "-")}/[A-Za-z0-9._-]+$`,
           maximumSizeInBytes: maxBytes,
           tokenPayload: JSON.stringify({ userId, tool, plan: userPlan ?? "free" }),
+          addRandomSuffix: false,
           // NOTE: do NOT enable `addRandomSuffix` here. The @vercel/blob client
           // sends the original (unsuffixed) pathname in the PUT URL, but with
           // `addRandomSuffix: true` the server mints the token for the
