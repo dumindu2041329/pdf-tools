@@ -35,6 +35,26 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
+  // Fail fast with a useful message if the Blob token isn't visible to
+  // the serverless function. This is the #1 cause of "Failed to retrieve
+  // the client token" — usually a missing env var or a deployment that
+  // pre-dates when the variable was added. Vercel does NOT re-inject
+  // env vars into already-deployed functions; you must redeploy.
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    console.error(
+      "[blob] BLOB_READ_WRITE_TOKEN is not set on the server. " +
+        "Add it in the Vercel dashboard (Project → Settings → Environment Variables) " +
+        "for Production and Preview, then redeploy."
+    )
+    return NextResponse.json(
+      {
+        error:
+          "Server is missing BLOB_READ_WRITE_TOKEN. Add it in Vercel project settings and redeploy.",
+      },
+      { status: 500 }
+    )
+  }
+
   let body: unknown
   try {
     body = await request.json()
