@@ -12,6 +12,7 @@ import { mapWatermarkOptions } from "@/lib/iloveapi/watermark-mapper"
 import { mapPageNumberOptions } from "@/lib/iloveapi/page-number-mapper"
 import { canProcessFile, recordProcessingEvent } from "@/lib/usage"
 import { getUserPlan } from "@/lib/auth"
+import { getLimitsForPlan } from "@/lib/usageLimits"
 import { downloadFromBlob } from "@/lib/blob-storage"
 
 /**
@@ -254,6 +255,23 @@ async function processToolRequest(
     if (!gate.allowed) {
       return NextResponse.json(
         { error: gate.reason ?? "Processing limit reached", upgradeRequired: true },
+        { status: 402 }
+      )
+    }
+  } else {
+    // Guest path: enforce the free-plan per-file cap so anonymous users
+    // can't bypass the 20 MB limit by skipping the auth check. This
+    // mirrors the limits advertised in the UI (which uses the same
+    // `getLimitsForPlan("free")` for guests via `/api/usage`).
+    const guestLimits = getLimitsForPlan("free")
+    const guestMaxBytes = guestLimits.maxFileSizeMB * 1024 * 1024
+    const oversized = files.find((f) => f.buffer.byteLength > guestMaxBytes)
+    if (oversized) {
+      return NextResponse.json(
+        {
+          error: `"${oversized.filename}" is ${(oversized.buffer.byteLength / (1024 * 1024)).toFixed(1)} MB. Guests can process files up to ${guestLimits.maxFileSizeMB} MB. Sign in for a free account to continue, or upgrade to Premium for files up to 4 GB.`,
+          upgradeRequired: true,
+        },
         { status: 402 }
       )
     }

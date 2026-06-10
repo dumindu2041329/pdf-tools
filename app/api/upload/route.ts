@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server"
 import { handleUpload } from "@vercel/blob/client"
 import { NextResponse } from "next/server"
+import { getLimitsForPlan } from "@/lib/usageLimits"
 
 /**
  * Issues Vercel Blob client-upload tokens.
@@ -21,6 +22,10 @@ import { NextResponse } from "next/server"
  * inside a multipart FormData, which Vercel truncates at ~4.5 MB. The
  * free tier allows files up to 20 MB, the premium tier up to 4 GB — neither
  * is reachable without a direct-to-blob leg.
+ *
+ * Guests are allowed to use this route too, but with the free-plan
+ * per-file cap (20 MB). The premium cap is reserved for signed-in
+ * users; the guest's `userId` is simply absent from the token payload.
  */
 
 export const runtime = "nodejs"
@@ -31,9 +36,7 @@ export const maxDuration = 60
 
 export async function POST(request: Request): Promise<NextResponse> {
   const { userId } = await auth()
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  }
+  const isGuest = !userId
 
   // Fail fast with a useful message if the Blob token isn't visible to
   // the serverless function. This is the #1 cause of "Failed to retrieve
@@ -106,15 +109,20 @@ export async function POST(request: Request): Promise<NextResponse> {
           // Switch to "private" + `access: "private"` reads if the store
           // is later configured as private.
           allowedContentTypes: allowed,
-          // 4 GB hard cap matches the premium plan's max file size.
-          maximumSizeInBytes: 4 * 1024 * 1024 * 1024,
+          // Per-file cap. Guests inherit the free-plan limit (20 MB);
+          // signed-in users get the premium 4 GB cap. The client also
+          // enforces this via `getLimitsForPlan`, but the server is the
+          // source of truth.
+          maximumSizeInBytes: isGuest
+            ? getLimitsForPlan("free").maxFileSizeMB * 1024 * 1024
+            : 4 * 1024 * 1024 * 1024,
           // Different users uploading `report.pdf` shouldn't clobber each
           // other — the SDK appends a random suffix to make the final
           // pathname unique.
           addRandomSuffix: true,
-          // Carries the userId into `onUploadCompleted` so future
-          // cleanup hooks know who owns the blob.
-          tokenPayload: JSON.stringify({ userId }),
+          // Carries the userId (or "guest") into `onUploadCompleted` so
+          // future cleanup hooks know who owns the blob.
+          tokenPayload: JSON.stringify({ userId: userId ?? "guest" }),
         }
       },
       onUploadCompleted: async ({ blob, tokenPayload }) => {
