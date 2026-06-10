@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useCallback } from "react"
-import { upload as uploadToBlob } from "@vercel/blob/client"
 import type { ProcessingStep } from "@/components/tools/ProcessingModal"
 import { recordActivity } from "@/lib/activityStore"
 
@@ -44,12 +43,6 @@ const STEP_DELAY_START_MS = 500
 const STEP_DELAY_UPLOAD_LOCAL_MS = 300
 const STEP_DELAY_DOWNLOAD_MS = 400
 const STEP_DELAY_DONE_MS = 600
-
-// Vercel serverless functions cap the request body at ~4.5 MB. Files larger
-// than this are uploaded directly to Vercel Blob by the client and
-// referenced by URL when the tool runs. Keep the client threshold a bit
-// below the server preflight to account for multipart/FormData overhead.
-const DIRECT_UPLOAD_LIMIT_BYTES = 3.5 * 1024 * 1024
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
@@ -99,97 +92,29 @@ function uploadWithProgress(
 }
 
 interface BuildUploadPayloadArgs {
-  toolSlug: string
   files: File[]
   watermarkImage: File | undefined
   options: Record<string, unknown>
-  onProgress: (percent: number, loaded: number, total: number) => void
 }
 
 /**
- * Builds the FormData sent to `/api/tools/[tool]`. For small payloads the
- * files are attached directly; for payloads that would exceed Vercel's
- * serverless function body limit, each file is uploaded to Vercel Blob
- * first and the resulting URLs are sent in a small JSON envelope.
+ * Builds the FormData sent to `/api/tools/[tool]`. Files are attached
+ * directly to the multipart payload.
  */
-async function buildUploadPayload({
-  toolSlug,
+function buildUploadPayload({
   files,
   watermarkImage,
   options,
-  onProgress,
-}: BuildUploadPayloadArgs): Promise<FormData> {
+}: BuildUploadPayloadArgs): FormData {
   const form = new FormData()
   form.append("options", JSON.stringify(options))
 
-  const totalSize =
-    files.reduce((sum, f) => sum + f.size, 0) + (watermarkImage?.size ?? 0)
-
-  if (totalSize <= DIRECT_UPLOAD_LIMIT_BYTES) {
-    for (const file of files) {
-      form.append("file", file)
-    }
-    if (watermarkImage) {
-      form.append("watermark_image", watermarkImage)
-    }
-    return form
-  }
-
-  // Large-file path: upload each file directly to Vercel Blob and pass the
-  // URLs (plus the original filenames) to the tool API. The Blob upload
-  // URL is `…/api/tools/<tool>/upload-url` and the server uses
-  // `@vercel/blob`'s `handleUpload` to mint the signed upload token.
-  // The pathname must match `tools/<slug>/<filename>` on the server, so we
-  // strip any path components from the client-supplied filename first.
-  const safeToolSlug = toolSlug.replace(/[^a-z0-9-]/gi, "-")
-  const sanitizeFilename = (name: string) =>
-    (name.split(/[/\\]/).pop() || "upload.pdf").replace(/[^A-Za-z0-9._-]/g, "_")
-  const blobFiles: Array<{ url: string; filename: string }> = []
-  let uploadedBytes = 0
-
   for (const file of files) {
-    const safeName = sanitizeFilename(file.name)
-    const blob = await uploadToBlob(`tools/${safeToolSlug}/${safeName}`, file, {
-      access: "public",
-      handleUploadUrl: `/api/tools/${toolSlug}/upload-url`,
-      contentType: file.type || undefined,
-      onUploadProgress: (event) => {
-        const loaded = uploadedBytes + event.loaded
-        const percent = Math.min(100, Math.round((loaded / totalSize) * 100))
-        onProgress(percent, loaded, totalSize)
-      },
-    })
-    blobFiles.push({ url: blob.url, filename: file.name })
-    uploadedBytes += file.size
+    form.append("file", file)
   }
-
-  form.append("blobFiles", JSON.stringify(blobFiles))
-
   if (watermarkImage) {
-    const safeName = sanitizeFilename(watermarkImage.name)
-    const blob = await uploadToBlob(
-      `tools/${safeToolSlug}/${safeName}`,
-      watermarkImage,
-      {
-        access: "public",
-        handleUploadUrl: `/api/tools/${toolSlug}/upload-url`,
-        contentType: watermarkImage.type || undefined,
-        onUploadProgress: (event) => {
-          const loaded = uploadedBytes + event.loaded
-          const percent = Math.min(100, Math.round((loaded / totalSize) * 100))
-          onProgress(percent, loaded, totalSize)
-        },
-      }
-    )
-    form.append(
-      "blobWatermark",
-      JSON.stringify({ url: blob.url, filename: watermarkImage.name })
-    )
-    uploadedBytes += watermarkImage.size
+    form.append("watermark_image", watermarkImage)
   }
-
-  // Make sure the final state hits 100% before the small POST request.
-  onProgress(100, uploadedBytes, totalSize)
   return form
 }
 
@@ -218,14 +143,10 @@ export function useTool(toolSlug: string) {
         cleanOptions = optionsWithoutImage
       }
 
-      // Build the multipart payload. Small files are attached directly; large
-      // files (or large combined payloads) are uploaded to Vercel Blob first
-      // and referenced by URL — Vercel serverless functions have a 4.5 MB
-      // body limit, so anything bigger must go through Blob.
+      // Build the multipart payload with the files attached directly.
       const onUploadProgress = (percent: number, loaded: number, total: number) => {
         const safeTotal = total > 0 ? total : loaded
-        // Same handoff logic as direct uploads: once we've sent every byte we
-        // own (or the blob is fully uploaded), mark serverProcessing so the UI
+        // Once we've sent every byte we own, mark serverProcessing so the UI
         // shows the indeterminate pulse while the server forwards to iLoveAPI.
         const serverProcessing = total > 0 && loaded >= total
         setState({
@@ -237,12 +158,10 @@ export function useTool(toolSlug: string) {
         })
       }
 
-      const form = await buildUploadPayload({
-        toolSlug,
+      const form = buildUploadPayload({
         files,
         watermarkImage,
         options: cleanOptions,
-        onProgress: onUploadProgress,
       })
 
       for (const file of files) {
