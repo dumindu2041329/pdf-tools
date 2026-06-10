@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useCallback } from "react"
+import { toast } from "sonner"
 import type { ProcessingStep } from "@/components/tools/ProcessingModal"
 import { recordActivity } from "@/lib/activityStore"
 import { shouldUseDirectUpload, uploadFileDirect } from "@/lib/blob-upload"
@@ -10,7 +11,26 @@ function postActivity(toolSlug: string, fileName: string, outputSize: number): v
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ toolSlug, fileName, outputSize }),
-  }).catch(() => {})
+  })
+    .then(async (res) => {
+      // Guest users who exhaust their daily/monthly cap get sent to
+      // the sign-up page. The local tools have already produced their
+      // result by the time we POST here, so the user keeps what they
+      // got, but we bounce them off the page so they can't keep
+      // firing local-only requests indefinitely.
+      if (res.status === 402 && typeof window !== "undefined") {
+        try {
+          const data = (await res.json()) as { error?: string }
+          if (data.error) {
+            toast.error(data.error)
+          }
+        } catch {
+          // ignore JSON parse failure
+        }
+        window.location.href = "/sign-up"
+      }
+    })
+    .catch(() => {})
 }
 
 export type UploadProgress = {
@@ -36,7 +56,7 @@ export type ToolState =
     }
   | { status: "success"; downloadUrl: string; filename: string; processingTime: string; outputSize: number }
   | { status: "validation-success"; message: string; result?: string; processingTime: string }
-  | { status: "error"; message: string; retryable: boolean; upgradeRequired?: boolean }
+  | { status: "error"; message: string; retryable: boolean; upgradeRequired?: boolean; redirectToSignUp?: boolean }
 
 // Minimum display time per step so the user can see each transition
 // (the actual upload + processing work is on top of these).
@@ -410,12 +430,30 @@ export function useTool(toolSlug: string) {
         if (!response.ok) {
           let errMsg = "Processing failed"
           let upgradeRequired = false
+          let redirectToSignUp = false
           try {
-            const err = response.json() as { error?: string; upgradeRequired?: boolean }
+            const err = response.json() as {
+              error?: string
+              upgradeRequired?: boolean
+              redirectToSignUp?: boolean
+            }
             errMsg = err.error || errMsg
             upgradeRequired = !!err.upgradeRequired
+            redirectToSignUp = !!err.redirectToSignUp
           } catch {
             // blob response, can't parse JSON
+          }
+          // Guest users who exhaust their daily/monthly cap get sent
+          // to the sign-up page. We still surface the error in the UI
+          // first so the user understands what just happened, then
+          // navigate after a short delay.
+          if (redirectToSignUp && typeof window !== "undefined") {
+            toast.error(errMsg)
+            setState({ status: "error", message: errMsg, retryable: false, upgradeRequired, redirectToSignUp })
+            setTimeout(() => {
+              window.location.href = "/sign-up"
+            }, 1200)
+            return
           }
           setState({ status: "error", message: errMsg, retryable: true, upgradeRequired })
           return

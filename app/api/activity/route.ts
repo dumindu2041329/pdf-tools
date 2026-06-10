@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { auth } from "@clerk/nextjs/server"
 import { recordProcessingEvent } from "@/lib/usage"
+import { checkGuestLimits, incrementGuestUsage } from "@/lib/guest-usage"
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
@@ -27,6 +28,27 @@ export async function POST(req: Request) {
   }
 
   const { userId } = await auth()
+
+  if (!userId) {
+    // Guest path for the local tools (merge / split / remove-pages /
+    // organize-pdf). These never hit /api/tools/[tool] so they aren't
+    // caught by the limit check there. Each /api/activity POST
+    // represents one client-side processing event, so we apply the
+    // same daily/monthly cap and bounce the guest to the sign-up page
+    // if they try to exceed it.
+    const gate = await checkGuestLimits(1)
+    if (!gate.allowed) {
+      return NextResponse.json(
+        {
+          error: gate.reason ?? "Processing limit reached",
+          upgradeRequired: true,
+          redirectToSignUp: true,
+        },
+        { status: 402 }
+      )
+    }
+    await incrementGuestUsage(1)
+  }
 
   await recordProcessingEvent({
     userId,

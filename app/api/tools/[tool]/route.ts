@@ -13,6 +13,7 @@ import { mapPageNumberOptions } from "@/lib/iloveapi/page-number-mapper"
 import { canProcessFile, recordProcessingEvent } from "@/lib/usage"
 import { getUserPlan } from "@/lib/auth"
 import { getLimitsForPlan } from "@/lib/usageLimits"
+import { checkGuestLimits, incrementGuestUsage } from "@/lib/guest-usage"
 import { downloadFromBlob } from "@/lib/blob-storage"
 
 /**
@@ -210,6 +211,22 @@ async function processToolRequest(
               { status: 402 }
             )
           }
+        } else {
+          // Guest html-to-pdf path: same daily/monthly cap as the
+          // file-based path, since this is still a server-side
+          // processing event.
+          const gate = await checkGuestLimits(1)
+          if (!gate.allowed) {
+            return NextResponse.json(
+              {
+                error: gate.reason ?? "Processing limit reached",
+                upgradeRequired: true,
+                redirectToSignUp: true,
+              },
+              { status: 402 }
+            )
+          }
+          await incrementGuestUsage(1)
         }
 
         const start = Date.now()
@@ -275,6 +292,26 @@ async function processToolRequest(
         { status: 402 }
       )
     }
+
+    // Guest daily/monthly cap (cookie-backed). One processing event =
+    // one request, regardless of how many files the tool consumed (a
+    // merge of 10 PDFs still costs 1 against the daily quota). The
+    // client mirrors this with a pre-flight check; the server is the
+    // source of truth. We increment optimistically here so a request
+    // that ends up failing still costs the guest a slot — this is the
+    // defensive "prevent bypass" behaviour the spec asks for.
+    const gate = await checkGuestLimits(1)
+    if (!gate.allowed) {
+      return NextResponse.json(
+        {
+          error: gate.reason ?? "Processing limit reached",
+          upgradeRequired: true,
+          redirectToSignUp: true,
+        },
+        { status: 402 }
+      )
+    }
+    await incrementGuestUsage(1)
   }
 
   if (tool === "jpg-to-pdf" && options.merge_after === false) {

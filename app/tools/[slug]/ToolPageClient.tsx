@@ -169,16 +169,31 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
     // Premium has daily = -1 (unlimited) so this check only blocks free users.
     // The server is the source of truth (canProcessFile) and will reject again
     // if the client check is stale.
+    //
+    // Guest users: /api/usage returns `isGuest: true` and zero counters.
+    // Their actual count lives in a server-side cookie (see
+    // lib/guest-usage.ts) so we read it from the same /api/usage response
+    // and, if they've hit the cap, bounce them straight to the sign-up
+    // page rather than the in-app "Daily limit reached" dialog (they have
+    // no plan to upgrade to without an account).
     const dailyLimit = planLimits.daily
     if (dailyLimit > 0) {
       try {
         const res = await fetch("/api/usage", { cache: "no-store" })
         if (res.ok) {
-          const data = (await res.json()) as { filesProcessedToday?: number }
+          const data = (await res.json()) as {
+            filesProcessedToday?: number
+            isGuest?: boolean
+          }
           const usedToday = typeof data.filesProcessedToday === "number"
             ? data.filesProcessedToday
             : 0
           if (usedToday >= dailyLimit) {
+            if (data.isGuest) {
+              toast.error("You've reached the daily limit for guests. Sign up for a free account to continue.")
+              router.replace("/sign-up")
+              return
+            }
             setDailyLimitOpen(true)
             return
           }
