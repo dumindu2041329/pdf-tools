@@ -1,4 +1,4 @@
-import { del, list, put } from "@vercel/blob"
+import { del, getDownloadUrl, list, put } from "@vercel/blob"
 import type { PutBlobResult } from "@vercel/blob"
 
 /**
@@ -60,9 +60,22 @@ export async function uploadToBlob(input: UploadToBlobInput): Promise<PutBlobRes
  * Fetches a Blob URL and returns its bytes as a `Buffer`. Useful on the server
  * when the client uploaded directly to Blob and we need to forward the file
  * to iLoveAPI / Adobe / pdf-lib.
+ *
+ * The URL passed in is whatever the client's `upload()` returned — for
+ * private stores that URL is a short-lived, browser-grade signed URL that
+ * is meant to expire quickly. By the time the tools route runs (seconds
+ * later) it may already be rejected with 403, so we ignore the input
+ * URL's signature and ask the SDK to mint a fresh, server-side signed URL
+ * via `getDownloadUrl()`. For public stores the SDK just returns the same
+ * URL, so the public path is unchanged.
  */
 export async function downloadFromBlob(url: string): Promise<Buffer> {
-  const res = await fetch(url)
+  // `pathname` for a Vercel Blob URL is everything after the host
+  // (e.g. `uploads/abc/file.pdf`). The SDK wants it without a leading
+  // slash, so strip it.
+  const pathname = new URL(url).pathname.replace(/^\//, "")
+  const downloadUrl = await getDownloadUrl(pathname)
+  const res = await fetch(downloadUrl)
   if (!res.ok) {
     throw new Error(`Failed to download blob (${res.status} ${res.statusText})`)
   }
