@@ -8,7 +8,7 @@ import { upload } from "@vercel/blob/client"
  * Vercel serverless functions truncate request bodies at ~4.5 MB. The
  * official workaround is the "client upload" pattern: the browser asks
  * `/api/upload` for a signed token, then PUTs the file straight to Blob.
- * The result is a public URL that the browser can hand back to the
+ * The result is a signed URL that the browser can hand back to the
  * server for downstream processing.
  *
  * See: https://vercel.com/docs/vercel-blob/client-upload
@@ -64,7 +64,7 @@ export async function uploadFileDirect(
   options: DirectUploadOptions = {}
 ): Promise<DirectUploadResult> {
   const result = await upload(file.name, file, {
-    access: "public",
+    access: "private",
     handleUploadUrl: "/api/upload",
     contentType: file.type || undefined,
     clientPayload: options.clientPayload,

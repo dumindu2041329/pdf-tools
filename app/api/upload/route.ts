@@ -111,11 +111,13 @@ export async function POST(request: Request): Promise<NextResponse> {
         }
 
         return {
-          // Public read so the server route can `fetch()` the URL during
-          // processing and the user can re-download via the same URL.
-          // Switch to "private" + `access: "private"` reads if the store
-          // is later configured as private.
+          // Private access — matches the connected Blob store's access
+          // level. The server re-hydrates the file via `downloadFromBlob`
+          // (which uses the read-write token), so signed URLs are fine for
+          // the processing leg. The user never needs the public URL: the
+          // in-memory `fileStore` is what gets returned to the browser.
           allowedContentTypes: allowed,
+          access: "private",
           // Per-file cap. Guests inherit the free-plan limit (20 MB);
           // signed-in users get the premium 4 GB cap. The client also
           // enforces this via `getLimitsForPlan`, but the server is the

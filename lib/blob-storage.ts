@@ -40,7 +40,7 @@ export interface UploadToBlobInput {
  *   return NextResponse.json({ downloadId: blob.pathname, filename: "out.pdf", ... })
  */
 export async function uploadToBlob(input: UploadToBlobInput): Promise<PutBlobResult> {
-  const access = input.access ?? "public"
+  const access = input.access ?? "private"
   // The SDK's PutBody type excludes raw `Uint8Array`; normalize to Buffer
   // (which IS accepted) so callers can pass whichever flavor they have.
   const body: Buffer | Blob | string =
