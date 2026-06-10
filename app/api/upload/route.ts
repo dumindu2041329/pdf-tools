@@ -1,5 +1,5 @@
 import { auth } from "@clerk/nextjs/server"
-import { handleUpload, type HandleUploadBody } from "@vercel/blob/client"
+import { handleUpload } from "@vercel/blob/client"
 import { NextResponse } from "next/server"
 
 /**
@@ -29,48 +29,54 @@ export const runtime = "nodejs"
 // short-circuited by Vercel's default 10 s / 60 s function timeout.
 export const maxDuration = 60
 
-function isHandleUploadBody(value: unknown): value is HandleUploadBody {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "type" in value
-  )
-}
-
 export async function POST(request: Request): Promise<NextResponse> {
   const { userId } = await auth()
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const body = (await request.json()) as unknown
-  if (!isHandleUploadBody(body)) {
+  let body: unknown
+  try {
+    body = await request.json()
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 })
+  }
+
+  if (typeof body !== "object" || body === null || !("type" in body)) {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 })
   }
 
   try {
     const jsonResponse = await handleUpload({
-      body,
+      // The SDK validates the body shape itself; the cast is safe because
+      // we just confirmed `body` is a non-null object with a `type` field.
+      body: body as Parameters<typeof handleUpload>[0]["body"],
       request,
       onBeforeGenerateToken: async (pathname, clientPayload) => {
-        // Scope every upload to the requesting user so a stolen token
-        // can't be used to overwrite someone else's file.
-        if (!pathname.startsWith(`uploads/${userId}/`)) {
-          throw new Error("Pathname must be scoped to the current user")
+        // The client SDK sends whatever pathname the browser used to call
+        // `upload()` (typically just the file name, e.g. `report.pdf`).
+        // We don't try to enforce a `uploads/<userId>/` prefix here —
+        // doing so rejects every legitimate request — but we DO block
+        // path traversal and absolute paths so a stolen token can't be
+        // used to escape the store.
+        if (pathname.length === 0 || pathname.length > 1024) {
+          throw new Error("Invalid pathname length")
+        }
+        if (pathname.includes("..") || pathname.startsWith("/")) {
+          throw new Error("Invalid pathname")
         }
 
-        // Only allow PDF / image uploads. This is the only content-type
-        // filter that runs on the server; the client should also validate,
-        // but the server is the source of truth.
-        const allowed = new Set([
+        // Only allow PDF / image uploads. The browser should also
+        // validate, but the server is the source of truth.
+        const allowed = [
           "application/pdf",
           "image/jpeg",
           "image/png",
           "image/webp",
           "image/gif",
-        ])
+        ]
         const payload = (clientPayload ?? {}) as { contentType?: string }
-        if (payload.contentType && !allowed.has(payload.contentType)) {
+        if (payload.contentType && !allowed.includes(payload.contentType)) {
           throw new Error(`Unsupported content type: ${payload.contentType}`)
         }
 
@@ -79,9 +85,15 @@ export async function POST(request: Request): Promise<NextResponse> {
           // processing and the user can re-download via the same URL.
           // Switch to "private" + `access: "private"` reads if the store
           // is later configured as private.
-          allowedContentTypes: Array.from(allowed),
+          allowedContentTypes: allowed,
           // 4 GB hard cap matches the premium plan's max file size.
           maximumSizeInBytes: 4 * 1024 * 1024 * 1024,
+          // Different users uploading `report.pdf` shouldn't clobber each
+          // other — the SDK appends a random suffix to make the final
+          // pathname unique.
+          addRandomSuffix: true,
+          // Carries the userId into `onUploadCompleted` so future
+          // cleanup hooks know who owns the blob.
           tokenPayload: JSON.stringify({ userId }),
         }
       },
