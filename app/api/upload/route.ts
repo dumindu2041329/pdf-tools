@@ -1,5 +1,5 @@
 import { auth } from "@clerk/nextjs/server"
-import { handleUpload } from "@vercel/blob/client"
+import { handleUpload, type HandleUploadBody } from "@vercel/blob/client"
 import { NextResponse } from "next/server"
 import { getLimitsForPlan } from "@/lib/usageLimits"
 
@@ -58,24 +58,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     )
   }
 
-  let body: unknown
-  try {
-    body = await request.json()
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 })
-  }
-
-  if (typeof body !== "object" || body === null || !("type" in body)) {
-    return NextResponse.json({ error: "Invalid request body" }, { status: 400 })
-  }
+  const body = (await request.json()) as HandleUploadBody
 
   try {
     const jsonResponse = await handleUpload({
-      // The SDK validates the body shape itself; the cast is safe because
-      // we just confirmed `body` is a non-null object with a `type` field.
-      body: body as Parameters<typeof handleUpload>[0]["body"],
+      body,
       request,
-      onBeforeGenerateToken: async (pathname, clientPayload) => {
+      onBeforeGenerateToken: async (pathname, clientPayload /*, multipart */) => {
         // The client SDK sends whatever pathname the browser used to call
         // `upload()` (typically just the file name, e.g. `report.pdf`).
         // We don't try to enforce a `uploads/<userId>/` prefix here —
@@ -98,9 +87,27 @@ export async function POST(request: Request): Promise<NextResponse> {
           "image/webp",
           "image/gif",
         ]
-        const payload = (clientPayload ?? {}) as { contentType?: string }
-        if (payload.contentType && !allowed.includes(payload.contentType)) {
-          throw new Error(`Unsupported content type: ${payload.contentType}`)
+
+        // `clientPayload` is a JSON string (or null) per the SDK
+        // signature — see `HandleUploadOptions.onBeforeGenerateToken` in
+        // `@vercel/blob/client`. The browser forwards it from the
+        // `upload(file, { clientPayload })` call in `lib/blob-upload.ts`.
+        // We use it to forward the file's content type without forcing
+        // the client to round-trip through a separate API.
+        if (clientPayload) {
+          try {
+            const payload = JSON.parse(clientPayload) as { contentType?: string }
+            if (payload.contentType && !allowed.includes(payload.contentType)) {
+              throw new Error(`Unsupported content type: ${payload.contentType}`)
+            }
+          } catch (err) {
+            // Malformed client payload — reject so a stolen token can't
+            // smuggle an unsupported content type past the server check.
+            if (err instanceof Error && err.message.startsWith("Unsupported content type")) {
+              throw err
+            }
+            throw new Error("Invalid clientPayload")
+          }
         }
 
         return {
