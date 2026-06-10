@@ -1,4 +1,4 @@
-import { del, getDownloadUrl, list, put } from "@vercel/blob"
+import { del, getDownloadUrl, head, list, put } from "@vercel/blob"
 import type { PutBlobResult } from "@vercel/blob"
 
 /**
@@ -70,17 +70,35 @@ export async function uploadToBlob(input: UploadToBlobInput): Promise<PutBlobRes
  * URL, so the public path is unchanged.
  */
 export async function downloadFromBlob(url: string): Promise<Buffer> {
-  // `pathname` for a Vercel Blob URL is everything after the host
-  // (e.g. `uploads/abc/file.pdf`). The SDK wants it without a leading
-  // slash, so strip it.
+  // The URL passed in is whatever the client's `upload()` returned — for
+  // private stores that's a short-lived, browser-grade signed URL that
+  // may 403 from a server-side `fetch` within seconds. We discard the
+  // input signature and mint a fresh, server-side signed URL via the
+  // SDK so the server can re-hydrate the file reliably.
   const pathname = new URL(url).pathname.replace(/^\//, "")
-  const downloadUrl = await getDownloadUrl(pathname)
+
+  // Try `getDownloadUrl` first (newer SDK API, single call). If this
+  // version of `@vercel/blob` doesn't export it, fall back to `head()`
+  // which returns a `downloadUrl` field on its metadata.
+  const downloadUrl = await resolveDownloadUrl(pathname)
+
   const res = await fetch(downloadUrl)
   if (!res.ok) {
     throw new Error(`Failed to download blob (${res.status} ${res.statusText})`)
   }
   const arrayBuffer = await res.arrayBuffer()
   return Buffer.from(arrayBuffer)
+}
+
+async function resolveDownloadUrl(pathname: string): Promise<string> {
+  if (typeof getDownloadUrl === "function") {
+    return getDownloadUrl(pathname)
+  }
+  const metadata = await head(pathname)
+  if (!metadata) {
+    throw new Error(`Blob not found: ${pathname}`)
+  }
+  return metadata.downloadUrl
 }
 
 /**
