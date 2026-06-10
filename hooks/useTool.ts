@@ -3,6 +3,7 @@
 import { useState, useCallback } from "react"
 import type { ProcessingStep } from "@/components/tools/ProcessingModal"
 import { recordActivity } from "@/lib/activityStore"
+import { shouldUseDirectUpload, uploadFileDirect } from "@/lib/blob-upload"
 
 function postActivity(toolSlug: string, fileName: string, outputSize: number): void {
   fetch("/api/activity", {
@@ -98,21 +99,86 @@ interface BuildUploadPayloadArgs {
 }
 
 /**
- * Builds the FormData sent to `/api/tools/[tool]`. Files are attached
- * directly to the multipart payload.
+ * Uploads any file that exceeds the direct-body limit to Vercel Blob via
+ * the client SDK. Files under the limit are returned untouched so the
+ * caller can keep the cheap multipart path for small PDFs.
+ */
+async function uploadLargeFilesToBlob(
+  files: File[],
+  watermarkImage: File | undefined,
+  onFileProgress: (file: File, loaded: number, total: number) => void
+): Promise<{
+  blobUploads: Array<{ file: File; url: string; pathname: string }>
+  watermarkBlobUpload: { url: string; filename: string } | undefined
+}> {
+  const blobUploads: Array<{ file: File; url: string; pathname: string }> = []
+  for (const file of files) {
+    if (!shouldUseDirectUpload(file)) continue
+    const result = await uploadFileDirect(file, {
+      onProgress: (loaded, total) => onFileProgress(file, loaded, total),
+    })
+    blobUploads.push({ file, url: result.url, pathname: result.pathname })
+  }
+
+  let watermarkBlobUpload: { url: string; filename: string } | undefined
+  if (watermarkImage && shouldUseDirectUpload(watermarkImage)) {
+    const result = await uploadFileDirect(watermarkImage, {
+      onProgress: (loaded, total) => onFileProgress(watermarkImage, loaded, total),
+    })
+    watermarkBlobUpload = { url: result.url, filename: watermarkImage.name }
+  }
+
+  return { blobUploads, watermarkBlobUpload }
+}
+
+/**
+ * Builds the FormData sent to `/api/tools/[tool]`. Files can arrive two ways:
+ *
+ *  - **Inline**: appended as a `file` multipart entry (cheap, works for
+ *    PDFs under ~4 MB).
+ *  - **Via Blob**: uploaded directly to Vercel Blob first, then their public
+ *    URLs are forwarded as a JSON `blobUrls` field. The server route fetches
+ *    each URL and falls back into the same processing pipeline.
+ *
+ * The caller decides which path to take via the optional `directUploads`
+ * argument; if omitted, every file is inlined.
  */
 function buildUploadPayload({
   files,
   watermarkImage,
   options,
-}: BuildUploadPayloadArgs): FormData {
+  directUploads,
+  watermarkDirectUpload,
+}: BuildUploadPayloadArgs & {
+  directUploads?: Array<{ file: File; url: string; pathname: string }>
+  watermarkDirectUpload?: { url: string; filename: string }
+}): FormData {
   const form = new FormData()
   form.append("options", JSON.stringify(options))
 
+  // Inline the files that didn't take the Blob path. The ones in
+  // `directUploads` are forwarded as URLs instead — see `blobUrls` below.
+  const directSet = new Set(
+    (directUploads ?? []).map((u) => u.file.name + ":" + u.file.size)
+  )
   for (const file of files) {
+    if (directSet.has(file.name + ":" + file.size)) continue
     form.append("file", file)
   }
-  if (watermarkImage) {
+
+  if (directUploads && directUploads.length > 0) {
+    form.append(
+      "blobUrls",
+      JSON.stringify(
+        directUploads.map((u) => ({ url: u.url, filename: u.file.name }))
+      )
+    )
+  }
+
+  if (watermarkDirectUpload) {
+    form.append("watermarkImageUrl", watermarkDirectUpload.url)
+    form.append("watermarkImageFilename", watermarkDirectUpload.filename)
+  } else if (watermarkImage) {
     form.append("watermark_image", watermarkImage)
   }
   return form
@@ -143,7 +209,52 @@ export function useTool(toolSlug: string) {
         cleanOptions = optionsWithoutImage
       }
 
-      // Build the multipart payload with the files attached directly.
+      // Decide which files need the direct-to-Blob path. Anything
+      // exceeding `MAX_DIRECT_BODY_BYTES` (4 MB, see lib/blob-upload.ts)
+      // is uploaded to Vercel Blob first so we don't run into Vercel's
+      // ~4.5 MB serverless function body limit. Smaller files stay on
+      // the cheap multipart path.
+      const needsDirectUpload =
+        files.some(shouldUseDirectUpload) ||
+        (watermarkImage !== undefined && shouldUseDirectUpload(watermarkImage))
+
+      let directUploads: Array<{ file: File; url: string; pathname: string }> = []
+      let watermarkDirectUpload: { url: string; filename: string } | undefined
+
+      if (needsDirectUpload) {
+        setState({ status: "processing", step: "upload", uploadProgress: 0 })
+        const totalBytes = files.reduce(
+          (sum, f) => sum + (shouldUseDirectUpload(f) ? f.size : 0),
+          0
+        )
+        const loadedByFile = new Map<string, number>()
+        const onFileProgress = (file: File, loaded: number) => {
+          loadedByFile.set(file.name + ":" + file.size, loaded)
+          const combinedLoaded = Array.from(loadedByFile.values()).reduce(
+            (a, b) => a + b,
+            0
+          )
+          const percent =
+            totalBytes > 0 ? Math.min(100, Math.round((combinedLoaded / totalBytes) * 100)) : 0
+          setState({
+            status: "processing",
+            step: "upload",
+            uploadProgress: percent,
+            uploadBytes: { loaded: combinedLoaded, total: totalBytes },
+          })
+        }
+        const result = await uploadLargeFilesToBlob(
+          files,
+          watermarkImage,
+          onFileProgress
+        )
+        directUploads = result.blobUploads
+        watermarkDirectUpload = result.watermarkBlobUpload
+      }
+
+      // Build the multipart payload. Files that took the Blob path are
+      // omitted from the `file` field and forwarded via `blobUrls` JSON
+      // instead. The server route re-hydrates them with `downloadFromBlob`.
       const onUploadProgress = (percent: number, loaded: number, total: number) => {
         const safeTotal = total > 0 ? total : loaded
         // Once we've sent every byte we own, mark serverProcessing so the UI
@@ -162,6 +273,8 @@ export function useTool(toolSlug: string) {
         files,
         watermarkImage,
         options: cleanOptions,
+        directUploads,
+        watermarkDirectUpload,
       })
 
       for (const file of files) {

@@ -12,6 +12,7 @@ import { mapWatermarkOptions } from "@/lib/iloveapi/watermark-mapper"
 import { mapPageNumberOptions } from "@/lib/iloveapi/page-number-mapper"
 import { canProcessFile, recordProcessingEvent } from "@/lib/usage"
 import { getUserPlan } from "@/lib/auth"
+import { downloadFromBlob } from "@/lib/blob-storage"
 
 /**
  * Map an error thrown by the Adobe PDF Services SDK into a user-friendly
@@ -130,6 +131,70 @@ async function processToolRequest(
 
   const optionsRaw = formData.get("options")
   const options = optionsRaw ? JSON.parse(optionsRaw as string) : {}
+
+  // Direct-to-Blob uploads arrive as a JSON list of `{ url, filename }`
+  // pairs in the `blobUrls` form field. The client uploads the file
+  // straight to Vercel Blob (bypassing the ~4.5 MB serverless body cap)
+  // and hands the resulting URL back here so we can `fetch()` it.
+  // The legacy `file` multipart field is kept for backward compatibility
+  // with the small-file path.
+  const blobUrlsRaw = formData.get("blobUrls")
+  if (typeof blobUrlsRaw === "string" && blobUrlsRaw.length > 0) {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(blobUrlsRaw)
+    } catch (err) {
+      console.error("blobUrls JSON parse error:", err)
+      return NextResponse.json({ error: "Invalid blobUrls payload" }, { status: 400 })
+    }
+    if (!Array.isArray(parsed)) {
+      return NextResponse.json({ error: "blobUrls must be an array" }, { status: 400 })
+    }
+    for (const entry of parsed) {
+      if (
+        typeof entry !== "object" ||
+        entry === null ||
+        typeof (entry as { url?: unknown }).url !== "string" ||
+        typeof (entry as { filename?: unknown }).filename !== "string"
+      ) {
+        return NextResponse.json(
+          { error: "Each blobUrls entry must include `url` and `filename`" },
+          { status: 400 }
+        )
+      }
+      const { url, filename } = entry as { url: string; filename: string }
+      try {
+        const buffer = await downloadFromBlob(url)
+        files.push({ buffer, filename })
+      } catch (err) {
+        console.error(`Failed to download blob ${url}:`, err)
+        return NextResponse.json(
+          { error: `Failed to download uploaded file "${filename}"` },
+          { status: 502 }
+        )
+      }
+    }
+  }
+
+  // Extract watermark image if provided (blob URL form, e.g. `watermarkImageUrl`)
+  const watermarkImageUrl = formData.get("watermarkImageUrl")
+  if (typeof watermarkImageUrl === "string" && watermarkImageUrl.length > 0) {
+    const watermarkFilenameRaw = formData.get("watermarkImageFilename")
+    const watermarkFilename =
+      typeof watermarkFilenameRaw === "string" && watermarkFilenameRaw.length > 0
+        ? watermarkFilenameRaw
+        : "watermark.png"
+    try {
+      const buffer = await downloadFromBlob(watermarkImageUrl)
+      watermarkImage = { buffer, filename: watermarkFilename }
+    } catch (err) {
+      console.error(`Failed to download watermark blob ${watermarkImageUrl}:`, err)
+      return NextResponse.json(
+        { error: "Failed to download watermark image" },
+        { status: 502 }
+      )
+    }
+  }
 
   const userPlan = userId ? await getUserPlan(userId) : null
 

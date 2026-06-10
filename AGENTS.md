@@ -12,6 +12,7 @@
 | **Styling** | Tailwind CSS v4 + shadcn/ui |
 | **Auth** | Clerk (`@clerk/nextjs` ^7.0.7) |
 | **PDF Engine** | iLoveAPI (`@ilovepdf/ilovepdf-nodejs` ^0.3.1) + Adobe Node SDK (`@adobe/pdfservices-node-sdk` ^4.1.0) + `pdf-lib` ^1.17.1 / `pdfjs-dist` ^4.10.38 |
+| **Object Storage** | Vercel Blob (`@vercel/blob` ^2.4.0) — client uploads for source PDFs > 4 MB |
 | **AI Services** | OpenAI (`openai` ^6.33.0) |
 | **UI/UX** | framer-motion ^12.38.0, three.js ^0.183.2, @dnd-kit/core ^6.3.1 + @dnd-kit/sortable ^10.0.0, sonner ^2.0.7, lucide-react ^1.7.0 |
 | **Database** | Neon PostgreSQL (`@neondatabase/serverless` ^1.1.0) |
@@ -118,6 +119,7 @@ app/                    # Next.js App Router
     download/[id]/      # File download endpoint
     tools/[tool]/       # PDF processing endpoints (120s max)
     tools/sign/         # PDF signing endpoint (30s max)
+    upload/             # Vercel Blob client-upload token endpoint
     usage/              # Usage tracking endpoint (stub)
     webhooks/iloveapi/  # iLoveAPI webhooks
     workflows/          # Workflow CRUD (GET/POST)
@@ -163,6 +165,8 @@ lib/
   usage.ts              # Plan limits & usage tracking (canProcessFile, recordProcessingEvent stub)
   usageLimits.ts        # Plan limit constants (client-safe)
   fileStore.ts          # In-memory file storage (Map-based, not Neon)
+  blob-storage.ts       # Server-side Vercel Blob helpers (uploadToBlob, downloadFromBlob, deleteFromBlob, listBlobs)
+  blob-upload.ts        # Client-side Vercel Blob direct-upload helpers (uploadFileDirect, shouldUseDirectUpload)
   extractFormatConverter.ts # Format conversion utilities
   auth.ts               # Clerk plan helpers (getUserPlan, grantPremiumAccess, revokePremiumAccess)
   utils.ts              # cn() utility
@@ -196,14 +200,33 @@ Indexes: `workflow_user_created_at_idx`, `workflow_step_workflow_step_index_idx`
 - `ensureDbSchema()` — runs all CREATE TABLE IF NOT EXISTS statements; uses a global singleton promise to avoid duplicate runs in dev
 - `upsertUser(userId)` — inserts or ignores the `app_user` row for a Clerk user
 
+### Vercel Blob
+
+Vercel Blob is the project's CDN-backed object store for source PDFs. The store ID lives in the Vercel dashboard (see `BLOB_READ_WRITE_TOKEN` below) and is auto-injected into all Vercel environments; locally run `vercel env pull .env.local` to populate the value.
+
+#### Why
+Vercel serverless functions truncate request bodies at ~4.5 MB. The free plan allows files up to 20 MB and the premium plan up to 4 GB, so neither is reachable via the original "POST the PDF in a FormData body" path. The official workaround is the **client upload** pattern from <https://vercel.com/docs/vercel-blob/client-upload>: the browser asks the server for a signed token, uploads the file straight to Blob, and hands the resulting URL back to the server for downstream processing.
+
+#### Files
+- `app/api/upload/route.ts` — issues client upload tokens via `handleUpload` from `@vercel/blob/client`. Requires Clerk auth, restricts content type to PDFs / images, and caps each upload at 4 GB.
+- `lib/blob-upload.ts` — browser-side helpers: `shouldUseDirectUpload(file)` (true for files > 4 MB) and `uploadFileDirect(file, { onProgress })`.
+- `lib/blob-storage.ts` — server-side helpers: `uploadToBlob`, `downloadFromBlob`, `deleteFromBlob`, `listBlobs`.
+
+#### Flow
+1. `useTool` calls `shouldUseDirectUpload(file)` for every file. Anything over 4 MB is sent to `/api/upload` first, which returns a signed token + URL.
+2. The browser PUTs the file directly to Vercel Blob (this never touches the Next.js server, so the body cap doesn't apply).
+3. The resulting `url` is forwarded to `/api/tools/[tool]` as a JSON-encoded `blobUrls` form field; the server route calls `downloadFromBlob(url)` to re-hydrate the file as a `Buffer` and continues into the existing processing pipeline.
+4. Small files still ride the original `multipart/form-data` path so the common case stays cheap.
+
 ### Tool Pipeline
 1. `FileUploader` component accepts user files
-2. `useTool` hook manages state and calls `POST /api/tools/[tool]`
-3. API handler routes to appropriate processor:
+2. `useTool` hook manages state. Files over 4 MB are first uploaded directly to **Vercel Blob** via the client SDK (see "Vercel Blob" section) and replaced in the request with their public URLs; smaller files ride the cheap multipart path
+3. `useTool` calls `POST /api/tools/[tool]` with the FormData
+4. API handler routes to appropriate processor:
    - **iLoveAPI tools**: `runTool()` handles the API call and returns processed file
    - **Adobe tools** (`pdf-to-word`, `pdf-to-excel`, `pdf-to-powerpoint`, `ocr-pdf`): Adobe PDF Services SDK
    - **Local tools** (`local-split`, `local-merge`, `local-rotate`): pdf-lib processed client-side or server-side
-4. Result is returned as base64 to client (files stored in-memory via fileStore)
+5. Result is returned as base64 to client (files stored in-memory via fileStore)
 
 ### PDF Processing Strategies
 
@@ -232,6 +255,7 @@ Indexes: `workflow_user_created_at_idx`, `workflow_step_workflow_step_index_idx`
 |---|---|---|
 | `/api/tools/[tool]` | POST | Main PDF processing endpoint |
 | `/api/tools/sign` | POST | PDF signing via iLoveAPI |
+| `/api/upload` | POST | Issues Vercel Blob client-upload tokens (used by `useTool` for files > 4 MB) |
 | `/api/download/[id]` | GET | Stream file from in-memory fileStore |
 | `/api/ai/summarize` | POST | AI summarization |
 | `/api/ai/translate` | POST | AI translation |
@@ -375,6 +399,7 @@ Plan is stored in Clerk user metadata (`publicMetadata.plan`) and mirrored to `a
 - `STRIPE_PREMIUM_PRICE_ID` — Stripe price ID for the Premium plan
 - `STRIPE_WEBHOOK_SECRET` — Stripe webhook signing secret (for subscription lifecycle events)
 - `NEXT_PUBLIC_APP_URL` — Public app URL used to build Stripe `success_url` / `cancel_url` (defaults to `http://localhost:3000` in dev)
+- `BLOB_READ_WRITE_TOKEN` — Vercel Blob read-write token. Auto-injected by Vercel when a Blob store is connected to this project; run `vercel env pull .env.local` to populate it locally. Required for source-PDF uploads > 4 MB (see "Vercel Blob" section).
 
 ## Agent Rules
 
@@ -400,8 +425,8 @@ Plan is stored in Clerk user metadata (`publicMetadata.plan`) and mirrored to `a
 2. Options are configured via tool-specific option components in `components/tools/options/`
 3. `useTool` hook manages processing state via `ToolState` discriminated union
 4. For local tools (merge/split/rotate): processed in-browser, blob URL returned directly
-5. For server tools: files sent to `/api/tools/[tool]` with FormData (`file` + `options` JSON + optional `watermark_image`)
-6. API route processes via appropriate engine and returns either:
+5. For server tools: files are first checked against `shouldUseDirectUpload` (4 MB). Files over the cap go through `uploadFileDirect` (Vercel Blob) and the resulting URL is sent to the server in a `blobUrls` JSON field; files under the cap ride the original `multipart/form-data` path.
+6. API route (`/api/tools/[tool]`) re-hydrates `blobUrls` via `downloadFromBlob`, then processes via the appropriate engine and returns either:
    - `{ fileData: base64, filename, processingTime, outputSize }` — decoded to blob URL client-side
    - `{ downloadId, filename, processingTime, outputSize }` — downloaded via `/api/download/[id]`
    - `{ validationSuccess, message, result }` — for validate-pdfa
