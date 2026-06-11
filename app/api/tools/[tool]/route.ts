@@ -14,7 +14,7 @@ import { canProcessFile, recordProcessingEvent } from "@/lib/usage"
 import { getUserPlan } from "@/lib/auth"
 import { getLimitsForPlan } from "@/lib/usageLimits"
 import { checkGuestLimits, incrementGuestUsage } from "@/lib/guest-usage"
-import { downloadFromBlob } from "@/lib/blob-storage"
+import { downloadFromBlob, deleteFromBlob } from "@/lib/blob-storage"
 
 /**
  * Map an error thrown by the Adobe PDF Services SDK into a user-friendly
@@ -85,8 +85,16 @@ async function processToolRequest(
   req: Request,
   params: Promise<{ tool: string }>
 ) {
-  const { tool } = await params
-  const { userId } = await auth()
+  // Track every blob URL we hydrate (or attempt to hydrate) so we can
+  // clean them up after processing — success or failure (e.g. iLoveAPI /
+  // Adobe credit exhaustion, 4xx from the engine, network blip, guest
+  // cap hit, etc.). `deleteFromBlob` is safe to call on unknown URLs
+  // and swallows errors, so this is fire-and-forget.
+  const downloadedBlobUrls: string[] = []
+
+  try {
+    const { tool } = await params
+    const { userId } = await auth()
 
   const contentType = req.headers.get("content-type")
   console.log("[DEBUG] Content-Type:", contentType)
@@ -165,6 +173,9 @@ async function processToolRequest(
         )
       }
       const { url, filename } = entry as { url: string; filename: string }
+      // Track BEFORE downloading so a download failure (502) still
+      // results in the blob being cleaned up by the finally block.
+      downloadedBlobUrls.push(url)
       try {
         const buffer = await downloadFromBlob(url)
         files.push({ buffer, filename })
@@ -181,6 +192,8 @@ async function processToolRequest(
   // Extract watermark image if provided (blob URL form, e.g. `watermarkImageUrl`)
   const watermarkImageUrl = formData.get("watermarkImageUrl")
   if (typeof watermarkImageUrl === "string" && watermarkImageUrl.length > 0) {
+    // Track for cleanup (see comment above on the main blobUrls block).
+    downloadedBlobUrls.push(watermarkImageUrl)
     const watermarkFilenameRaw = formData.get("watermarkImageFilename")
     const watermarkFilename =
       typeof watermarkFilenameRaw === "string" && watermarkFilenameRaw.length > 0
@@ -1305,5 +1318,15 @@ async function processToolRequest(
       errorMessage: errMessage,
     })
     return NextResponse.json({ error: errMessage }, { status: 500 })
+  }
+  } finally {
+    // Always clean up the uploaded source blobs once the request
+    // finishes — whether the tool succeeded, an iLoveAPI/Adobe call
+    // failed (e.g. credits exhausted), or we short-circuited on a
+    // usage cap. Deleting in parallel keeps it fast; `deleteFromBlob`
+    // swallows per-URL errors so one bad URL can't block the others.
+    await Promise.allSettled(
+      downloadedBlobUrls.map((url) => deleteFromBlob(url))
+    )
   }
 }
