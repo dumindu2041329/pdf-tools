@@ -32,12 +32,12 @@ export function RotateOptions({ options, onChange }: Props) {
     <div className="space-y-4">
       <div className="space-y-2">
         <label className="text-sm text-muted-foreground">Rotation</label>
-        <div className="flex gap-3">
+        <div className="flex flex-col sm:flex-row gap-3">
           <button
             type="button"
             onClick={handleLeft}
             className={cn(
-              "flex items-center gap-2 rounded-lg border px-4 py-3 transition-all cursor-pointer",
+              "flex items-center justify-center gap-2 rounded-lg border px-4 py-3 transition-all cursor-pointer w-full sm:w-auto",
               "border-border hover:border-primary/30"
             )}
           >
@@ -48,7 +48,7 @@ export function RotateOptions({ options, onChange }: Props) {
             type="button"
             onClick={reset}
             className={cn(
-              "flex items-center gap-2 rounded-lg border px-4 py-3 transition-all cursor-pointer",
+              "flex items-center justify-center gap-2 rounded-lg border px-4 py-3 transition-all cursor-pointer w-full sm:w-auto",
               current === 0 ? "border-primary bg-primary/5" : "border-border hover:border-primary/30"
             )}
           >
@@ -59,7 +59,7 @@ export function RotateOptions({ options, onChange }: Props) {
             type="button"
             onClick={handleRight}
             className={cn(
-              "flex items-center gap-2 rounded-lg border px-4 py-3 transition-all cursor-pointer",
+              "flex items-center justify-center gap-2 rounded-lg border px-4 py-3 transition-all cursor-pointer w-full sm:w-auto",
               "border-border hover:border-primary/30"
             )}
           >

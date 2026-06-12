@@ -88,7 +88,7 @@ function SortableItem({ item, onRemove, onRotate }: { item: PageItem; onRemove: 
           className="max-h-full max-w-full object-contain transition-transform"
           style={{ transform: `rotate(${item.rotation}deg)` }}
         />
-        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+        <div className="absolute inset-0 bg-black/40 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
           <button
             type="button"
             className="p-1.5 bg-primary/80 hover:bg-primary text-white rounded-md backdrop-blur-md transition-colors"

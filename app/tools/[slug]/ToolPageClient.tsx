@@ -350,7 +350,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
   }, [isMergePdfTool, files.length])
 
   return (
-    <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 pt-10 pb-20">
+    <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-10 pb-20">
       <div className="relative mb-10">
         {isWorkflowMode && stepIndex > 0 && (
           <div className="absolute left-0 top-1/2 -translate-y-1/2">

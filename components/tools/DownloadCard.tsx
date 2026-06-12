@@ -54,13 +54,13 @@ export function DownloadCard({
 
         {/* Actions */}
         <div className="flex flex-col sm:flex-row gap-3 w-full max-w-sm">
-          <Button size="lg" className="flex-1" asChild>
+          <Button size="lg" className="flex-1 py-4 sm:py-0" asChild>
             <a href={downloadUrl} download={filename}>
               <Download className="mr-2 h-4 w-4" />
               Download
             </a>
           </Button>
-          <Button size="lg" variant="outline" className="flex-1" onClick={onReset}>
+          <Button size="lg" variant="outline" className="flex-1 py-4 sm:py-0" onClick={onReset}>
             Process Another
             <ArrowRight className="ml-2 h-4 w-4" />
           </Button>
