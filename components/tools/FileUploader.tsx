@@ -93,7 +93,7 @@ function SortableFileItem({ file, index, fileColor, isDisabled, onRemove }: Sort
       <Button
         variant="destructive"
         size="icon"
-        className="absolute -right-2 -top-2 h-6 w-6 scale-0 items-center justify-center rounded-full opacity-0 shadow-sm transition-all group-hover:scale-100 group-hover:opacity-100"
+        className="absolute -right-2 -top-2 h-6 w-6 scale-100 items-center justify-center rounded-full opacity-100 shadow-sm transition-all sm:scale-0 sm:opacity-0 group-hover:scale-100 group-hover:opacity-100"
         onClick={(e) => { e.stopPropagation(); onRemove(index) }}
         disabled={isDisabled}
       >
@@ -137,7 +137,7 @@ function SortableFileListItem({ file, index, fileColor, isDisabled, onRemove }: 
       <Button
         variant="ghost"
         size="icon"
-        className="shrink-0 h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity hover:text-destructive"
+        className="shrink-0 h-8 w-8 opacity-100 transition-opacity hover:text-destructive sm:opacity-0 sm:group-hover:opacity-100"
         onClick={(e) => { e.stopPropagation(); onRemove(index) }}
         disabled={isDisabled}
       >
@@ -369,7 +369,7 @@ export function FileUploader({
                       })}
                     </div>
                   ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 max-h-85 overflow-y-auto custom-scrollbar">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 max-h-85 overflow-y-auto custom-scrollbar pt-2 pr-2">
                       {files.map((file, i) => {
                         const fileColor = colorCodeBySourceFile ? FILE_COLORS[i % FILE_COLORS.length] : null
                         return (
@@ -411,7 +411,7 @@ export function FileUploader({
                 </DragOverlay>
               </DndContext>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 max-h-85 overflow-y-auto custom-scrollbar">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 max-h-85 overflow-y-auto custom-scrollbar pt-2 pr-2">
                 {files.map((file, i) => {
                   const fileColor = colorCodeBySourceFile ? FILE_COLORS[i % FILE_COLORS.length] : null
                   return (
@@ -438,7 +438,7 @@ export function FileUploader({
                       <Button
                         variant="destructive"
                         size="icon"
-                        className="absolute -right-2 -top-2 h-6 w-6 scale-0 items-center justify-center rounded-full opacity-0 shadow-sm transition-all group-hover:scale-100 group-hover:opacity-100"
+                        className="absolute -right-2 -top-2 h-6 w-6 scale-100 items-center justify-center rounded-full opacity-100 shadow-sm transition-all sm:scale-0 sm:opacity-0 group-hover:scale-100 group-hover:opacity-100"
                         onClick={(e) => { e.stopPropagation(); removeFile(i) }}
                         disabled={isDisabled}
                       >

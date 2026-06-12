@@ -156,3 +156,49 @@ export async function ocrPdfAdobe(
 ): Promise<{ buffer: Uint8Array; filename: string }> {
   return runOCR(pdfBuffer, sourceFilename, locale)
 }
+
+const OCR_LOCALE_MAP: Record<string, OCRSupportedLocale> = {
+  "bg-BG": OCRSupportedLocale.BG_BG,
+  "ca-CA": OCRSupportedLocale.CA_CA,
+  "cs-CZ": OCRSupportedLocale.CS_CZ,
+  "da-DK": OCRSupportedLocale.DA_DK,
+  "de-CH": OCRSupportedLocale.DE_CH,
+  "de-DE": OCRSupportedLocale.DE_DE,
+  "el-GR": OCRSupportedLocale.EL_GR,
+  "en-GB": OCRSupportedLocale.EN_GB,
+  "en-US": OCRSupportedLocale.EN_US,
+  "es-ES": OCRSupportedLocale.ES_ES,
+  "et-EE": OCRSupportedLocale.ET_EE,
+  "fi-FI": OCRSupportedLocale.FI_FI,
+  "fr-FR": OCRSupportedLocale.FR_FR,
+  "hr-HR": OCRSupportedLocale.HR_HR,
+  "hu-HU": OCRSupportedLocale.HU_HU,
+  "it-IT": OCRSupportedLocale.IT_IT,
+  "iw-IL": OCRSupportedLocale.IW_IL,
+  "ja-JP": OCRSupportedLocale.JA_JP,
+  "ko-KR": OCRSupportedLocale.KO_KR,
+  "lt-LT": OCRSupportedLocale.LT_LT,
+  "lv-LV": OCRSupportedLocale.LV_LV,
+  "mk-MK": OCRSupportedLocale.MK_MK,
+  "mt-MT": OCRSupportedLocale.MT_MT,
+  "nb-NO": OCRSupportedLocale.NB_NO,
+  "nl-NL": OCRSupportedLocale.NL_NL,
+  "no-NO": OCRSupportedLocale.NO_NO,
+  "pl-PL": OCRSupportedLocale.PL_PL,
+  "pt-BR": OCRSupportedLocale.PT_BR,
+  "ro-RO": OCRSupportedLocale.RO_RO,
+  "ru-RU": OCRSupportedLocale.RU_RU,
+  "sk-SK": OCRSupportedLocale.SK_SK,
+  "sl-SI": OCRSupportedLocale.SL_SI,
+  "sr-SR": OCRSupportedLocale.SR_SR,
+  "sv-SE": OCRSupportedLocale.SV_SE,
+  "tr-TR": OCRSupportedLocale.TR_TR,
+  "uk-UA": OCRSupportedLocale.UK_UA,
+  "zh-CN": OCRSupportedLocale.ZH_CN,
+  "zh-HK": OCRSupportedLocale.ZH_HK,
+}
+
+export function resolveOcrLocale(code: string | undefined): OCRSupportedLocale | undefined {
+  if (!code) return undefined
+  return OCR_LOCALE_MAP[code]
+}

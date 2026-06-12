@@ -4,8 +4,8 @@ import { runTool } from "@/lib/iloveapi/tools"
 import { ILoveAPIError, mapILoveAPIError } from "@/lib/iloveapi/errors"
 import { convertExtractFormat } from "@/lib/extractFormatConverter"
 import { convertPdfToExcel } from "@/lib/pdf/office-converter"
-import { convertPdfToWordAdobe, convertPdfToPowerpointAdobe, ocrPdfAdobe } from "@/lib/pdf/adobe-export-converter"
-import { OCRSupportedLocale, ServiceApiError } from "@adobe/pdfservices-node-sdk"
+import { convertPdfToWordAdobe, convertPdfToPowerpointAdobe, ocrPdfAdobe, resolveOcrLocale } from "@/lib/pdf/adobe-export-converter"
+import { ServiceApiError } from "@adobe/pdfservices-node-sdk"
 import { processRotateLocal } from "@/lib/pdf/rotate-client"
 import { getToolBySlug } from "@/lib/tools-config"
 import { mapWatermarkOptions } from "@/lib/iloveapi/watermark-mapper"
@@ -383,8 +383,8 @@ async function processToolRequest(
         const JSZip = (await import("jszip")).default
         const zip = new JSZip()
 
-        const ocrLanguages = (options.ocr_languages as string[]) || ["eng"]
-        const locale = ocrLanguages[0] === "eng" ? OCRSupportedLocale.EN_US : undefined
+        const ocrLanguages = (options.ocr_languages as string[]) || ["en-US"]
+        const locale = resolveOcrLocale(ocrLanguages[0])
 
         console.log(`[OCR] Processing ${files.length} files`)
 
@@ -424,8 +424,8 @@ async function processToolRequest(
         })
       }
 
-      const ocrLanguages = (options.ocr_languages as string[]) || ["eng"]
-      const locale = ocrLanguages[0] === "eng" ? OCRSupportedLocale.EN_US : undefined
+      const ocrLanguages = (options.ocr_languages as string[]) || ["en-US"]
+      const locale = resolveOcrLocale(ocrLanguages[0])
 
       const result = await ocrPdfAdobe(
         files[0].buffer,
