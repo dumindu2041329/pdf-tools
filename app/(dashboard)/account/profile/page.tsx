@@ -175,10 +175,10 @@ export default function ProfilePage() {
   return (
     <div className="space-y-6">
       {/* Avatar */}
-      <div className="rounded-xl border border-border bg-card p-6">
+      <div className="rounded-xl border border-border bg-card p-4 sm:p-6">
         <h2 className="text-lg font-semibold mb-4">Profile Photo</h2>
-        <div className="flex items-center gap-6">
-          <div className="relative">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6">
+          <div className="relative shrink-0">
             <div className="flex h-20 w-20 items-center justify-center rounded-full bg-primary text-primary-foreground text-2xl font-semibold overflow-hidden">
               {user.imageUrl ? (
                 <Image
@@ -219,7 +219,7 @@ export default function ProfilePage() {
                 variant="ghost"
                 size="sm"
                 onClick={handleRemovePhoto}
-                className="text-destructive hover:text-destructive"
+                className="text-destructive hover:text-destructive justify-start sm:justify-center"
               >
                 <X className="h-4 w-4 mr-1.5" />
                 Remove Photo
@@ -230,7 +230,7 @@ export default function ProfilePage() {
       </div>
 
       {/* Name */}
-      <div className="rounded-xl border border-border bg-card p-6">
+      <div className="rounded-xl border border-border bg-card p-4 sm:p-6">
         <h2 className="text-lg font-semibold mb-4">Personal Information</h2>
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
@@ -265,7 +265,7 @@ export default function ProfilePage() {
           <p className="mt-3 text-sm text-destructive">{error}</p>
         )}
 
-        <div className="mt-4 flex items-center gap-3">
+        <div className="mt-4 flex flex-wrap items-center gap-3">
           <Button onClick={handleSave} disabled={saving}>
             {saving ? (
               <>
@@ -290,7 +290,7 @@ export default function ProfilePage() {
       </div>
 
       {/* Email */}
-      <div className="rounded-xl border border-border bg-card p-6">
+      <div className="rounded-xl border border-border bg-card p-4 sm:p-6">
         <h2 className="text-lg font-semibold mb-4">Email Addresses</h2>
 
         {/* Existing emails */}
@@ -298,11 +298,11 @@ export default function ProfilePage() {
           {allEmails.map((email) => (
             <div
               key={email.id}
-              className="flex items-center justify-between rounded-lg border border-input bg-background px-4 py-3"
+              className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-lg border border-input bg-background px-4 py-3"
             >
-              <div className="flex items-center gap-3">
-                <Mail className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm">{email.emailAddress}</span>
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3 min-w-0">
+                <Mail className="h-4 w-4 text-muted-foreground shrink-0" />
+                <span className="text-sm break-all min-w-0">{email.emailAddress}</span>
                 {primaryEmail?.id === email.id && (
                   <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
                     Primary
@@ -317,14 +317,14 @@ export default function ProfilePage() {
                       variant="outline"
                       size="sm"
                       onClick={() => handleStartVerify(email.id)}
-                      className="ml-2"
+                      className="ml-0 sm:ml-2 h-7 px-2 text-xs"
                     >
                       Verify
                     </Button>
                   </>
                 ) : null}
               </div>
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1 shrink-0">
                 {primaryEmail?.id !== email.id && !user.passwordEnabled && (
                   <Button
                     variant="outline"
@@ -334,7 +334,7 @@ export default function ProfilePage() {
                   >
                     <Link href="/account/security">
                       <KeyRound className="h-4 w-4 mr-1" />
-                      Add password
+                      <span className="hidden sm:inline">Add password</span>
                     </Link>
                   </Button>
                 )}
@@ -373,9 +373,9 @@ export default function ProfilePage() {
           <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-3">
             <p className="text-sm">
               Enter the verification code sent to{" "}
-              <span className="font-medium">{verifyingAddress}</span>
+              <span className="font-medium break-all">{verifyingAddress}</span>
             </p>
-            <div className="flex gap-2">
+            <div className="flex flex-col sm:flex-row gap-2">
               <input
                 type="text"
                 value={verifyCode}
@@ -384,32 +384,35 @@ export default function ProfilePage() {
                 placeholder="Enter 6-digit code"
                 maxLength={6}
               />
-              <Button onClick={handleVerifyCode} disabled={verifyLoading} size="sm">
-                {verifyLoading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  "Verify"
-                )}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setVerifyingId(null)
-                  setVerifyingAddress("")
-                  setVerifyCode("")
-                  setVerifyError("")
-                }}
-              >
-                Cancel
-              </Button>
+              <div className="flex gap-2">
+                <Button onClick={handleVerifyCode} disabled={verifyLoading} size="sm" className="flex-1 sm:flex-none">
+                  {verifyLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    "Verify"
+                  )}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setVerifyingId(null)
+                    setVerifyingAddress("")
+                    setVerifyCode("")
+                    setVerifyError("")
+                  }}
+                  className="flex-1 sm:flex-none"
+                >
+                  Cancel
+                </Button>
+              </div>
             </div>
             {verifyError && (
               <p className="text-sm text-destructive">{verifyError}</p>
             )}
           </div>
         ) : (
-          <div className="flex gap-2">
+          <div className="flex flex-col sm:flex-row gap-2">
             <input
               type="email"
               value={newEmail}
@@ -421,6 +424,7 @@ export default function ProfilePage() {
               onClick={handleAddEmail}
               disabled={emailLoading || !newEmail.trim()}
               size="sm"
+              className="w-full sm:w-auto"
             >
               {emailLoading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />

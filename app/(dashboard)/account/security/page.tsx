@@ -80,12 +80,12 @@ export default function SecurityPage() {
   return (
     <div className="space-y-6">
       {/* Password */}
-      <div className="rounded-xl border border-border bg-card p-6">
+      <div className="rounded-xl border border-border bg-card p-4 sm:p-6">
         <div className="flex items-center gap-3 mb-4">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
             <Lock className="h-5 w-5 text-primary" />
           </div>
-          <div>
+          <div className="min-w-0">
             <h2 className="text-lg font-semibold">Password</h2>
             <p className="text-sm text-muted-foreground">
               {hasPassword
@@ -189,8 +189,8 @@ export default function SecurityPage() {
             <p className="text-sm text-destructive">{passwordError}</p>
           )}
 
-          <div className="flex items-center gap-3">
-            <Button onClick={handlePasswordChange} disabled={passwordSaving}>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button onClick={handlePasswordChange} disabled={passwordSaving} className="w-full sm:w-auto">
               {passwordSaving ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -215,12 +215,12 @@ export default function SecurityPage() {
       </div>
 
       {/* Active Sessions */}
-      <div className="rounded-xl border border-border bg-card p-6">
+      <div className="rounded-xl border border-border bg-card p-4 sm:p-6">
         <div className="flex items-center gap-3 mb-4">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
             <Monitor className="h-5 w-5 text-primary" />
           </div>
-          <div>
+          <div className="min-w-0">
             <h2 className="text-lg font-semibold">Active Sessions</h2>
             <p className="text-sm text-muted-foreground">
               Manage devices where you&apos;re signed in
@@ -230,24 +230,24 @@ export default function SecurityPage() {
 
         <div className="space-y-3 mb-4">
           {/* Current session */}
-          <div className="flex items-center justify-between rounded-lg border border-primary/30 bg-primary/5 p-4">
-            <div className="flex items-center gap-3">
-              <MonitorSmartphone className="h-5 w-5 text-primary" />
-              <div>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
+            <div className="flex items-center gap-3 min-w-0">
+              <MonitorSmartphone className="h-5 w-5 text-primary shrink-0" />
+              <div className="min-w-0">
                 <p className="text-sm font-medium">This Device</p>
                 <p className="text-xs text-muted-foreground">
                   Current session
                 </p>
               </div>
             </div>
-            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+            <span className="self-start sm:self-auto rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
               Active
             </span>
           </div>
         </div>
 
         <div className="border-t border-border pt-4">
-          <Button variant="destructive" onClick={handleSignOutAll}>
+          <Button variant="destructive" onClick={handleSignOutAll} className="w-full sm:w-auto">
             <LogOut className="h-4 w-4 mr-1.5" />
             Sign out all other sessions
           </Button>
@@ -255,12 +255,12 @@ export default function SecurityPage() {
       </div>
 
       {/* Connected Accounts */}
-      <div className="rounded-xl border border-border bg-card p-6">
+      <div className="rounded-xl border border-border bg-card p-4 sm:p-6">
         <div className="flex items-center gap-3 mb-4">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
             <Globe className="h-5 w-5 text-primary" />
           </div>
-          <div>
+          <div className="min-w-0">
             <h2 className="text-lg font-semibold">Connected Accounts</h2>
             <p className="text-sm text-muted-foreground">
               Manage social sign-in connections
@@ -272,20 +272,20 @@ export default function SecurityPage() {
           {user.externalAccounts.map((account) => (
             <div
               key={account.id}
-              className="flex items-center justify-between rounded-lg border border-border p-4"
+              className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 rounded-lg border border-border p-4"
             >
-              <div className="flex items-center gap-3">
-                <Globe className="h-5 w-5 text-muted-foreground" />
-                <div>
+              <div className="flex items-center gap-3 min-w-0">
+                <Globe className="h-5 w-5 text-muted-foreground shrink-0" />
+                <div className="min-w-0">
                   <p className="text-sm font-medium capitalize">
                     {account.provider}
                   </p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-xs text-muted-foreground break-all">
                     {account.emailAddress ?? "Connected"}
                   </p>
                 </div>
               </div>
-              <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
+              <span className="self-start sm:self-auto rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
                 Connected
               </span>
             </div>

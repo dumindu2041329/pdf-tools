@@ -27,8 +27,27 @@ export function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [toolsDropdownOpen, setToolsDropdownOpen] = useState(false)
   const pathname = usePathname()
+  const [prevPathname, setPrevPathname] = useState(pathname)
   const { isSignedIn } = useAuth()
   const { openSignUp } = useClerk()
+  const [prevIsSignedIn, setPrevIsSignedIn] = useState(isSignedIn)
+
+  // Close menus when the route or auth state changes. Uses the
+  // React-recommended "store previous value in state, update during
+  // render" pattern instead of a useEffect, which avoids the
+  // cascading-render lint rule. Tracking isSignedIn covers the sign-out
+  // case where the redirectUrl might not change the pathname (e.g. when
+  // the user signs out from the home page).
+  if (prevPathname !== pathname) {
+    setPrevPathname(pathname)
+    setMobileOpen(false)
+    setToolsDropdownOpen(false)
+  }
+  if (prevIsSignedIn !== isSignedIn) {
+    setPrevIsSignedIn(isSignedIn)
+    setMobileOpen(false)
+    setToolsDropdownOpen(false)
+  }
 
   const handleGetStarted = () => openSignUp({ forceRedirectUrl: "/" })
 

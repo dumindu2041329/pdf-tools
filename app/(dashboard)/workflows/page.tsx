@@ -260,10 +260,6 @@ export default function WorkflowsPage() {
                     </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem className="flex items-center gap-2" onClick={() => handleRunWorkflow(workflow.id)}>
-                      <Play className="h-4 w-4" />
-                      Run workflow
-                    </DropdownMenuItem>
                     <DropdownMenuItem className="flex items-center gap-2 text-destructive focus:text-destructive" onClick={() => handleDeleteWorkflow(workflow.id)}>
                       <Trash2 className="h-4 w-4" />
                       Delete
@@ -302,7 +298,70 @@ export default function WorkflowsPage() {
           ))}
         </div>
       ) : (
-        <div className="rounded-xl border border-border bg-card overflow-hidden">
+        <>
+        {/* Mobile list view (cards) */}
+        <div className="md:hidden space-y-3">
+          {paginatedWorkflows.map((workflow) => (
+            <div
+              key={workflow.id}
+              className="rounded-xl border border-border bg-card p-4 space-y-3"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <span className="font-semibold text-base break-words">{workflow.name}</span>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-muted cursor-pointer"
+                    >
+                      <MoreHorizontal className="h-4 w-4" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem
+                      className="flex items-center gap-2 text-destructive focus:text-destructive"
+                      onClick={() => handleDeleteWorkflow(workflow.id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {workflow.steps.map((step, i) => {
+                  const tool = getToolBySlug(step.tool)
+                  const Icon = tool?.icon
+                  if (!Icon) return null
+                  return (
+                    <div key={i} className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-xs">
+                        <Icon className="h-3 w-3" />
+                        {step.label}
+                      </div>
+                      {i < workflow.steps.length - 1 && (
+                        <span className="text-muted-foreground">→</span>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+
+              <Button
+                size="sm"
+                className="w-full flex items-center justify-center gap-1.5"
+                onClick={() => handleRunWorkflow(workflow.id)}
+              >
+                <Play className="h-3.5 w-3.5" />
+                Run
+              </Button>
+            </div>
+          ))}
+        </div>
+
+        {/* Desktop table view */}
+        <div className="hidden md:block rounded-xl border border-border bg-card overflow-hidden">
           <table className="w-full">
             <thead className="border-b border-border bg-muted/50">
               <tr>
@@ -366,6 +425,7 @@ export default function WorkflowsPage() {
             </tbody>
           </table>
         </div>
+        </>
       )}
 
       {/* Pagination */}
