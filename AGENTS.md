@@ -452,7 +452,8 @@ Plan is stored in Clerk user metadata (`publicMetadata.plan` + `planUpdatedAt`) 
 - `CLERK_SECRET_KEY` — Clerk secret key
 - `ILOVEAPI_PUBLIC_KEY` — iLoveAPI public key
 - `ILOVEAPI_SECRET_KEY` — iLoveAPI secret key
-- `OPENAI_API_KEY` — OpenAI API key
+- `OPENAI_API_KEY` — OpenAI API key (used as a fallback for the AI summarizer when `OPENROUTER_API_KEY` is not set; also powers the translate-pdf flow)
+- `OPENROUTER_API_KEY` — OpenRouter API key. When set, the AI summarizer routes its completions to `openai/gpt-oss-120b:free` via `https://openrouter.ai/api/v1`. Takes precedence over `OPENAI_API_KEY` for the summarizer.
 
 ### Optional
 - `PDF_SERVICES_CLIENT_ID` — Adobe PDF Services client ID (for pdf-to-word, pdf-to-excel, pdf-to-powerpoint, ocr-pdf)
