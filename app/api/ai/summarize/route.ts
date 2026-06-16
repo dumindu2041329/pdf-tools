@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server"
-import { runTool } from "@/lib/iloveapi/tools"
 import { canProcessFile, recordProcessingEvent } from "@/lib/usage"
 import { getUserPlan } from "@/lib/auth"
-import { downloadFromBlob } from "@/lib/blob-storage"
 
 const OPENROUTER_MODEL = "openai/gpt-oss-120b:free"
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
@@ -14,7 +12,18 @@ const LENGTH_PROMPTS: Record<string, string> = {
     "Provide a structured summary with these sections: Overview, Key Points, and Conclusions. Use bullet points within each section.",
 }
 
+const LENGTH_LABELS = { brief: "Brief", standard: "Standard", detailed: "Detailed" } as const
+
 type ChatMessage = { role: "user" | "assistant"; content: string }
+
+type SummaryRequest = {
+  mode: "summary" | "chat"
+  length?: string
+  filename?: string
+  fileSize?: number
+  documentText?: string
+  messages?: ChatMessage[]
+}
 
 // Server-Sent Events protocol. The wire format is `data: <json>\n\n` per
 // event with a final `data: [DONE]\n\n` to signal end-of-stream. The
@@ -68,83 +77,26 @@ async function getAuthenticatedUserId(): Promise<string | null> {
   }
 }
 
-type SummaryFormInput = {
-  fileRaw: FormDataEntryValue | null
-  filenameFromForm: string | undefined
-  blobUrl: string | null
-  length: string
-}
-
-async function readSummaryForm(req: Request): Promise<SummaryFormInput | null> {
-  // The request body can only be read once — collect every field we need
-  // in a single `formData()` call to avoid `Body is unusable` errors.
-  let formData: FormData
-  try {
-    formData = await req.formData()
-  } catch {
-    return null
-  }
-
-  return {
-    fileRaw: formData.get("file"),
-    filenameFromForm: (formData.get("filename") as string | null) || undefined,
-    blobUrl: (formData.get("blobUrl") as string | null) || null,
-    length: (formData.get("length") as string) || "standard",
-  }
-}
-
-async function loadSourcePdf(
-  input: SummaryFormInput
-): Promise<{ buffer: Buffer; filename: string } | null> {
-  if (input.blobUrl) {
-    const buffer = await downloadFromBlob(input.blobUrl)
-    return {
-      buffer,
-      filename: input.filenameFromForm || "document.pdf",
-    }
-  }
-
-  const fileRaw = input.fileRaw
-  if (fileRaw && typeof fileRaw !== "string" && "arrayBuffer" in fileRaw) {
-    const file = fileRaw as File
-    const arrayBuffer = await file.arrayBuffer()
-    return {
-      buffer: Buffer.from(arrayBuffer),
-      filename: file.name || input.filenameFromForm || "document.pdf",
-    }
-  }
-
-  return null
-}
-
-async function extractDocumentText(buffer: Buffer): Promise<string> {
-  const extractResult = await runTool({
-    tool: "extract",
-    files: [{ buffer, filename: "document.pdf" }],
-    options: { detailed: false },
-  })
-  return Buffer.from(extractResult.buffer as ArrayBuffer).toString("utf-8")
-}
-
 type ChatStream = {
   controller: AsyncIterable<{ type?: string; choices?: Array<{ delta?: { content?: string | null } }> }>
-  model: string
 }
 
-// Build a streaming OpenAI client. Returns `null` when no AI key is
-// configured; the generator then yields the raw prompt text as a graceful
-// fallback so the UI still gets *something* to render.
+// Build a streaming OpenRouter client. When the key is missing the
+// generator echoes the prompt back in tiny chunks so the UI still has
+// *something* to render during development. There is intentionally no
+// OpenAI fallback — this route is OpenRouter-only.
 async function buildStreamingClient(): Promise<{
   stream: (systemPrompt: string, userPrompt: string) => Promise<AsyncIterable<string>>
   model: string
+  configured: boolean
 }> {
   const openRouterKey = process.env.OPENROUTER_API_KEY
-  const openAiKey = process.env.OPENAI_API_KEY
-  const model = openRouterKey ? OPENROUTER_MODEL : "gpt-4o"
+  const model = OPENROUTER_MODEL
 
-  if (!openRouterKey && !openAiKey) {
+  if (!openRouterKey) {
     return {
       model,
+      configured: false,
       stream: async (_system, user) => {
         // Yield in tiny chunks so the client renders them progressively
         // instead of dumping the full text at once.
@@ -158,19 +110,18 @@ async function buildStreamingClient(): Promise<{
   }
 
   const { default: OpenAI } = await import("openai")
-  const client = openRouterKey
-    ? new OpenAI({
-        apiKey: openRouterKey,
-        baseURL: OPENROUTER_BASE_URL,
-        defaultHeaders: {
-          "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || "https://pdftools.app",
-          "X-Title": "PDF Tools AI Summarizer",
-        },
-      })
-    : new OpenAI({ apiKey: openAiKey as string })
+  const client = new OpenAI({
+    apiKey: openRouterKey,
+    baseURL: OPENROUTER_BASE_URL,
+    defaultHeaders: {
+      "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || "https://pdftools.app",
+      "X-Title": "PDF Tools AI Summarizer",
+    },
+  })
 
   return {
     model,
+    configured: true,
     stream: async (systemPrompt, userPrompt) => {
       const stream = (await client.chat.completions.create({
         model,
@@ -190,39 +141,46 @@ async function buildStreamingClient(): Promise<{
   }
 }
 
+function errorResponse(message: string, status: number) {
+  return NextResponse.json({ error: message }, { status })
+}
+
 export async function POST(req: Request) {
   const userId = await getAuthenticatedUserId()
   const start = Date.now()
   const contentType = req.headers.get("content-type") || ""
-  const engine = process.env.OPENROUTER_API_KEY ? "openrouter" : "openai"
+  const engine = "openrouter"
+
+  if (!contentType.startsWith("application/json")) {
+    return errorResponse("This endpoint expects a JSON body.", 415)
+  }
+
+  let body: SummaryRequest
+  try {
+    body = (await req.json()) as SummaryRequest
+  } catch {
+    return errorResponse("Invalid request body", 400)
+  }
+
+  if (body.mode !== "summary" && body.mode !== "chat") {
+    return errorResponse("Invalid request", 400)
+  }
+
+  const documentText = (body.documentText || "").trim()
+  if (!documentText) {
+    return errorResponse(
+      body.mode === "summary"
+        ? "Could not extract text from this PDF. Try a text-based PDF or run OCR first."
+        : "Missing document context. Re-upload the PDF to start over.",
+      400
+    )
+  }
 
   // ── Mode: chat follow-up ────────────────────────────────────
-  if (contentType.startsWith("application/json")) {
-    let body: {
-      mode?: string
-      documentText?: string
-      messages?: ChatMessage[]
-    }
-    try {
-      body = (await req.json()) as typeof body
-    } catch {
-      return NextResponse.json({ error: "Invalid request body" }, { status: 400 })
-    }
-
-    if (body.mode !== "chat") {
-      return NextResponse.json({ error: "Invalid request" }, { status: 400 })
-    }
-
-    const documentText = (body.documentText || "").trim()
+  if (body.mode === "chat") {
     const history = Array.isArray(body.messages) ? body.messages : []
-    if (!documentText) {
-      return NextResponse.json(
-        { error: "Missing document context. Re-upload the PDF to start over." },
-        { status: 400 }
-      )
-    }
     if (history.length === 0) {
-      return NextResponse.json({ error: "No messages to reply to." }, { status: 400 })
+      return errorResponse("No messages to reply to.", 400)
     }
 
     const systemPrompt =
@@ -292,36 +250,18 @@ export async function POST(req: Request) {
   }
 
   // ── Mode: initial summary ───────────────────────────────────
-  const formInput = await readSummaryForm(req)
-  if (!formInput) {
-    return NextResponse.json({ error: "No valid file provided" }, { status: 400 })
-  }
-  const source = await loadSourcePdf(formInput)
-  if (!source) {
-    return NextResponse.json({ error: "No valid file provided" }, { status: 400 })
-  }
-  const { buffer, filename } = source
-  const length = formInput.length
+  const length = (body.length as keyof typeof LENGTH_LABELS) || "standard"
+  const lengthLabel = LENGTH_LABELS[length] || "Standard"
+  const filename = (body.filename || "document.pdf").trim() || "document.pdf"
+  const fileSize = typeof body.fileSize === "number" && body.fileSize > 0 ? body.fileSize : 0
 
-  const plan = userId ? await getUserPlan(userId) : "free"
-  const gate = await canProcessFile(userId ?? "", buffer.byteLength, plan)
-  if (!gate.allowed) {
-    return NextResponse.json(
-      { error: gate.reason ?? "Processing limit reached", upgradeRequired: true },
-      { status: 402 }
-    )
+  if (userId && fileSize > 0) {
+    const plan = await getUserPlan(userId)
+    const gate = await canProcessFile(userId, fileSize, plan)
+    if (!gate.allowed) {
+      return errorResponse(gate.reason ?? "Processing limit reached", 402)
+    }
   }
-
-  const extractedText = await extractDocumentText(buffer)
-  if (!extractedText.trim()) {
-    return NextResponse.json(
-      { error: "Could not extract text from this PDF. Try using OCR first." },
-      { status: 400 }
-    )
-  }
-
-  const lengthLabels = { brief: "Brief", standard: "Standard", detailed: "Detailed" }
-  const lengthLabel = lengthLabels[length as keyof typeof lengthLabels] || "Standard"
 
   const systemPrompt =
     "You are an expert document summarizer. " +
@@ -338,7 +278,7 @@ export async function POST(req: Request) {
         let firstChunk = true
         for await (const text of await stream(
           systemPrompt,
-          `Summarize the following document (${filename}):\n\n${extractedText.slice(0, 50000)}`
+          `Summarize the following document (${filename}):\n\n${documentText.slice(0, 50000)}`
         )) {
           if (firstChunk) {
             yield { type: "chunk", text: `[${lengthLabel} Summary]\n\n` }
@@ -348,7 +288,7 @@ export async function POST(req: Request) {
         }
         // Hand the extracted text back so the client can use it for
         // follow-up questions without re-uploading the PDF.
-        yield { type: "done", documentText: extractedText }
+        yield { type: "done", documentText }
         await recordProcessingEvent({
           userId,
           toolSlug: "ai-summarizer",

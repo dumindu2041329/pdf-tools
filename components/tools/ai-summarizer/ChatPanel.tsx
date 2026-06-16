@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { Bot, Copy, Download, Send, Sparkles, User, Loader2 } from "lucide-react"
+import { Bot, Copy, Send, Sparkles, User, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
@@ -60,29 +60,6 @@ async function copyTextToClipboard(text: string): Promise<boolean> {
   } catch {
     return false
   }
-}
-
-function downloadTextFile(filename: string, text: string): void {
-  const blob = new Blob([text], { type: "text/plain;charset=utf-8" })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement("a")
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  // Defer revoke so Safari has time to start the download.
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
-
-// Build a filesystem-safe name from the original PDF name and the
-// message role, e.g. "Week 1-OOP summary.txt" or
-// "Week 1-OOP reply-1.txt".
-function buildDownloadName(sourceName: string, role: "summary" | "reply", index: number): string {
-  const stem = sourceName.replace(/\.pdf$/i, "").trim() || "document"
-  const safe = stem.replace(/[\\/:*?"<>|]+/g, "_")
-  if (role === "summary") return `${safe}-summary.txt`
-  return `${safe}-reply-${index + 1}.txt`
 }
 
 function formatContent(content: string) {
@@ -330,6 +307,28 @@ export function ChatPanel({
   const [isSending, setIsSending] = useState(false)
   const [followUpError, setFollowUpError] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const inputRef = useRef<HTMLTextAreaElement | null>(null)
+
+  // Auto-grow the chat input: reset to `auto` so the browser can
+  // measure the new content's full scrollHeight, then snap the
+  // element's height to that value. Capped at ~6 rows of pixels so
+  // the input doesn't push the chat off-screen on long pastes.
+  const resizeInput = () => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = "auto"
+    const max = 6 * 24 // ~6 lines at ~24px line-height
+    el.style.height = `${Math.min(el.scrollHeight, max)}px`
+    el.style.overflowY = el.scrollHeight > max ? "auto" : "hidden"
+  }
+
+  useEffect(() => {
+    resizeInput()
+  }, [input])
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(e.target.value)
+  }
 
   const appendToMessage = (id: string, text: string) => {
     if (!text) return
@@ -467,19 +466,7 @@ export function ChatPanel({
           </div>
         )}
 
-        {messages.map((m, mIdx) => {
-          // Index of the assistant message in the conversation. We
-          // need this to number download filenames when the user
-          // exports a reply.
-          let replyIndex = -1
-          if (m.role === "assistant") {
-            replyIndex = messages
-              .slice(0, mIdx + 1)
-              .reduce((n, prev) => (prev.role === "assistant" ? n + 1 : n), 0) - 1
-          }
-          const isFirstAssistant = m.role === "assistant" && replyIndex === 0
-
-          return (
+        {messages.map((m) => (
           <div
             key={m.id}
             className={cn("flex items-start gap-3", m.role === "user" ? "flex-row-reverse" : "flex-row")}
@@ -561,32 +548,11 @@ export function ChatPanel({
                   >
                     <Copy className="h-3.5 w-3.5" />
                   </Button>
-                  {m.role === "assistant" ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      onClick={() => {
-                        const filename = buildDownloadName(
-                          file.name,
-                          isFirstAssistant ? "summary" : "reply",
-                          replyIndex
-                        )
-                        downloadTextFile(filename, m.content)
-                      }}
-                      aria-label="Download message"
-                      title="Download as .txt"
-                    >
-                      <Download className="h-3.5 w-3.5" />
-                    </Button>
-                  ) : null}
                 </div>
               ) : null}
             </div>
           </div>
-          )
-        })}
+        ))}
 
         {followUpError && (
           <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
@@ -601,8 +567,9 @@ export function ChatPanel({
       >
         <div className="flex items-end gap-2">
           <textarea
+            ref={inputRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={handleInputChange}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault()
@@ -616,7 +583,7 @@ export function ChatPanel({
             }
             rows={1}
             disabled={chatDisabled}
-            className="flex-1 resize-none rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex-1 resize-none rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 max-h-36"
           />
           <Button
             type="submit"

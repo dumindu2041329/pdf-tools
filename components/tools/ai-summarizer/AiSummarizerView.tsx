@@ -4,9 +4,9 @@ import { useCallback, useState } from "react"
 import { FileUploader } from "@/components/tools/FileUploader"
 import { ChatPanel, type StreamEvent } from "./ChatPanel"
 import { PdfPreview } from "./PdfPreview"
+import { extractPdfText } from "./extract-pdf-text"
 import { Button } from "@/components/ui/button"
-import { shouldUseDirectUpload, uploadFileDirect } from "@/lib/blob-upload"
-import { X, Sparkles } from "lucide-react"
+import { Sparkles, X } from "lucide-react"
 
 interface AiSummarizerViewProps {
   maxSizeMB: number
@@ -64,29 +64,23 @@ export function AiSummarizerView({ maxSizeMB }: AiSummarizerViewProps) {
     setFile(files[0] ?? null)
   }, [])
 
-  // Initial summary: upload the PDF (directly via Vercel Blob for large
-  // files, otherwise inline) and stream the SSE response back. The chat
-  // panel pulls chunks as they arrive.
+  // Initial summary: extract the PDF text entirely in the browser
+  // (pdfjs-dist) and send just the plain text to the server. The server
+  // never sees the raw PDF — it just streams the OpenRouter response.
   const streamSummary = useCallback(
     async (target: File): Promise<AsyncIterable<StreamEvent>> => {
-      const formData = new FormData()
-      formData.append("mode", "summary")
-      formData.append("length", "standard")
-
-      if (shouldUseDirectUpload(target)) {
-        const { url, pathname } = await uploadFileDirect(target, {
-          onProgress: () => {},
-        })
-        formData.append("blobUrl", url)
-        formData.append("blobPathname", pathname)
-        formData.append("filename", target.name)
-      } else {
-        formData.append("file", target)
-      }
+      const documentText = await extractPdfText(target)
 
       const res = await fetch("/api/ai/summarize", {
         method: "POST",
-        body: formData,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          mode: "summary",
+          length: "standard",
+          filename: target.name,
+          fileSize: target.size,
+          documentText,
+        }),
       })
       if (!res.ok || !res.body) {
         const data = (await res.json().catch(() => ({}))) as { error?: string }

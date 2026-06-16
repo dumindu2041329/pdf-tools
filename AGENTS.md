@@ -329,7 +329,8 @@ Vercel serverless functions truncate request bodies at ~4.5 MB. The free plan al
 | `pdf-to-jpg`, `pdf-to-pdfa` | Server | iLoveAPI | Multi-file → server-side JSZip pack |
 | `validate-pdfa` | Server | iLoveAPI | Returns `{ validationSuccess, message, result }` |
 | `sign-pdf` | Server | iLoveAPI Signature API | Dedicated `/api/tools/sign` route; `ilovepdf.sign` task + raw `/v1/signature` call |
-| `ai-summarizer`, `translate-pdf` | Server | OpenAI (via `/api/ai/*`) | Step 1: iLoveAPI `extract`; Step 2: OpenAI `gpt-4o` |
+| `ai-summarizer` | Client + Server | OpenRouter (via `/api/ai/summarize`) | Step 1: client-side `pdfjs-dist` extracts PDF text (`extractPdfText()`); Step 2: server streams `openai/gpt-oss-120b:free` over SSE. No iLoveAPI, no OpenAI. |
+| `translate-pdf` | Server | OpenAI (via `/api/ai/translate`) | Step 1: iLoveAPI `extract`; Step 2: OpenAI `gpt-4o` |
 
 ### Adobe PDF Services specifics
 - Requires `PDF_SERVICES_CLIENT_ID` and `PDF_SERVICES_CLIENT_SECRET`.
@@ -452,8 +453,8 @@ Plan is stored in Clerk user metadata (`publicMetadata.plan` + `planUpdatedAt`) 
 - `CLERK_SECRET_KEY` — Clerk secret key
 - `ILOVEAPI_PUBLIC_KEY` — iLoveAPI public key
 - `ILOVEAPI_SECRET_KEY` — iLoveAPI secret key
-- `OPENAI_API_KEY` — OpenAI API key (used as a fallback for the AI summarizer when `OPENROUTER_API_KEY` is not set; also powers the translate-pdf flow)
-- `OPENROUTER_API_KEY` — OpenRouter API key. When set, the AI summarizer routes its completions to `openai/gpt-oss-120b:free` via `https://openrouter.ai/api/v1`. Takes precedence over `OPENAI_API_KEY` for the summarizer.
+- `OPENAI_API_KEY` — OpenAI API key (powers the translate-pdf flow only; the AI summarizer no longer uses OpenAI)
+- `OPENROUTER_API_KEY` — OpenRouter API key. Required for the AI summarizer — routes completions to `openai/gpt-oss-120b:free` via `https://openrouter.ai/api/v1`. When unset, the summarizer endpoint returns a streaming echo of the prompt as a development fallback.
 
 ### Optional
 - `PDF_SERVICES_CLIENT_ID` — Adobe PDF Services client ID (for pdf-to-word, pdf-to-excel, pdf-to-powerpoint, ocr-pdf)
