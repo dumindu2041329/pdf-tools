@@ -1,7 +1,8 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
-import { Bot, Copy, Send, Sparkles, User, Loader2 } from "lucide-react"
+import { useCallback, useEffect, useId, useRef, useState } from "react"
+import { Bot, Clock, Copy, FileText, GitBranch, Loader2, Maximize2, Send, Sparkles, User, X, ZoomIn, ZoomOut } from "lucide-react"
+import { useTheme } from "next-themes"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
@@ -17,6 +18,8 @@ export type ChatMessage = {
   content: string
   /** True while the assistant is still being streamed. Renders a caret. */
   isStreaming?: boolean
+  /** Epoch ms when the message was first created. Powers the document footer. */
+  createdAt?: number
 }
 
 interface ChatPanelProps {
@@ -62,28 +65,28 @@ async function copyTextToClipboard(text: string): Promise<boolean> {
   }
 }
 
-function formatContent(content: string) {
+function formatContent(content: string, isStreaming: boolean = false) {
   // Render the AI's response as a sequence of block-level elements
-  // (paragraphs, bullet lists, numbered lists, and pipe tables) with
-  // inline bold/italic/code spans. We do this by hand instead of pulling
-  // in a markdown library to keep the bundle small and avoid
-  // `dangerouslySetInnerHTML`.
+  // (paragraphs, bullet lists, numbered lists, pipe tables, and
+  // fenced code / mermaid blocks) with inline bold/italic/code spans.
+  // We do this by hand instead of pulling in a markdown library to keep
+  // the bundle small and avoid `dangerouslySetInnerHTML`.
   const blocks = splitIntoBlocks(content)
   return blocks.map((block, bIdx) => {
     switch (block.kind) {
       case "bullet":
         return (
-          <ul key={bIdx} className="list-disc pl-5 space-y-1 my-2">
+          <ul key={bIdx} className="list-disc pl-6 space-y-1.5 my-3 marker:text-muted-foreground">
             {block.lines.map((line, lIdx) => (
-              <li key={lIdx}>{renderInline(line)}</li>
+              <li key={lIdx} className="leading-7">{renderInline(line)}</li>
             ))}
           </ul>
         )
       case "ordered":
         return (
-          <ol key={bIdx} className="list-decimal pl-5 space-y-1 my-2">
+          <ol key={bIdx} className="list-decimal pl-6 space-y-1.5 my-3 marker:text-muted-foreground marker:font-medium">
             {block.lines.map((line, lIdx) => (
-              <li key={lIdx}>{renderInline(line)}</li>
+              <li key={lIdx} className="leading-7">{renderInline(line)}</li>
             ))}
           </ol>
         )
@@ -91,14 +94,28 @@ function formatContent(content: string) {
         return renderTable(block, bIdx)
       case "heading":
         return (
-          <h4 key={bIdx} className="font-semibold mt-3 mb-1 text-base">
+          <h4
+            key={bIdx}
+            className="font-semibold mt-5 mb-2 text-[1rem] tracking-tight text-foreground"
+          >
             {renderInline(block.text)}
           </h4>
+        )
+      case "code":
+        return <CodeBlock key={bIdx} language={block.language} code={block.code} />
+      case "mermaid":
+        return (
+          <MermaidDiagram
+            key={bIdx}
+            code={block.code}
+            closed={block.closed}
+            isStreaming={isStreaming}
+          />
         )
       case "paragraph":
       default:
         return (
-          <p key={bIdx} className="my-2 leading-relaxed">
+          <p key={bIdx} className="my-2.5 leading-7">
             {renderInline(block.text)}
           </p>
         )
@@ -112,55 +129,108 @@ type Block =
   | { kind: "ordered"; lines: string[] }
   | { kind: "heading"; text: string }
   | { kind: "table"; header: string[]; rows: string[][] }
+  | { kind: "code"; language: string; code: string }
+  | { kind: "mermaid"; code: string; closed: boolean }
 
 function splitIntoBlocks(content: string): Block[] {
   const blocks: Block[] = []
-  // Normalize line endings, then split on blank-line boundaries.
-  const normalized = content.replace(/\r\n?/g, "\n")
-  const chunks = normalized.split(/\n{2,}/)
+  // Normalize line endings, then walk line-by-line. Line-based scanning
+  // (rather than splitting on blank lines) lets us correctly capture
+  // fenced code/mermaid blocks whose bodies may contain blank lines.
+  const lines = content.replace(/\r\n?/g, "\n").split("\n")
+  let i = 0
+  let paragraphBuffer: string[] = []
 
-  for (const rawChunk of chunks) {
-    const chunk = rawChunk.replace(/^\n+|\n+$/g, "")
-    if (!chunk.trim()) continue
+  const flushParagraph = () => {
+    if (paragraphBuffer.length === 0) return
+    const lines = paragraphBuffer
 
-    // 1) A pipe-table block must start with a header row, then a
-    //    separator like `| --- | --- |` (the dashes may have colons
-    //    for alignment markers).
-    if (/\|/.test(chunk.split("\n")[0])) {
-      const table = tryParseTable(chunk)
+    // 1) Tables must start with a header row that contains a pipe.
+    if (lines[0]?.includes("|")) {
+      const table = tryParseTable(lines.join("\n"))
       if (table) {
         blocks.push(table)
-        continue
+        paragraphBuffer = []
+        return
       }
     }
 
-    const lines = chunk.split("\n")
-    const allBullets = lines.length > 0 && lines.every((l) => /^\s*[-*•]\s+/.test(l))
-    if (allBullets) {
+    // 2) Bullet / ordered lists — every line must be a list item.
+    if (lines.every((l) => /^\s*[-*•]\s+/.test(l))) {
       blocks.push({
         kind: "bullet",
         lines: lines.map((l) => l.replace(/^\s*[-*•]\s+/, "")),
       })
-      continue
+      paragraphBuffer = []
+      return
     }
-
-    const allOrdered = lines.length > 0 && lines.every((l) => /^\s*\d+[.)]\s+/.test(l))
-    if (allOrdered) {
+    if (lines.every((l) => /^\s*\d+[.)]\s+/.test(l))) {
       blocks.push({
         kind: "ordered",
         lines: lines.map((l) => l.replace(/^\s*\d+[.)]\s+/, "")),
       })
-      continue
+      paragraphBuffer = []
+      return
     }
 
-    // Single-line `#` / `##` / `###` headings inside a paragraph.
+    // 3) Single-line `#` / `##` / `###` headings.
     if (lines.length === 1 && /^#{1,6}\s+/.test(lines[0])) {
       blocks.push({ kind: "heading", text: lines[0].replace(/^#{1,6}\s+/, "") })
-      continue
+      paragraphBuffer = []
+      return
     }
 
     blocks.push({ kind: "paragraph", text: lines.join("\n") })
+    paragraphBuffer = []
   }
+
+  while (i < lines.length) {
+    const line = lines[i]
+
+    // Fenced code/mermaid block. Accepts ``` or ~~~ fences of length
+    // 3+, with an optional language tag. The body extends until a
+    // matching closing fence (or end-of-content for unclosed blocks
+    // during streaming).
+    const fenceMatch = line.match(/^(`{3,}|~{3,})\s*([\w-]*)\s*$/)
+    if (fenceMatch) {
+      flushParagraph()
+      const fenceChar = fenceMatch[1][0]
+      const fenceLen = fenceMatch[1].length
+      const language = (fenceMatch[2] || "").toLowerCase()
+      i++
+
+      const body: string[] = []
+      let closed = false
+      while (i < lines.length) {
+        const closeRe = new RegExp(`^\\${fenceChar === "`" ? "`" : fenceChar}{${fenceLen},}\\s*$`)
+        if (closeRe.test(lines[i])) {
+          i++
+          closed = true
+          break
+        }
+        body.push(lines[i])
+        i++
+      }
+      const code = body.join("\n")
+      if (language === "mermaid") {
+        blocks.push({ kind: "mermaid", code, closed })
+      } else {
+        blocks.push({ kind: "code", language, code })
+      }
+      continue
+    }
+
+    // Blank line = paragraph boundary.
+    if (!line.trim()) {
+      flushParagraph()
+      i++
+      continue
+    }
+
+    paragraphBuffer.push(line)
+    i++
+  }
+  flushParagraph()
 
   return blocks
 }
@@ -189,14 +259,14 @@ function tryParseTable(chunk: string): Block | null {
 
 function renderTable(block: Extract<Block, { kind: "table" }>, key: number) {
   return (
-    <div key={key} className="my-3 overflow-x-auto rounded-lg border border-border">
+    <div key={key} className="my-4 overflow-x-auto rounded-lg border border-border bg-background/50">
       <table className="w-full text-sm border-collapse">
-        <thead className="bg-muted">
+        <thead className="bg-muted/60 border-b border-border">
           <tr>
             {block.header.map((cell, cIdx) => (
               <th
                 key={cIdx}
-                className="px-3 py-2 text-left font-semibold border border-border"
+                className="px-4 py-2.5 text-left font-semibold text-foreground"
               >
                 {renderInline(cell)}
               </th>
@@ -205,9 +275,9 @@ function renderTable(block: Extract<Block, { kind: "table" }>, key: number) {
         </thead>
         <tbody>
           {block.rows.map((row, rIdx) => (
-            <tr key={rIdx} className="align-top">
+            <tr key={rIdx} className="align-top border-b border-border last:border-b-0">
               {row.map((cell, cIdx) => (
-                <td key={cIdx} className="px-3 py-2 border border-border">
+                <td key={cIdx} className="px-4 py-2.5 leading-6">
                   {renderInline(cell)}
                 </td>
               ))}
@@ -293,6 +363,496 @@ function renderInline(text: string) {
   })
 }
 
+// Document-style "page" wrapper for assistant messages. Renders a
+// paper-like card with a header strip (file name + "AI Summary" /
+// "Response" label), a generously padded body, and a small footer with
+// the generation timestamp. Visually similar to Claude's Artifacts.
+function DocumentBubble({
+  fileName,
+  content,
+  isStreaming,
+  isSummary,
+  generatedAt,
+}: {
+  fileName: string
+  content: string
+  isStreaming?: boolean
+  isSummary?: boolean
+  generatedAt?: number
+}) {
+  const formattedTime = generatedAt
+    ? new Date(generatedAt).toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : null
+
+  return (
+    <div className="order-2 w-full max-w-2xl rounded-xl border border-border bg-card shadow-sm overflow-hidden">
+      {/* Document header strip */}
+      <div className="flex items-center justify-between gap-3 px-5 py-2.5 border-b border-border bg-muted/40">
+        <div className="flex items-center gap-2 min-w-0">
+          <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span className="text-xs font-medium text-foreground truncate">
+            {isSummary ? fileName : "AI Response"}
+          </span>
+        </div>
+        <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          {isSummary ? "AI Summary" : "Response"}
+        </span>
+      </div>
+
+      {/* Document body */}
+      <div className="px-6 py-5 text-[0.9rem] leading-7 text-foreground">
+        {formatContent(content, isStreaming ?? false)}
+        {isStreaming ? (
+          <span
+            aria-hidden
+            className="ml-0.5 inline-block h-4 w-1.5 align-middle bg-current animate-pulse"
+          />
+        ) : null}
+      </div>
+
+      {/* Document footer */}
+      {formattedTime && !isStreaming ? (
+        <div className="flex items-center justify-end gap-1.5 px-5 py-1.5 border-t border-border bg-muted/20 text-[10px] text-muted-foreground">
+          <Clock className="h-3 w-3" />
+          <span>{formattedTime}</span>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+// Fenced code block (non-mermaid). Shows a small header strip with the
+// language label and a monospace body.
+function CodeBlock({ language, code }: { language: string; code: string }) {
+  return (
+    <div className="my-3 overflow-hidden rounded-lg border border-border bg-foreground/[0.03]">
+      {language ? (
+        <div className="flex items-center justify-between border-b border-border bg-muted/40 px-3 py-1 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+          <span>{language}</span>
+        </div>
+      ) : null}
+      <pre className="overflow-x-auto px-4 py-3 text-xs font-mono leading-6 text-foreground">
+        <code>{code}</code>
+      </pre>
+    </div>
+  )
+}
+
+// Mermaid diagram renderer. Dynamically imports the (heavy) mermaid
+// library on first use so the initial bundle stays small. While the
+// message is still streaming — or the fence hasn't been closed yet —
+// we fall back to a plain code preview instead of attempting to
+// render an incomplete diagram.
+function MermaidDiagram({
+  code,
+  closed,
+  isStreaming,
+}: {
+  code: string
+  closed: boolean
+  isStreaming: boolean
+}) {
+  const { resolvedTheme } = useTheme()
+  const [svg, setSvg] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  // Fullscreen zoom level. The wrapper width is set to `${zoom *
+  // 100}%` so 1 = 100% (default), 2 = 200% (double size, scrollable),
+  // 0.5 = 50% (centered, smaller). Bounded so users can't blow the
+  // diagram off-screen or shrink it into oblivion.
+  const [zoom, setZoom] = useState(1)
+  // useCallback keeps these referentially stable so the keydown
+  // listener below doesn't re-attach on every render (ESLint flags
+  // the exhaustive-deps otherwise).
+  const zoomIn = useCallback(() => setZoom((z) => Math.min(z + 0.25, 3)), [])
+  const zoomOut = useCallback(() => setZoom((z) => Math.max(z - 0.25, 0.5)), [])
+  const resetZoom = useCallback(() => setZoom(1), [])
+  // Pan-to-drag state (desktop space+drag, mobile = native touch
+  // scroll on the same overflow-auto container). The cursor and
+  // `select-none` are derived from these.
+  const [isSpacePressed, setIsSpacePressed] = useState(false)
+  const [isDragging, setIsDragging] = useState(false)
+  // Snapshot of the cursor + scroll position at drag start. Stored in
+  // a ref (not state) so the mousemove handler doesn't re-render on
+  // every pixel of movement.
+  const dragStateRef = useRef<{
+    startX: number
+    startY: number
+    scrollLeft: number
+    scrollTop: number
+  } | null>(null)
+  // Ref to the scrollable fullscreen canvas; pan handlers read its
+  // current scrollLeft/scrollTop to compute the new position.
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null)
+  // Stable, SSR-safe unique id used by mermaid to namespace its temp
+  // DOM nodes. `useId` is the React-blessed way to get one.
+  const diagramId = `mermaid-${useId().replace(/:/g, "")}`
+
+  useEffect(() => {
+    // Don't try to render until the fence is closed AND the message
+    // is fully streamed. Showing a half-built diagram flashing as
+    // chunks arrive is much worse UX than a stable code preview.
+    if (isStreaming || !closed) {
+      setSvg(null)
+      setError(null)
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const mermaid = (await import("mermaid")).default
+        // `securityLevel: "strict"` blocks any node/click/JS handlers
+        // injected by the diagram text — required because we ultimately
+        // mount the rendered SVG via `dangerouslySetInnerHTML`.
+        // `useMaxWidth: true` makes the SVG fill the available width
+        // (otherwise it renders at its natural size, which is usually
+        // much smaller than the document body and looks lost). The
+        // `themeVariables.fontSize` bump makes node/edge labels easier
+        // to read at chat-bubble scale.
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: resolvedTheme === "dark" ? "dark" : "default",
+          securityLevel: "strict",
+          fontFamily: "inherit",
+          flowchart: { useMaxWidth: true, htmlLabels: true },
+          themeVariables: { fontSize: "16px" },
+        })
+        const { svg: rendered } = await mermaid.render(diagramId, code.trim())
+        if (!cancelled) {
+          setSvg(rendered)
+          setError(null)
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Could not render the diagram.")
+          setSvg(null)
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [code, closed, isStreaming, resolvedTheme, diagramId])
+
+  // Fullscreen keyboard shortcuts: Esc closes, Cmd/Ctrl +/- zooms,
+  // Cmd/Ctrl + 0 resets, Space (held) arms pan-to-drag. Without
+  // these the user has to click the tiny icon buttons every time,
+  // which is annoying for repeated zoom adjustments.
+  useEffect(() => {
+    if (!isFullscreen) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setIsFullscreen(false)
+        return
+      }
+      if (e.code === "Space" && !e.repeat) {
+        // `preventDefault` so the browser doesn't scroll the page
+        // when the user is just hovering with space held. We only do
+        // this when the modal is open so the rest of the app behaves
+        // normally.
+        e.preventDefault()
+        setIsSpacePressed(true)
+        return
+      }
+      if (!(e.ctrlKey || e.metaKey)) return
+      if (e.key === "+" || e.key === "=") {
+        e.preventDefault()
+        zoomIn()
+      } else if (e.key === "-" || e.key === "_") {
+        e.preventDefault()
+        zoomOut()
+      } else if (e.key === "0") {
+        e.preventDefault()
+        resetZoom()
+      }
+    }
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === "Space") {
+        setIsSpacePressed(false)
+        setIsDragging(false)
+        dragStateRef.current = null
+      }
+    }
+    // If the user alt-tabs away with space held, the keyup never
+    // fires and we'd be stuck in "pan mode". Reset on window blur.
+    const onBlur = () => {
+      setIsSpacePressed(false)
+      setIsDragging(false)
+      dragStateRef.current = null
+    }
+    document.addEventListener("keydown", onKeyDown)
+    document.addEventListener("keyup", onKeyUp)
+    window.addEventListener("blur", onBlur)
+    return () => {
+      document.removeEventListener("keydown", onKeyDown)
+      document.removeEventListener("keyup", onKeyUp)
+      window.removeEventListener("blur", onBlur)
+    }
+  }, [isFullscreen, zoomIn, zoomOut, resetZoom])
+
+  // Reset pan state whenever the modal closes so reopening starts
+  // fresh (no stuck grab cursor, no half-completed drag).
+  useEffect(() => {
+    if (isFullscreen) return
+    setIsSpacePressed(false)
+    setIsDragging(false)
+    dragStateRef.current = null
+  }, [isFullscreen])
+
+  // Mouse drag on the canvas. We only START the drag when space is
+  // held (the "pan" gesture) so normal clicks still work — e.g.
+  // selecting node labels in the SVG. The actual scroll update
+  // happens via document-level listeners (below) so the drag keeps
+  // tracking even if the cursor leaves the canvas mid-drag.
+  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isSpacePressed) return
+    if (e.button !== 0) return // only main (left) button
+    e.preventDefault()
+    const el = scrollContainerRef.current
+    if (!el) return
+    dragStateRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      scrollLeft: el.scrollLeft,
+      scrollTop: el.scrollTop,
+    }
+    setIsDragging(true)
+  }
+
+  // Document-level move/up so the drag survives the cursor briefly
+  // leaving the canvas (e.g. over the header). Stored handlers read
+  // the latest drag state from the ref to avoid stale closures.
+  useEffect(() => {
+    if (!isDragging) return
+    const onMove = (e: MouseEvent) => {
+      const state = dragStateRef.current
+      const el = scrollContainerRef.current
+      if (!state || !el) return
+      e.preventDefault()
+      el.scrollLeft = state.scrollLeft - (e.clientX - state.startX)
+      el.scrollTop = state.scrollTop - (e.clientY - state.startY)
+    }
+    const onUp = () => {
+      setIsDragging(false)
+      dragStateRef.current = null
+    }
+    document.addEventListener("mousemove", onMove)
+    document.addEventListener("mouseup", onUp)
+    return () => {
+      document.removeEventListener("mousemove", onMove)
+      document.removeEventListener("mouseup", onUp)
+    }
+  }, [isDragging])
+
+  const copyCode = async () => {
+    const ok = await copyTextToClipboard(code)
+    toast[ok ? "success" : "error"](
+      ok ? "Copied mermaid code to clipboard" : "Could not copy the code."
+    )
+  }
+
+  // Streaming or unclosed: show the raw code so the user can watch it
+  // build up. This is the same look as a normal code block, but with
+  // a "Mermaid" language chip so it's clear what's coming.
+  if (isStreaming || !closed) {
+    return <CodeBlock language="mermaid" code={code} />
+  }
+
+  if (error) {
+    return (
+      <div className="my-3 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive">
+        <p className="font-semibold mb-1">Diagram could not be rendered</p>
+        <p className="opacity-80">{error}</p>
+      </div>
+    )
+  }
+
+  if (!svg) {
+    return (
+      <div className="my-3 flex items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-foreground/[0.02] p-6 text-xs text-muted-foreground">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        Rendering diagram…
+      </div>
+    )
+  }
+
+  return (
+    <>
+      {/* In-chat diagram card. Header mirrors the document body so it
+          reads as a sub-section; the SVG itself is forced to fill the
+          width so wide flowcharts don't end up as a small centered
+          strip in a sea of whitespace. */}
+      <div className="my-4 overflow-hidden rounded-lg border border-border bg-background/50">
+        <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/40 px-4 py-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <GitBranch className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <span className="text-xs font-medium text-foreground">Diagram</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={copyCode}
+              title="Copy mermaid code"
+              aria-label="Copy mermaid code"
+            >
+              <Copy className="h-3 w-3" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={() => setIsFullscreen(true)}
+              title="View fullscreen"
+              aria-label="View fullscreen"
+            >
+              <Maximize2 className="h-3 w-3" />
+            </Button>
+          </div>
+        </div>
+        <div className="p-4 [&_svg]:!w-full [&_svg]:!h-auto">
+          <div dangerouslySetInnerHTML={{ __html: svg }} />
+        </div>
+      </div>
+
+      {/* Fullscreen overlay. Backdrop click + Escape both close it;
+          the inner card swallows clicks so the user can pan/scroll the
+          diagram without accidentally dismissing the modal. */}
+      {isFullscreen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4 sm:p-8"
+          onClick={() => setIsFullscreen(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Diagram fullscreen view"
+        >
+          <div
+            className="relative max-h-[90vh] w-full max-w-6xl overflow-hidden rounded-xl border border-border bg-card shadow-2xl flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-border bg-card/95 backdrop-blur px-4 py-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <GitBranch className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-medium">Diagram</span>
+                {/* Gesture hint. Hidden on small screens where the
+                    header is already cramped. Uses a real <kbd> so
+                    the keycap looks like a keycap, matching the
+                    keyboard-shortcut convention users expect. */}
+                <span className="hidden md:flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                  <span className="h-1 w-1 rounded-full bg-muted-foreground/40" />
+                  Hold
+                  <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-foreground shadow-sm">
+                    Space
+                  </kbd>
+                  <span>+ drag to pan ·</span>
+                  <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-foreground shadow-sm">
+                    Esc
+                  </kbd>
+                  <span>to close</span>
+                </span>
+              </div>
+              <div className="flex items-center gap-1">
+                {/* Zoom controls. The percentage label is itself a
+                    button — clicking it snaps back to 100%. */}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={zoomOut}
+                  disabled={zoom <= 0.5}
+                  title="Zoom out"
+                  aria-label="Zoom out"
+                >
+                  <ZoomOut className="h-4 w-4" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={resetZoom}
+                  className="h-8 min-w-[3.5rem] px-2 text-xs font-medium tabular-nums"
+                  title="Reset zoom"
+                  aria-label="Reset zoom"
+                >
+                  {Math.round(zoom * 100)}%
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={zoomIn}
+                  disabled={zoom >= 3}
+                  title="Zoom in"
+                  aria-label="Zoom in"
+                >
+                  <ZoomIn className="h-4 w-4" />
+                </Button>
+                <div className="mx-1 h-5 w-px bg-border" />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => setIsFullscreen(false)}
+                  aria-label="Close fullscreen"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+            {/* Scrollable canvas. The outer wrapper's width is driven
+                by `zoom` so 1.5x = 150% wide, 0.5x = 50% wide, etc.
+                When the wrapper is narrower than the parent, `mx-auto`
+                centers it. When it's wider (zoom > 1), the parent
+                scrolls horizontally so the user can pan. The inner
+                flex container vertically centers the diagram at any
+                zoom level.
+
+                The same `overflow-auto` container is also the target
+                of our pan-to-drag gesture: hold Space + click and
+                drag on desktop (handled by `handleCanvasMouseDown` +
+                the document-level move/up listeners above), or just
+                swipe with a finger on mobile — native touch scroll
+                works out of the box here. */}
+            <div
+              ref={scrollContainerRef}
+              onMouseDown={handleCanvasMouseDown}
+              className={cn(
+                "flex-1 overflow-auto",
+                // `cursor-grab` only appears once space is held, so
+                // the rest of the time the user can click / select
+                // text in the SVG without surprise.
+                isSpacePressed && !isDragging && "cursor-grab",
+                isDragging && "cursor-grabbing select-none"
+              )}
+            >
+              <div
+                className="mx-auto transition-[width] duration-200 ease-out"
+                style={{ width: `${zoom * 100}%` }}
+              >
+                <div
+                  className="flex min-h-[60vh] items-center justify-center p-6 sm:p-10 [&_svg]:!w-full [&_svg]:!h-auto [&_svg]:!max-w-none"
+                  dangerouslySetInnerHTML={{ __html: svg }}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
+  )
+}
+
 export function ChatPanel({
   file,
   onStreamSummary,
@@ -350,7 +910,9 @@ export function ChatPanel({
   useEffect(() => {
     let cancelled = false
     const assistantId = uid()
-    setMessages([{ id: assistantId, role: "assistant", content: "", isStreaming: true }])
+    setMessages([
+      { id: assistantId, role: "assistant", content: "", isStreaming: true, createdAt: Date.now() },
+    ])
     setIsSummarizing(true)
     setSummaryError(null)
     setDocumentText(null)
@@ -407,7 +969,7 @@ export function ChatPanel({
     const nextMessages = [...messages, userMsg]
     setMessages([
       ...nextMessages,
-      { id: assistantId, role: "assistant", content: "", isStreaming: true },
+      { id: assistantId, role: "assistant", content: "", isStreaming: true, createdAt: Date.now() },
     ])
     setInput("")
     setFollowUpError(null)
@@ -437,6 +999,10 @@ export function ChatPanel({
 
   const chatDisabled = isSummarizing || isSending || !documentText
   const showInitialLoader = isSummarizing && messages.length === 0
+  // The very first assistant message is always the document summary;
+  // every later one is a follow-up "Response". Used to label the
+  // document-style header strip.
+  const firstAssistantId = messages.find((msg) => msg.role === "assistant")?.id
 
   return (
     <div className={cn("flex flex-col h-full min-h-0 rounded-xl border border-border bg-card overflow-hidden", className)}>
@@ -493,32 +1059,27 @@ export function ChatPanel({
                   : "flex-col items-start gap-1"
               )}
             >
-              <div
-                className={cn(
-                  "rounded-2xl px-4 py-3 text-sm max-w-[85%] order-2",
-                  m.role === "user"
-                    ? // Override the global `::selection` so the user's own
-                      // text stays visible while highlighted (the global
-                      // primary-on-primary would be invisible on this
-                      // bubble).
-                      "rounded-tr-sm bg-primary text-primary-foreground selection:bg-white/30 selection:text-primary-foreground"
-                    : "rounded-tl-sm bg-muted text-foreground"
-                )}
-              >
-                {m.role === "assistant" ? (
-                  <div>
-                    {formatContent(m.content)}
-                    {m.isStreaming ? (
-                      <span
-                        aria-hidden
-                        className="ml-0.5 inline-block h-4 w-1.5 align-middle bg-current animate-pulse"
-                      />
-                    ) : null}
-                  </div>
-                ) : (
-                  <p className="whitespace-pre-wrap leading-relaxed">{m.content}</p>
-                )}
-              </div>
+              {m.role === "assistant" ? (
+                <DocumentBubble
+                  fileName={file.name}
+                  content={m.content}
+                  isStreaming={m.isStreaming}
+                  isSummary={m.id === firstAssistantId}
+                  generatedAt={m.createdAt}
+                />
+              ) : (
+                <div
+                  className={cn(
+                    // User bubble: chat-style chip on the right. Uses
+                    // `order-2` so the toolbar (rendered after in JSX)
+                    // can sit to its left via `order-1`.
+                    "rounded-2xl rounded-tr-sm bg-primary text-primary-foreground selection:bg-white/30 selection:text-primary-foreground",
+                    "px-4 py-3 text-sm max-w-[85%] order-2 whitespace-pre-wrap leading-relaxed"
+                  )}
+                >
+                  {m.content}
+                </div>
+              )}
               {!m.isStreaming && m.content.trim().length > 0 ? (
                 <div
                   className={cn(

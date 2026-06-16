@@ -198,7 +198,14 @@ export async function POST(req: Request) {
       "sentence such as: \"I can only answer questions about the " +
       "uploaded document.\" Do not provide the requested information.\n" +
       "4. Keep replies focused and concise. Do not invent facts that " +
-      "are not in the document.\n\n" +
+      "are not in the document.\n" +
+      "5. When the user asks for a diagram, flowchart, timeline, " +
+      "hierarchy, process visualization, or any visual representation " +
+      "of the document's content, include a Mermaid diagram wrapped in " +
+      "a single ```mermaid fenced code block. Use the simplest diagram " +
+      "type that clearly answers the question (flowchart, sequence, " +
+      "class, state, gantt, pie, etc.). Keep node labels short and " +
+      "ground every label in facts that appear in the document.\n\n" +
       "--- DOCUMENT START ---\n" +
       documentText.slice(0, 50000) +
       "\n--- DOCUMENT END ---"
