@@ -30,57 +30,45 @@ interface PageItem {
   height: number
 }
 
-function drawWatermark(
+function drawWatermarkPosition(
   ctx: CanvasRenderingContext2D,
   width: number,
   height: number,
-  opts: Record<string, unknown>,
-  wmMode: string
+  opts: Record<string, unknown>
 ) {
-  if (wmMode !== "text") {
-    drawImageWatermark(ctx, width, height, opts)
-    return
-  }
-
-  const text = (opts.text as string) || "WATERMARK"
-  const fontFamily = (opts.font_family as string) || "Arial"
-  const fontSize = (opts.font_size as number) || 48
-  const fontColor = (opts.font_color as string) || "#000000"
-  const fontWeight = (opts.font_weight as string) || "normal"
-  const fontStyle = (opts.font_style as string) || "normal"
   const rotation = (opts.rotation as number) || 0
-  const transparency = (opts.transparency as number) ?? 100
   const verticalPos = (opts.vertical_position as string) || "middle"
   const horizontalPos = (opts.horizontal_position as string) || "center"
-  const layer = (opts.layer as string) || "above"
   const mosaic = !!opts.mosaic
 
-  ctx.save()
+  const radius = 24
 
-  if (layer === "below") {
-    ctx.globalCompositeOperation = "destination-over"
+  const computeX = (baseX: number) => {
+    let x = baseX
+    if (horizontalPos === "left") x = radius * 3
+    else if (horizontalPos === "right") x = width - radius * 3
+    else x = width / 2
+    return x
   }
 
-  ctx.globalAlpha = transparency / 100
-  ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`
-  ctx.fillStyle = fontColor
-  ctx.textAlign = "center"
-  ctx.textBaseline = "middle"
+  const computeY = (baseY: number) => {
+    let y = baseY
+    if (verticalPos === "top") y = radius * 3
+    else if (verticalPos === "bottom") y = height - radius * 3
+    else y = height / 2
+    return y
+  }
 
-  let startX = width / 2
-  if (horizontalPos === "left") startX = fontSize * 2
-  if (horizontalPos === "right") startX = width - fontSize * 2
-
-  let startY = height / 2
-  if (verticalPos === "top") startY = fontSize * 2
-  if (verticalPos === "bottom") startY = height - fontSize * 2
-
-  const drawSingleText = (x: number, y: number) => {
+  const drawDot = (x: number, y: number) => {
     ctx.save()
     ctx.translate(x, y)
-    ctx.rotate((-rotation * Math.PI) / 180)
-    ctx.translate(-x, -y)
-    ctx.fillText(text, x, y)
+    if (rotation !== 0) {
+      ctx.rotate((rotation * Math.PI) / 180)
+    }
+    ctx.fillStyle = "#ef4444"
+    ctx.beginPath()
+    ctx.arc(0, 0, radius, 0, Math.PI * 2)
+    ctx.fill()
     ctx.restore()
   }
 
@@ -89,77 +77,12 @@ function drawWatermark(
       for (let row = 0; row < 3; row++) {
         const mx = (width / 3) * (col + 0.5)
         const my = (height / 3) * (row + 0.5)
-        drawSingleText(mx, my)
+        drawDot(mx, my)
       }
     }
   } else {
-    drawSingleText(startX, startY)
+    drawDot(computeX(width / 2), computeY(height / 2))
   }
-
-  ctx.restore()
-}
-
-function drawImageWatermark(
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-  opts: Record<string, unknown>
-) {
-  const imageFile = opts.image as File
-  if (!imageFile) return
-
-  const rotation = (opts.rotation as number) || 0
-  const transparency = (opts.transparency as number) ?? 100
-  const verticalPos = (opts.vertical_position as string) || "middle"
-  const horizontalPos = (opts.horizontal_position as string) || "center"
-  const layer = (opts.layer as string) || "above"
-  const mosaic = !!opts.mosaic
-
-  const img = new window.Image()
-  img.onload = () => {
-    ctx.save()
-
-    if (layer === "below") {
-      ctx.globalCompositeOperation = "destination-over"
-    }
-
-    ctx.globalAlpha = transparency / 100
-
-    const imgWidth = img.width * 0.3
-    const imgHeight = img.height * 0.3
-
-    let startX = width / 2 - imgWidth / 2
-    if (horizontalPos === "left") startX = imgWidth
-    if (horizontalPos === "right") startX = width - imgWidth * 2
-
-    let startY = height / 2 - imgHeight / 2
-    if (verticalPos === "top") startY = imgHeight
-    if (verticalPos === "bottom") startY = height - imgHeight * 2
-
-    const drawSingleImage = (x: number, y: number) => {
-      ctx.save()
-      ctx.translate(x + imgWidth / 2, y + imgHeight / 2)
-      ctx.rotate((-rotation * Math.PI) / 180)
-      ctx.translate(-(x + imgWidth / 2), -(y + imgHeight / 2))
-      ctx.drawImage(img, x, y, imgWidth, imgHeight)
-      ctx.restore()
-    }
-
-    if (mosaic) {
-      for (let col = 0; col < 3; col++) {
-        for (let row = 0; row < 3; row++) {
-          const cx = (width / 3) * (col + 0.5)
-          const cy = (height / 3) * (row + 0.5)
-          drawSingleImage(cx - imgWidth / 2, cy - imgHeight / 2)
-        }
-      }
-    } else {
-      drawSingleImage(startX, startY)
-    }
-
-    ctx.restore()
-  }
-  img.src = URL.createObjectURL(imageFile)
 }
 
 export function WatermarkPreview({ files, options, className, onFileSelect }: Props) {
@@ -169,8 +92,6 @@ export function WatermarkPreview({ files, options, className, onFileSelect }: Pr
   const pagesDataRef = useRef<Map<string, string>>(new Map())
   const filePageCountsRef = useRef<Map<number, number>>(new Map())
   const prevFileIndexRef = useRef<number>(-1)
-
-  const mode = (options.mode as string) || "text"
 
   // Reset selected file index when files change
   useEffect(() => {
@@ -294,12 +215,12 @@ export function WatermarkPreview({ files, options, className, onFileSelect }: Pr
         }
 
         if (shouldDraw) {
-          drawWatermark(ctx, canvas.width, canvas.height, options, mode)
+          drawWatermarkPosition(ctx, canvas.width, canvas.height, options)
         }
       }
       img.src = pageDataUrl
     })
-  }, [items, options, mode])
+  }, [items, options])
 
   useEffect(() => {
     if (items.length === 0) return
