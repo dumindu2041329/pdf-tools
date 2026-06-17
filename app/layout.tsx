@@ -1,6 +1,8 @@
 import type { Metadata } from "next"
 import { ClerkProvider } from "@clerk/nextjs"
 import { Geist, Geist_Mono, Noto_Serif_Display } from "next/font/google"
+import { Analytics } from "@vercel/analytics/next"
+import { SpeedInsights } from "@vercel/speed-insights/next"
 import { ThemeProvider } from "@/components/theme/ThemeProvider"
 import { Toaster } from "@/components/theme/Toaster"
 import "./globals.css"
@@ -64,6 +66,8 @@ export default function RootLayout({
             {children}
           </ThemeProvider>
           <Toaster />
+          <Analytics />
+          <SpeedInsights />
         </body>
       </html>
     </ClerkProvider>
