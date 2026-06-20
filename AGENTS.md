@@ -13,9 +13,11 @@
 | **Auth** | Clerk (`@clerk/nextjs` ^7.0.7) |
 | **PDF Engine** | iLoveAPI (`@ilovepdf/ilovepdf-nodejs` ^0.3.1) + Adobe PDF Services (`@adobe/pdfservices-node-sdk` ^4.1.0) + `pdf-lib` ^1.17.1 / `jszip` ^3.10.1 / `jsonwebtoken` ^9.0.3 |
 | **Object Storage** | Vercel Blob (`@vercel/blob` ^2.4.0) — client uploads for source PDFs > 4 MB |
-| **AI Services** | OpenAI (`openai` ^6.33.0) |
+| **AI Services** | OpenRouter (via the `openai` ^6.33.0 SDK pointed at `https://openrouter.ai/api/v1`). The `openai` SDK is used purely as a generic OpenAI-compatible client; the actual provider is OpenRouter (model `openai/gpt-oss-120b:free`) |
 | **Payments** | Stripe (`stripe` ^16.12.0) for Premium subscription |
-| **UI/UX** | framer-motion ^12.38.0, three.js ^0.183.2, @dnd-kit/core ^6.3.1 + @dnd-kit/sortable ^10.0.0 + @dnd-kit/utilities ^3.2.2, sonner ^2.0.7, lucide-react ^1.7.0, next-themes ^0.4.6 |
+| **Telemetry** | `@vercel/analytics` ^2.0.1 + `@vercel/speed-insights` ^2.0.0 (mounted in root layout) |
+| **PDF Parsing (client)** | `pdfjs-dist` ^4.10.38 — used by the AI Summarizer for in-browser text extraction and PDF preview |
+| **UI/UX** | framer-motion ^12.38.0, three.js ^0.183.2, @dnd-kit/core ^6.3.1 + @dnd-kit/sortable ^10.0.0 + @dnd-kit/utilities ^3.2.2, sonner ^2.0.7, lucide-react ^1.7.0, next-themes ^0.4.6, mermaid ^11.15.0 (dynamic-imported by AI Summarizer chat to render diagrams) |
 | **Database** | Neon PostgreSQL (`@neondatabase/serverless` ^1.1.0) |
 | **Package Manager** | npm |
 | **Deployment** | Vercel |
@@ -167,19 +169,29 @@ components/
     ThemeToggle.tsx
     Toaster.tsx             # Sonner toaster, mobile-aware position
   tools/
-    options/                # Per-tool option forms + previews
+    ai-summarizer/            # AI Summarizer custom view (chat-style, mermaid diagrams)
+      AiSummarizerView.tsx    # Top-level summarizer UI; orchestrates upload + chat
+      ChatPanel.tsx           # Document-bubble chat UI; SSE consumer; markdown + mermaid renderer
+      PdfPreview.tsx          # In-browser page-by-page PDF preview (pdfjs-dist)
+      extract-pdf-text.ts     # pdfjs-dist helper: File → plain text
+    options/                  # Per-tool option forms + previews
       CompressOptions, ExtractOptions, HtmlToPdfOptions,
       ImageToPdfOptions, OcrOptions, OrganizeOptions,
       PageNumberOptions, PageNumberPreview, PdfToJpgOptions,
       PdfaOptions, ProtectOptions, RotateOptions,
       RotatePreview, SplitOptions, ToolOptions,
-      UnlockOptions, WatermarkOptions, WatermarkPreview
-    DownloadCard.tsx        # Result card with download + "process another"
-    FileUploader.tsx        # Drop zone + dnd-kit sortable file list
-    ProcessingModal.tsx     # 5-step animated processing overlay
-    ToolCard.tsx            # Tool grid card
-    ToolGrid.tsx            # Category tabs + tool grid
-    ToolHero.tsx            # Tool page hero (breadcrumb + icon)
+      TranslateOptions, UnlockOptions, WatermarkOptions, WatermarkPreview
+    shared/                   # Cross-tool view helpers
+      CodeBlock.tsx           # Fenced code + copy-to-clipboard (used by ChatPanel)
+      formatContent.tsx       # Markdown/table/mermaid block parser + clipboard helper
+    translate-pdf/            # Translate PDF custom view
+      TranslatePdfView.tsx    # Document-bubble streaming translation UI
+    DownloadCard.tsx          # Result card with download + "process another"
+    FileUploader.tsx          # Drop zone + dnd-kit sortable file list
+    ProcessingModal.tsx       # 5-step animated processing overlay
+    ToolCard.tsx              # Tool grid card
+    ToolGrid.tsx              # Category tabs + tool grid
+    ToolHero.tsx              # Tool page hero (breadcrumb + icon)
   ui/                       # shadcn/ui primitives
     button.tsx              # CVA-based button variants
     confirm-dialog.tsx      # Modal confirmation
@@ -201,7 +213,7 @@ lib/
   pdf/
     adobe-export-converter.ts  # ExportPDFJob (Word/Excel/PPT) + OCRJob
     merge-client.ts           # processMergeLocal() — pdf-lib, client-side
-    office-converter.ts        # convertPdfToExcel() delegates to Adobe; helpers
+    office-converter.ts        # convertPdfToExcel() → Adobe; getSafeBaseName, execFile, resolvePythonCommand helpers
     rotate-client.ts           # processRotateLocal() — server, returns base64
     split-client.ts            # processSplitLocal() — pdf-lib, client-side
   activityStore.ts          # localStorage activity feed (≤50 entries)
@@ -214,7 +226,7 @@ lib/
   guest-usage.ts            # Cookie-backed counter for unauthenticated users
   stripe.ts                 # Stripe SDK singleton + price/webhook secret exports
   toolValidation.ts         # Per-tool UI validation (pre-server)
-  tools-config.ts           # Tool registry (29 tools) + categories
+  tools-config.ts           # Tool registry (30 tools) + categories
   usage.ts                  # canProcessFile, recordProcessingEvent, getUsageStats
   usageLimits.ts            # Plan limit constants (client-safe)
   utils.ts                  # cn() — clsx + tailwind-merge
@@ -329,8 +341,8 @@ Vercel serverless functions truncate request bodies at ~4.5 MB. The free plan al
 | `pdf-to-jpg`, `pdf-to-pdfa` | Server | iLoveAPI | Multi-file → server-side JSZip pack |
 | `validate-pdfa` | Server | iLoveAPI | Returns `{ validationSuccess, message, result }` |
 | `sign-pdf` | Server | iLoveAPI Signature API | Dedicated `/api/tools/sign` route; `ilovepdf.sign` task + raw `/v1/signature` call |
-| `ai-summarizer` | Client + Server | OpenRouter (via `/api/ai/summarize`) | Step 1: client-side `pdfjs-dist` extracts PDF text (`extractPdfText()`); Step 2: server streams `openai/gpt-oss-120b:free` over SSE. No iLoveAPI, no OpenAI. |
-| `translate-pdf` | Server | OpenAI (via `/api/ai/translate`) | Step 1: iLoveAPI `extract`; Step 2: OpenAI `gpt-4o` |
+| `ai-summarizer` | Client + Server | OpenRouter (via `/api/ai/summarize`) | Step 1: client-side `pdfjs-dist` extracts PDF text (`extractPdfText()`); Step 2: server streams `openai/gpt-oss-120b:free` over SSE. No iLoveAPI. The same endpoint also handles multi-turn follow-up chat (`mode: "chat"`) that re-sends the document text + transcript tail; the client renders answers as document bubbles with markdown + Mermaid diagrams. |
+| `translate-pdf` | Client + Server | OpenRouter (via `/api/ai/translate`) | Step 1: client-side `pdfjs-dist` extracts the document text (the iLoveAPI `extract` engine is wired up in the tool config but the view bypasses the API route); Step 2: server streams `openai/gpt-oss-120b:free` over SSE. Custom `TranslatePdfView` renders the streamed translation as a document bubble. |
 
 ### Adobe PDF Services specifics
 - Requires `PDF_SERVICES_CLIENT_ID` and `PDF_SERVICES_CLIENT_SECRET`.
@@ -381,6 +393,25 @@ type ToolState =
 - **local-merge** (`merge-pdf`): Uses `pdf-lib` to merge PDFs entirely client-side. Handled in `useTool` hook via dynamic import of `processMergeLocal()`.
 - **local-split** (`split-pdf`, `remove-pages`, `organize-pdf`): Uses `pdf-lib` to process PDFs entirely client-side. Handled in `useTool` hook via dynamic import of `processSplitLocal()`. `organize-pdf` with > 1 file first calls `processMergeLocal()` then `processSplitLocal()`.
 - **local-rotate** (`rotate-pdf`): Uses `pdf-lib` server-side via `processRotateLocal()` in `rotate-client.ts`.
+
+### AI Tool Views (custom client components)
+Two tools bypass `useTool`/`ProcessingModal` and render dedicated chat-style views directly in `app/tools/[slug]/ToolPageClient.tsx`:
+
+- **`ai-summarizer`** → `components/tools/ai-summarizer/AiSummarizerView.tsx`
+  - Layout: two-pane — left side shows `PdfPreview` (page-by-page rendering via `pdfjs-dist`); right side is the `ChatPanel`.
+  - Initial summary: `streamSummary(file)` extracts text in the browser via `extractPdfText()` and POSTs JSON `{ mode: "summary", length, filename, fileSize, documentText }` to `/api/ai/summarize`. The response is an SSE stream of `chunk` / `done` events.
+  - Follow-up chat: `streamFollowUp(messages, documentText)` re-POSTs with `{ mode: "chat", messages, documentText }`. The server pins the last 10 turns and re-sends the document text in the system prompt.
+  - Markdown rendering: `components/tools/shared/formatContent.tsx` parses blocks (paragraphs, bullets, ordered lists, pipe tables, headings, fenced code, Mermaid) and renders them inline. No `dangerouslySetInnerHTML` — inline bold/italic/code spans are rebuilt from the parsed text.
+  - Mermaid diagrams: when the model emits a ```mermaid block, `MermaidDiagram` inside `ChatPanel.tsx` dynamic-imports the `mermaid` library on first use (keeps the initial bundle small) and renders the SVG. Supports fullscreen + zoom (0.5x – 3x) + space-drag pan.
+  - Server prompt rule: chat mode refuses to answer anything that isn't grounded in the document — see the `systemPrompt` in `/api/ai/summarize`.
+
+- **`translate-pdf`** → `components/tools/translate-pdf/TranslatePdfView.tsx`
+  - Layout: two-pane — left side is `FileUploader` + `TranslateOptions`; right side renders a `DocumentBubble` with the streamed translation.
+  - Reuses `extractPdfText()` to read the PDF client-side; POSTs `{ mode: "translate", targetLanguageLabel, documentText, filename, fileSize }` to `/api/ai/translate` and consumes the same SSE protocol (`chunk` / `done`).
+  - Supported target languages live in `components/tools/options/TranslateOptions.tsx` (30 languages from "auto"/English through Hungarian).
+  - Server is capped at 50 000 chars of source text to keep prompts within model limits.
+
+Both views are mounted by `ToolPageClient.tsx` instead of the default `FileUploader` + `useTool` flow — the `tool.slug === "ai-summarizer"` / `tool.slug === "translate-pdf"` branches select them. `useTool`-driven usage tracking is intentionally skipped for these views; the API routes call `recordProcessingEvent()` themselves.
 
 ### Workflows
 Multi-step tool chains stored in Neon (migrated from localStorage):
@@ -453,8 +484,7 @@ Plan is stored in Clerk user metadata (`publicMetadata.plan` + `planUpdatedAt`) 
 - `CLERK_SECRET_KEY` — Clerk secret key
 - `ILOVEAPI_PUBLIC_KEY` — iLoveAPI public key
 - `ILOVEAPI_SECRET_KEY` — iLoveAPI secret key
-- `OPENAI_API_KEY` — OpenAI API key (powers the translate-pdf flow only; the AI summarizer no longer uses OpenAI)
-- `OPENROUTER_API_KEY` — OpenRouter API key. Required for the AI summarizer — routes completions to `openai/gpt-oss-120b:free` via `https://openrouter.ai/api/v1`. When unset, the summarizer endpoint returns a streaming echo of the prompt as a development fallback.
+- `OPENROUTER_API_KEY` — OpenRouter API key. Required for the AI summarizer AND translate-pdf — routes completions to `openai/gpt-oss-120b:free` via `https://openrouter.ai/api/v1` (both routes use the `openai` SDK pointed at OpenRouter). When unset, both endpoints fall back to streaming the prompt back in tiny chunks so the UI still has *something* to render during development.
 
 ### Optional
 - `PDF_SERVICES_CLIENT_ID` — Adobe PDF Services client ID (for pdf-to-word, pdf-to-excel, pdf-to-powerpoint, ocr-pdf)

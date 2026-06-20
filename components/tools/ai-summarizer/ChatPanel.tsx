@@ -6,6 +6,8 @@ import { useTheme } from "next-themes"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
+import { CodeBlock } from "@/components/tools/shared/CodeBlock"
+import { copyTextToClipboard } from "@/components/tools/shared/formatContent"
 
 // Server-Sent Events payload shape. Kept in sync with the API route.
 export type StreamEvent =
@@ -34,35 +36,6 @@ interface ChatPanelProps {
 
 function uid() {
   return Math.random().toString(36).slice(2, 10)
-}
-
-// Copy plain text to the clipboard. Falls back to a hidden <textarea>
-// + `document.execCommand("copy")` when the modern Clipboard API is
-// unavailable (e.g. insecure context, older browsers).
-async function copyTextToClipboard(text: string): Promise<boolean> {
-  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text)
-      return true
-    } catch {
-      // fall through to the legacy path below
-    }
-  }
-  try {
-    const ta = document.createElement("textarea")
-    ta.value = text
-    ta.setAttribute("readonly", "")
-    ta.style.position = "fixed"
-    ta.style.opacity = "0"
-    ta.style.pointerEvents = "none"
-    document.body.appendChild(ta)
-    ta.select()
-    const ok = document.execCommand("copy")
-    document.body.removeChild(ta)
-    return ok
-  } catch {
-    return false
-  }
 }
 
 function formatContent(content: string, isStreaming: boolean = false) {
@@ -422,23 +395,6 @@ function DocumentBubble({
           <span>{formattedTime}</span>
         </div>
       ) : null}
-    </div>
-  )
-}
-
-// Fenced code block (non-mermaid). Shows a small header strip with the
-// language label and a monospace body.
-function CodeBlock({ language, code }: { language: string; code: string }) {
-  return (
-    <div className="my-3 overflow-hidden rounded-lg border border-border bg-foreground/[0.03]">
-      {language ? (
-        <div className="flex items-center justify-between border-b border-border bg-muted/40 px-3 py-1 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-          <span>{language}</span>
-        </div>
-      ) : null}
-      <pre className="overflow-x-auto px-4 py-3 text-xs font-mono leading-6 text-foreground">
-        <code>{code}</code>
-      </pre>
     </div>
   )
 }

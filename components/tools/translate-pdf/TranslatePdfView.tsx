@@ -6,7 +6,10 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { extractPdfText } from "@/components/tools/ai-summarizer/extract-pdf-text"
 import { TranslateOptions } from "@/components/tools/options/TranslateOptions"
-import { Sparkles, X } from "lucide-react"
+import { copyTextToClipboard, formatContent } from "@/components/tools/shared/formatContent"
+import { Clock, Copy, FileText, Languages, X } from "lucide-react"
+import { toast } from "sonner"
+
 type StreamEvent =
   | { type: "chunk"; text: string }
   | { type: "done"; documentText?: string }
@@ -53,30 +56,85 @@ async function* readSseStream(res: Response): AsyncGenerator<StreamEvent, void, 
   }
 }
 
+// Document-style "page" wrapper for the translated output. Mirrors
+// the AI summarizer's DocumentBubble: header strip (file + label),
+// padded body with rendered markdown, and a footer with a timestamp
+// + the Copy toolbar.
 function DocumentBubble({
   fileName,
+  languageLabel,
   content,
   isStreaming,
+  generatedAt,
+  onCopy,
 }: {
   fileName: string
+  languageLabel: string
   content: string
   isStreaming?: boolean
+  generatedAt?: number
+  onCopy: () => void
 }) {
+  const formattedTime = generatedAt
+    ? new Date(generatedAt).toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : null
+
   return (
     <div className="order-2 w-full max-w-2xl rounded-xl border border-border bg-card shadow-sm overflow-hidden">
+      {/* Document header strip */}
       <div className="flex items-center justify-between gap-3 px-5 py-2.5 border-b border-border bg-muted/40">
         <div className="flex items-center gap-2 min-w-0">
+          <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <span className="text-xs font-medium text-foreground truncate">{fileName}</span>
         </div>
         <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-          Translation
+          Translation · {languageLabel}
         </span>
       </div>
 
-      <div className="px-6 py-5 text-[0.9rem] leading-7 text-foreground whitespace-pre-wrap break-words">
-        {content}
+      {/* Document body */}
+      <div className="px-6 py-5 text-[0.9rem] leading-7 text-foreground min-h-[6rem]">
+        {content ? (
+          formatContent(content)
+        ) : (
+          <p className="text-muted-foreground italic">Click Translate to start.</p>
+        )}
         {isStreaming ? (
-          <span aria-hidden className="ml-0.5 inline-block h-4 w-1.5 align-middle bg-current animate-pulse" />
+          <span
+            aria-hidden
+            className="ml-0.5 inline-block h-4 w-1.5 align-middle bg-current animate-pulse"
+          />
+        ) : null}
+      </div>
+
+      {/* Document footer: Copy toolbar + timestamp. Mirrors the AI
+          summarizer's footer style. */}
+      <div className="flex items-center justify-between gap-3 px-5 py-2 border-t border-border bg-muted/20 text-[11px] text-muted-foreground">
+        <div className="flex items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs"
+            onClick={onCopy}
+            disabled={!content}
+            title="Copy translation"
+            aria-label="Copy translation"
+          >
+            <Copy className="mr-1.5 h-3.5 w-3.5" />
+            Copy
+          </Button>
+        </div>
+        {formattedTime && !isStreaming ? (
+          <div className="flex items-center gap-1.5">
+            <Clock className="h-3 w-3" />
+            <span>{formattedTime}</span>
+          </div>
         ) : null}
       </div>
     </div>
@@ -87,6 +145,7 @@ export function TranslatePdfView({ maxSizeMB }: { maxSizeMB: number }) {
   const [file, setFile] = useState<File | null>(null)
   const [options, setOptions] = useState<Record<string, unknown>>({})
   const [translatedText, setTranslatedText] = useState("")
+  const [generatedAt, setGeneratedAt] = useState<number | null>(null)
   const [isTranslating, setIsTranslating] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -132,6 +191,7 @@ export function TranslatePdfView({ maxSizeMB }: { maxSizeMB: number }) {
   const reset = useCallback(() => {
     setFile(null)
     setTranslatedText("")
+    setGeneratedAt(null)
     setIsTranslating(false)
     setError(null)
   }, [])
@@ -139,6 +199,7 @@ export function TranslatePdfView({ maxSizeMB }: { maxSizeMB: number }) {
   const handleFilesSelected = useCallback((files: File[]) => {
     setFile(files[0] ?? null)
     setTranslatedText("")
+    setGeneratedAt(null)
     setError(null)
   }, [])
 
@@ -146,6 +207,7 @@ export function TranslatePdfView({ maxSizeMB }: { maxSizeMB: number }) {
     if (!file || isTranslating) return
     setIsTranslating(true)
     setError(null)
+    setGeneratedAt(null)
 
     try {
       const documentText = await extractPdfText(file)
@@ -178,22 +240,32 @@ export function TranslatePdfView({ maxSizeMB }: { maxSizeMB: number }) {
           setTranslatedText(acc)
         } else if (event.type === "done") {
           setIsTranslating(false)
+          setGeneratedAt(Date.now())
           return
         }
       }
       setIsTranslating(false)
+      setGeneratedAt(Date.now())
     } catch (e) {
       setIsTranslating(false)
       setError(e instanceof Error ? e.message : "Translation failed.")
     }
   }, [file, isTranslating, targetLanguageLabel])
 
+  const handleCopy = useCallback(async () => {
+    if (!translatedText) return
+    const ok = await copyTextToClipboard(translatedText)
+    toast[ok ? "success" : "error"](
+      ok ? "Translation copied to clipboard" : "Could not copy the translation."
+    )
+  }, [translatedText])
+
   if (!file) {
     return (
       <div className="mx-auto max-w-3xl">
         <div className="rounded-2xl border border-border bg-card/60 p-6 sm:p-8 text-center">
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-            <Sparkles className="h-6 w-6" />
+            <Languages className="h-6 w-6" />
           </div>
           <h2 className="text-xl font-semibold">Upload a PDF to translate</h2>
           <p className="mt-2 text-sm text-muted-foreground">
@@ -255,12 +327,15 @@ export function TranslatePdfView({ maxSizeMB }: { maxSizeMB: number }) {
         </div>
 
         {/* Right: translated text output */}
-        <div className="flex-1 min-h-0 overflow-auto p-0">
+        <div className="flex-1 min-h-0 overflow-auto">
           <div className="h-full">
             <DocumentBubble
               fileName={file.name}
-              content={translatedText || (isTranslating ? "" : "Click Translate to start.")}
+              languageLabel={targetLanguageLabel}
+              content={translatedText}
               isStreaming={isTranslating}
+              generatedAt={generatedAt ?? undefined}
+              onCopy={() => void handleCopy()}
             />
           </div>
         </div>
