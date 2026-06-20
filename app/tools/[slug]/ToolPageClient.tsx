@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { useTool } from "@/hooks/useTool"
 import { AiSummarizerView } from "@/components/tools/ai-summarizer/AiSummarizerView"
+import { TranslatePdfView } from "@/components/tools/translate-pdf/TranslatePdfView"
 import { validateToolOptions } from "@/lib/toolValidation"
 import type { Workflow } from "@/lib/workflowStore"
 import { getWorkflowSession, updateWorkflowSession, loadWorkflowSession } from "@/lib/workflowSession"
@@ -350,9 +351,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
     }
   }, [isMergePdfTool, files.length])
 
-  // AI Summarizer gets a dedicated split-view layout: PDF preview on the
-  // left, chat with the model on the right. The file uploader is only
-  // shown until the first file is selected, then it disappears.
+  // AI tools with dedicated split-view layouts.
   if (tool.slug === "ai-summarizer") {
     return (
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-10 pb-20">
@@ -360,6 +359,17 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
           {tool.title}
         </h1>
         <AiSummarizerView maxSizeMB={planLimits.maxFileSizeMB} />
+      </div>
+    )
+  }
+
+  if (tool.slug === "translate-pdf") {
+    return (
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-10 pb-20">
+        <h1 className="mb-8 text-3xl sm:text-4xl font-serif font-bold text-center text-foreground">
+          {tool.title}
+        </h1>
+        <TranslatePdfView maxSizeMB={planLimits.maxFileSizeMB} />
       </div>
     )
   }

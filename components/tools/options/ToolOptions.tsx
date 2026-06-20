@@ -13,6 +13,7 @@ import { PdfaOptions } from "./PdfaOptions"
 import { OcrOptions } from "./OcrOptions"
 import { ExtractOptions } from "./ExtractOptions"
 import { PdfToJpgOptions } from "./PdfToJpgOptions"
+import { TranslateOptions } from "./TranslateOptions"
 import dynamic from "next/dynamic"
 
 const OrganizeOptions = dynamic(() => import("./OrganizeOptions").then(m => m.OrganizeOptions), { ssr: false })
@@ -45,6 +46,7 @@ const optionsMap: Record<
   "extract-data": ExtractOptions,
   "organize-pdf": OrganizeOptions,
   "pdf-to-jpg": PdfToJpgOptions,
+  "translate-pdf": TranslateOptions,
 }
 
 export function ToolOptions({ toolSlug, files, options, onChange }: ToolOptionsProps) {
