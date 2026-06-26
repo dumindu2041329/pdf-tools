@@ -51,6 +51,44 @@ function splitIntoBlocks(content: string): Block[] {
       return
     }
 
+    // 2b) Paragraph where the AI used `•` as an inline separator
+    // instead of putting each item on its own line. Handles both
+    // single-line and wrapped-text paragraphs: join the lines first
+    // so the split on `•` captures every bullet cleanly. Splitting
+    // each segment and rendering it as a list item keeps the streamed
+    // translation readable instead of one big run-on paragraph.
+    //
+    // If the first segment looks like a short label-style heading
+    // (no trailing sentence punctuation), promote it to a heading
+    // block and render the rest as bullets so the document keeps its
+    // original section structure (e.g. "कोर्स के तक्ष्य" → "heading"
+    // followed by the body bullets).
+    {
+      const joined = lines.join(" ")
+      if (/•/.test(joined)) {
+        const parts = joined
+          .split(/\s*•\s*/)
+          .map((s) => s.trim())
+          .filter(Boolean)
+        if (parts.length >= 2) {
+          const [first, ...rest] = parts
+          const looksLikeHeading =
+            rest.length > 0 &&
+            first.length <= 80 &&
+            !/[.।!?]\s*$/.test(first)
+
+          if (looksLikeHeading) {
+            blocks.push({ kind: "heading", text: first })
+            blocks.push({ kind: "bullet", lines: rest })
+          } else {
+            blocks.push({ kind: "bullet", lines: parts })
+          }
+          paragraphBuffer = []
+          return
+        }
+      }
+    }
+
     // 3) Single-line `#` / `##` / `###` headings.
     if (lines.length === 1 && /^#{1,6}\s+/.test(lines[0])) {
       blocks.push({ kind: "heading", text: lines[0].replace(/^#{1,6}\s+/, "") })
