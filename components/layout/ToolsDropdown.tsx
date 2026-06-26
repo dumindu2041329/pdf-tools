@@ -36,7 +36,7 @@ export function ToolsDropdown({ isOpen, onClose, onMouseEnter, onMouseLeave }: T
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
-      <div className="bg-background border border-border/50 rounded-xl shadow-xl shadow-black/5 p-6 w-[1100px] max-w-[90vw]">
+      <div className="bg-white dark:bg-card border border-border/50 rounded-xl shadow-xl shadow-black/5 p-6 w-[1100px] max-w-[90vw]">
         <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-x-6 gap-y-6">
           {categories.map((category) => {
             const tools = getToolsByCategory(category.id)

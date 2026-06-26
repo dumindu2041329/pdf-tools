@@ -264,7 +264,7 @@ export function FileUploader({
         onDrop={handleDrop}
         onClick={() => !isDisabled && inputRef.current?.click()}
         className={cn(
-          "relative flex flex-col items-center justify-center rounded-2xl border-2 border-dashed p-12 transition-all duration-200 cursor-pointer",
+          "relative flex flex-col items-center justify-center rounded-2xl border-2 border-dashed p-12 transition-all duration-200 cursor-pointer bg-white dark:bg-card",
           isDragging
             ? "border-primary bg-primary/5 scale-[1.01]"
             : "border-border hover:border-primary/40 hover:bg-muted/30",
