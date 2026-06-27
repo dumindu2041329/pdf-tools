@@ -62,7 +62,6 @@ const plans = [
     features: [
       "5 files per day",
       "30 files per month",
-      "20 MB max file size",
       "Basic PDF tools",
       "Community support",
     ],
@@ -78,7 +77,6 @@ const plans = [
     features: [
       "Unlimited daily processing",
       "Unlimited files per month",
-      "4 GB max file size",
       "All PDF tools",
       "AI Summarizer & Translate",
       "Priority support",

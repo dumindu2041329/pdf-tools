@@ -1,8 +1,8 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useEffect } from "react"
 import Link from "next/link"
-import { motion, AnimatePresence } from "framer-motion"
+import { motion } from "framer-motion"
 import {
   ArrowRight,
   Upload,
@@ -12,13 +12,13 @@ import {
   Clock,
   Lock,
   Star,
-  ChevronUp,
   FileText,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { ToolGrid } from "@/components/tools/ToolGrid"
 import { GLSLHills } from "@/components/ui/glsl-hills"
+import { BackToTop } from "@/components/shared/BackToTop"
 import { useClerk } from "@clerk/nextjs"
 
 // ── Animation variants ───────────────────────────────────────
@@ -433,29 +433,18 @@ function CTASection({ onGetStarted }: { onGetStarted: () => void }) {
 
 // ── Page Component ───────────────────────────────────────────
 export default function HomePage() {
-  const [showButton, setShowButton] = useState(false)
   const { openSignUp } = useClerk()
 
   const handleGetStarted = () => openSignUp({ forceRedirectUrl: "/" })
 
   useEffect(() => {
-    // On mount/reload, force scroll to the absolute top of the page 
+    // On mount/reload, force scroll to the absolute top of the page
     // and remove any hash targeting so we sit on the clean root
-    window.scrollTo({ top: 0, left: 0, behavior: 'instant' })
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" })
     if (window.location.hash) {
-      window.history.replaceState(null, '', window.location.pathname)
+      window.history.replaceState(null, "", window.location.pathname)
     }
-
-    const handleScroll = () => {
-      setShowButton(window.scrollY > 500)
-    }
-    window.addEventListener("scroll", handleScroll)
-    return () => window.removeEventListener("scroll", handleScroll)
   }, [])
-
-  const scrollToTop = () => {
-    window.scrollTo({ top: 0, behavior: "smooth" })
-  }
 
   return (
     <>
@@ -466,21 +455,7 @@ export default function HomePage() {
       <AboutSection />
       <CTASection onGetStarted={handleGetStarted} />
 
-      <AnimatePresence>
-        {showButton && (
-          <motion.button
-            initial={{ opacity: 0, scale: 0.8 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.8 }}
-            transition={{ duration: 0.2 }}
-            onClick={scrollToTop}
-            className="fixed bottom-6 right-6 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/25 hover:bg-primary/90 transition-colors cursor-pointer"
-            aria-label="Scroll to top"
-          >
-            <ChevronUp className="h-6 w-6" />
-          </motion.button>
-        )}
-      </AnimatePresence>
+      <BackToTop />
     </>
   )
 }

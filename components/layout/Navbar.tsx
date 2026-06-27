@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils"
 
 const navLinks = [
   { href: "/", label: "Tools", hasDropdown: true },
+  { href: "/pricing", label: "Pricing", hasDropdown: false },
   { href: "/#features", label: "Features", hasDropdown: false },
   { href: "/#about", label: "About", hasDropdown: false },
 ]
@@ -190,6 +191,16 @@ export function Navbar() {
                 )}
               >
                 All Tools
+              </Link>
+              <Link
+                href="/pricing"
+                onClick={() => setMobileOpen(false)}
+                className={cn(
+                  "block px-3 py-2 rounded-lg text-sm font-medium transition-colors hover:bg-accent",
+                  pathname === "/pricing" ? "bg-accent text-accent-foreground" : "text-muted-foreground"
+                )}
+              >
+                Pricing
               </Link>
               <Link
                 href="/#features"
