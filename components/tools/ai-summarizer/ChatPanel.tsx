@@ -13,6 +13,7 @@ import { copyTextToClipboard } from "@/components/tools/shared/formatContent"
 export type StreamEvent =
   | { type: "chunk"; text: string }
   | { type: "done"; documentText?: string }
+  | { type: "error"; message: string }
 
 export type ChatMessage = {
   id: string

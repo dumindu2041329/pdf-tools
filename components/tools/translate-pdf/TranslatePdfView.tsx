@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { FileUploader } from "@/components/tools/FileUploader"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -13,6 +13,7 @@ import { toast } from "sonner"
 type StreamEvent =
   | { type: "chunk"; text: string }
   | { type: "done"; documentText?: string }
+  | { type: "error"; message: string }
 
 type TranslateRequestBody = {
   mode: "translate"
@@ -41,9 +42,14 @@ async function* readSseStream(res: Response): AsyncGenerator<StreamEvent, void, 
         const data = line.slice(6).trim()
         if (!data || data === "[DONE]") continue
         try {
-          yield JSON.parse(data) as StreamEvent
-        } catch {
-          // ignore
+          const parsed = JSON.parse(data) as StreamEvent
+          if (parsed.type === "error") {
+            // Surface the server's error message to the outer try/catch.
+            throw new Error(parsed.message)
+          }
+          yield parsed
+        } catch (err) {
+          if (err instanceof Error && err.message) throw err
         }
       }
     }
@@ -148,6 +154,19 @@ export function TranslatePdfView({ maxSizeMB }: { maxSizeMB: number }) {
   const [generatedAt, setGeneratedAt] = useState<number | null>(null)
   const [isTranslating, setIsTranslating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Aborts the in-flight fetch + SSE reader when the user picks a
+  // different file or clears the current one mid-translation. Each
+  // startTranslate() creates a fresh controller so stale async work
+  // can detect cancellation via signal.aborted and bail out.
+  const abortRef = useRef<AbortController | null>(null)
+
+  const cancelTranslate = useCallback(() => {
+    if (abortRef.current) {
+      abortRef.current.abort()
+      abortRef.current = null
+    }
+    setIsTranslating(false)
+  }, [])
 
   const targetLanguage = useMemo(() => {
     // TranslateOptions uses `toLanguage`
@@ -189,31 +208,44 @@ export function TranslatePdfView({ maxSizeMB }: { maxSizeMB: number }) {
   }, [targetLanguage])
 
   const reset = useCallback(() => {
+    cancelTranslate()
     setFile(null)
     setTranslatedText("")
     setGeneratedAt(null)
-    setIsTranslating(false)
     setError(null)
-  }, [])
+  }, [cancelTranslate])
 
-  const handleFilesSelected = useCallback((files: File[]) => {
-    setFile(files[0] ?? null)
-    setTranslatedText("")
-    setGeneratedAt(null)
-    setError(null)
-  }, [])
+  const handleFilesSelected = useCallback(
+    (files: File[]) => {
+      // Selecting a new PDF mid-translation aborts the in-flight
+      // request so the previous translation doesn't bleed into the
+      // new file's output panel.
+      cancelTranslate()
+      setFile(files[0] ?? null)
+      setTranslatedText("")
+      setGeneratedAt(null)
+      setError(null)
+    },
+    [cancelTranslate]
+  )
+
+  // Ensure any pending translation is aborted if the component
+  // unmounts (e.g. navigation away from the tool).
+  useEffect(() => {
+    return () => cancelTranslate()
+  }, [cancelTranslate])
 
   const startTranslate = useCallback(async () => {
     if (!file || isTranslating) return
+    const controller = new AbortController()
+    abortRef.current = controller
     setIsTranslating(true)
     setError(null)
     setGeneratedAt(null)
 
     try {
       const documentText = await extractPdfText(file)
-      if (!documentText.trim()) {
-        throw new Error("Could not extract text from this PDF.")
-      }
+      if (controller.signal.aborted) return
 
       const body: TranslateRequestBody = {
         mode: "translate",
@@ -227,7 +259,9 @@ export function TranslatePdfView({ maxSizeMB }: { maxSizeMB: number }) {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
+        signal: controller.signal,
       })
+      if (controller.signal.aborted) return
       if (!res.ok || !res.body) {
         const data = (await res.json().catch(() => ({}))) as { error?: string }
         throw new Error(data.error || "Translation failed.")
@@ -235,18 +269,27 @@ export function TranslatePdfView({ maxSizeMB }: { maxSizeMB: number }) {
 
       let acc = ""
       for await (const event of readSseStream(res)) {
+        if (controller.signal.aborted) return
         if (event.type === "chunk") {
           acc += event.text
           setTranslatedText(acc)
         } else if (event.type === "done") {
           setIsTranslating(false)
           setGeneratedAt(Date.now())
+          if (abortRef.current === controller) abortRef.current = null
           return
         }
       }
+      if (controller.signal.aborted) return
       setIsTranslating(false)
       setGeneratedAt(Date.now())
+      if (abortRef.current === controller) abortRef.current = null
     } catch (e) {
+      // Swallow the abort noise — the user explicitly cancelled by
+      // picking a new file or clearing the current one.
+      if (controller.signal.aborted) return
+      if (e instanceof DOMException && e.name === "AbortError") return
+      if (abortRef.current === controller) abortRef.current = null
       setIsTranslating(false)
       setError(e instanceof Error ? e.message : "Translation failed.")
     }

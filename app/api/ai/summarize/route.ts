@@ -31,6 +31,44 @@ type SummaryRequest = {
 type StreamEvent =
   | { type: "chunk"; text: string }
   | { type: "done"; documentText?: string }
+  | { type: "error"; message: string }
+
+// Detect OpenRouter rate-limit responses from the OpenAI SDK error.
+// The free model is shared across all OpenRouter users and is
+// frequently rate-limited upstream; the upstream message itself
+// recommends retrying shortly.
+function isRateLimitError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false
+  const e = err as { status?: unknown; code?: unknown; error?: { code?: unknown } }
+  return (
+    e.status === 429 ||
+    e.code === 429 ||
+    e.error?.code === 429
+  )
+}
+
+// Retry a promise-returning function on 429 with exponential backoff.
+// We only retry on rate-limit errors — any other failure surfaces
+// immediately. Total worst-case delay is ~7s, well under the 60s
+// Vercel budget for /api/ai/*.
+async function withRateLimitRetry<T>(
+  fn: () => Promise<T>,
+  maxAttempts: number = 3
+): Promise<T> {
+  const delays = [1000, 2000, 4000]
+  let lastErr: unknown
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      return await fn()
+    } catch (err) {
+      lastErr = err
+      if (!isRateLimitError(err) || attempt === maxAttempts - 1) throw err
+      await new Promise((r) => setTimeout(r, delays[attempt] ?? 4000))
+    }
+  }
+  // Unreachable, but TS needs an explicit throw.
+  throw lastErr
+}
 
 const SSE_HEADERS = {
   "Content-Type": "text/event-stream; charset=utf-8",
@@ -123,14 +161,16 @@ async function buildStreamingClient(): Promise<{
     model,
     configured: true,
     stream: async (systemPrompt, userPrompt) => {
-      const stream = (await client.chat.completions.create({
-        model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        stream: true,
-      })) as unknown as ChatStream["controller"]
+      const stream = await withRateLimitRetry(() =>
+        client.chat.completions.create({
+          model,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          stream: true,
+        })
+      ) as unknown as ChatStream["controller"]
       return (async function* () {
         for await (const chunk of stream) {
           const text = chunk.choices?.[0]?.delta?.content || ""
@@ -306,15 +346,18 @@ export async function POST(req: Request) {
         })
       } catch (err) {
         console.error("AI Summarize (summary) error:", err)
+        const message = isRateLimitError(err)
+          ? "The AI service is temporarily rate-limited. Please try again in a moment."
+          : (err as Error).message || "Summarization failed"
+        yield { type: "error", message }
         await recordProcessingEvent({
           userId,
           toolSlug: "ai-summarizer",
           status: "error",
           engine,
           inputFilesCount: 1,
-          errorMessage: (err as Error).message || "Summarization failed",
+          errorMessage: message,
         })
-        throw err
       }
     })()
   )

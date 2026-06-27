@@ -59,6 +59,38 @@ async function getAuthenticatedUserId(): Promise<string | null> {
   }
 }
 
+// Detect OpenRouter rate-limit responses from the OpenAI SDK error.
+// The free model is shared across all OpenRouter users and is
+// frequently rate-limited upstream.
+function isRateLimitError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false
+  const e = err as { status?: unknown; code?: unknown; error?: { code?: unknown } }
+  return (
+    e.status === 429 ||
+    e.code === 429 ||
+    e.error?.code === 429
+  )
+}
+
+// Retry a promise-returning function on 429 with exponential backoff.
+async function withRateLimitRetry<T>(
+  fn: () => Promise<T>,
+  maxAttempts: number = 3
+): Promise<T> {
+  const delays = [1000, 2000, 4000]
+  let lastErr: unknown
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      return await fn()
+    } catch (err) {
+      lastErr = err
+      if (!isRateLimitError(err) || attempt === maxAttempts - 1) throw err
+      await new Promise((r) => setTimeout(r, delays[attempt] ?? 4000))
+    }
+  }
+  throw lastErr
+}
+
 async function buildStreamingClient(): Promise<{
   model: string
   configured: boolean
@@ -93,14 +125,16 @@ async function buildStreamingClient(): Promise<{
     model,
     configured: true,
     stream: async (systemPrompt, userPrompt) => {
-      const stream = (await client.chat.completions.create({
-        model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        stream: true,
-      })) as unknown as ChatStream["controller"]
+      const stream = await withRateLimitRetry(() =>
+        client.chat.completions.create({
+          model,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          stream: true,
+        })
+      ) as unknown as ChatStream["controller"]
 
       return (async function* () {
         for await (const chunk of stream) {

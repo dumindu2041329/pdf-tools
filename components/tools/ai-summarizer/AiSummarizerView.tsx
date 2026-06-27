@@ -37,8 +37,18 @@ async function* readSseStream(res: Response): AsyncGenerator<StreamEvent, void, 
         if (!data || data === "[DONE]") continue
         try {
           const parsed = JSON.parse(data) as StreamEvent
+          if (parsed.type === "error") {
+            // Surface the server's error message to the outer try/catch
+            // so the chat panel shows a useful reason instead of a
+            // generic "Could not summarize the document." fallback.
+            throw new Error(parsed.message)
+          }
           yield parsed
-        } catch {
+        } catch (err) {
+          if (err instanceof Error && err.message) {
+            // Re-throw so the outer catch can display the message.
+            throw err
+          }
           // Skip malformed lines; the server is expected to always emit
           // valid JSON in the data slot.
         }
