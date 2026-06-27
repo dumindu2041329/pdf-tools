@@ -1,21 +1,21 @@
 # 📄 PDF Tools
 
-A powerful, full-stack PDF processing web app built with **Next.js 16** — supporting **29 tools** across organize, convert, edit, security, and AI categories.
+A powerful, full-stack PDF processing web app built with **Next.js 16** — supporting **29 tools** across organize, optimize, convert, edit, security, and AI categories.
 
 ## ✨ Features
 
 ### 🗂️ Organize (6 tools)
-- **Merge PDF** — Combine up to 80 PDFs into one document
-- **Split PDF** — Separate a PDF into multiple files
+- **Merge PDF** — Combine up to 80 PDFs into one document (client-side via pdf-lib)
+- **Split PDF** — Separate a PDF into multiple files (client-side)
 - **Remove Pages** — Delete specific pages with a visual selector
-- **Extract Pages** — Extract text and data from PDFs
+- **Extract Data** — Extract text from PDFs (CSV / JSON / Markdown / TXT)
 - **Organize PDF** — Drag-and-drop page reordering and rotation
-- **Scan to PDF** — Convert scanned images (JPG, PNG, WebP) into a PDF
+- **Scan to PDF** — Convert scanned images (JPG, PNG, WebP, GIF) into a PDF
 
 ### ⚡ Optimize (3 tools)
 - **Compress PDF** — Reduce file size with extreme, recommended, or low compression
 - **Repair PDF** — Fix corrupted or damaged PDF files
-- **OCR PDF** — Make scanned PDFs searchable (80+ languages)
+- **OCR PDF** — Make scanned PDFs searchable (80+ languages, **Adobe PDF Services**)
 
 ### 🔄 Convert to PDF (5 tools)
 - **Word to PDF** — DOC / DOCX → PDF
@@ -25,15 +25,15 @@ A powerful, full-stack PDF processing web app built with **Next.js 16** — supp
 - **HTML to PDF** — Web pages → PDF
 
 ### 📤 Convert from PDF (6 tools)
-- **PDF to Word** — PDF → DOCX (Adobe PDF Services)
-- **PDF to Excel** — PDF → XLSX (Adobe PDF Services)
-- **PDF to PowerPoint** — PDF → PPTX (Adobe PDF Services)
-- **PDF to JPG** — PDF pages → images
+- **PDF to Word** — PDF → DOCX (**Adobe PDF Services**)
+- **PDF to Excel** — PDF → XLSX (**Adobe PDF Services**)
+- **PDF to PowerPoint** — PDF → PPTX (**Adobe PDF Services**)
+- **PDF to JPG** — PDF pages → images (iLoveAPI)
 - **PDF to PDF/A** — Convert to archival format
 - **Validate PDF/A** — Check PDF/A compliance
 
 ### ✏️ Edit (4 tools)
-- **Rotate PDF** — Rotate pages to any angle
+- **Rotate PDF** — Rotate pages to any angle (server-side pdf-lib)
 - **Watermark PDF** — Add text or image watermarks
 - **Add Page Numbers** — Customizable position, format, and style
 - **Edit PDF** — General PDF editing
@@ -41,11 +41,11 @@ A powerful, full-stack PDF processing web app built with **Next.js 16** — supp
 ### 🔒 Security (3 tools)
 - **Unlock PDF** — Remove password protection
 - **Protect PDF** — Add password encryption
-- **Sign PDF** — Digital signatures via iLoveAPI
+- **Sign PDF** — Digital signatures via iLoveAPI Signature API
 
 ### 🤖 AI (2 tools)
-- **AI Summarizer** — Summarize PDF content with OpenAI
-- **Translate PDF** — Translate PDFs to other languages with OpenAI
+- **AI Summarizer** — Chat-style summaries with Mermaid diagrams via OpenRouter
+- **Translate PDF** — Translate PDFs to 30+ languages via OpenRouter
 
 ### 🔁 Workflows
 Chain multiple tools into reusable multi-step pipelines, stored in Neon PostgreSQL.
@@ -56,17 +56,25 @@ Chain multiple tools into reusable multi-step pipelines, stored in Neon PostgreS
 
 | Layer | Technology | Version |
 |---|---|---|
-| 🖼️ Framework | Next.js (App Router) | ^16.2.3 |
+| 🖼️ Framework | Next.js (App Router, Turbopack) | ^16.2.3 |
 | 🔷 Language | TypeScript (strict) | ^5 |
-| 🎨 Styling | Tailwind CSS v4 + shadcn/ui | ^4 |
+| 🎨 Styling | Tailwind CSS v4 + shadcn/ui (Radix + CVA) | ^4 |
 | 🔐 Auth | Clerk | ^7.0.7 |
 | 📑 PDF Engine | iLoveAPI + Adobe PDF Services + pdf-lib | — |
-| 🤖 AI | OpenAI | ^6.33.0 |
-| 🗄️ Database | Neon PostgreSQL | ^1.1.0 |
+| 🤖 AI | OpenRouter (via the `openai` SDK, model `openai/gpt-oss-120b:free`) | ^6.33.0 |
+| 💳 Payments | Stripe (Premium subscription) | ^16.12.0 |
+| 📦 Object Storage | Vercel Blob (client-upload for files > 4 MB) | ^2.4.0 |
+| 🗄️ Database | Neon PostgreSQL (`@neondatabase/serverless`) | ^1.1.0 |
+| 📄 PDF Parsing (client) | pdfjs-dist | ^4.10.38 |
+| 🧩 Utilities | jszip + jsonwebtoken | ^3.10.1 / ^9.0.3 |
 | 🎞️ Animation | Framer Motion | ^12.38.0 |
 | 🌐 3D | Three.js | ^0.183.2 |
-| 🖱️ Drag & Drop | @dnd-kit | ^6.3.1 |
+| 🖱️ Drag & Drop | @dnd-kit/core + sortable + utilities | ^6.3.1 |
+| 🎨 Icons | lucide-react | ^1.7.0 |
+| 🌗 Theming | next-themes | ^0.4.6 |
+| 📊 Diagrams | mermaid (dynamic-imported by AI Summarizer) | ^11.15.0 |
 | 🔔 Toasts | Sonner | ^2.0.7 |
+| 📈 Telemetry | @vercel/analytics + @vercel/speed-insights | ^2.0.1 / ^2.0.0 |
 | 🚀 Deployment | Vercel | — |
 
 ---
@@ -75,33 +83,66 @@ Chain multiple tools into reusable multi-step pipelines, stored in Neon PostgreS
 
 ```
 app/
-  (auth)/           # Clerk sign-in / sign-up pages
-  (dashboard)/      # Protected: account, billing, workflows
-  (marketing)/      # Public landing page
-  api/              # Route handlers (tools, AI, download, webhooks)
-  tools/[slug]/     # Dynamic tool pages (29 tools)
+  (auth)/                # Clerk sign-in / sign-up pages
+  (dashboard)/           # Protected: account, billing, workflows
+  (marketing)/           # Public landing + pricing pages
+  api/                   # Route handlers (tools, AI, download, webhooks, billing, upload)
+  tools/[slug]/          # Dynamic tool pages (29 tools)
 components/
-  layout/           # Navbar, Footer, UserMenu
-  tools/            # FileUploader, ProcessingModal, ToolCard
-  ui/               # shadcn/ui primitives + Three.js hills
-hooks/              # useTool — central state machine
+  layout/                # Navbar, Footer, UserMenu, ToolsDropdown
+  shared/                # BackToTop, UsageMeter
+  theme/                 # ThemeProvider, ThemeToggle, Toaster
+  tools/
+    ai-summarizer/       # Chat-style summarizer view + pdfjs preview
+    translate-pdf/       # Streaming translation view
+    options/             # Per-tool option forms + previews
+    shared/              # CodeBlock, markdown/Mermaid renderer
+    FileUploader.tsx     # Drop zone + dnd-kit sortable file list
+    ProcessingModal.tsx  # 5-step animated processing overlay
+    ToolCard.tsx, ToolGrid.tsx, ToolHero.tsx, DownloadCard.tsx
+  ui/                    # shadcn/ui primitives + Three.js hills
+hooks/
+  useTool.ts             # Central state machine + upload pipeline
 lib/
-  iloveapi/         # Client, runner, error mapping, watermark/page-number mappers
-  pdf/              # pdf-lib helpers (merge, split, rotate) + Adobe converters
-  tools-config.ts   # Tool registry (29 tools)
-  db.ts             # Neon PostgreSQL connection + schema
-  usage.ts          # Plan limits & usage tracking
+  iloveapi/              # Client, runner, error mapping, watermark/page-number mappers
+  pdf/                   # pdf-lib helpers (merge, split, rotate) + Adobe converters
+  activityStore.ts       # localStorage activity feed
+  auth.ts                # Clerk plan helpers (getUserPlan, grant/revoke)
+  blob-storage.ts        # Server: uploadToBlob, downloadFromBlob, delete, list
+  blob-upload.ts         # Client: shouldUseDirectUpload, uploadFileDirect
+  db.ts                  # Neon client + auto schema + self-heal
+  extractFormatConverter.ts  # extract-data → csv/json/md/txt
+  fileStore.ts           # In-memory Map<id, file> for /api/download/[id]
+  guest-usage.ts         # Cookie-backed counter for unauthenticated users
+  stripe.ts              # Stripe SDK singleton + price/webhook secret exports
+  toolValidation.ts      # Per-tool UI validation (pre-server)
+  tools-config.ts        # Tool registry (29 tools) + categories
+  usage.ts               # Plan limits & usage tracking
+  usageLimits.ts         # Plan limit constants (client-safe)
+  utils.ts               # cn() — clsx + tailwind-merge
+  workflowSession.ts     # IndexedDB-backed multi-step workflow session
+  workflowStore.ts       # Legacy localStorage store (read-only mirror)
+proxy.ts                 # Clerk middleware (Next.js 16 middleware filename)
+next.config.ts           # Turbopack, proxyClientMaxBodySize, Clerk image domain
+vercel.json              # Vercel deployment config (timeouts + security headers)
+eslint.config.mjs        # ESLint flat config
+postcss.config.mjs       # Tailwind v4 PostCSS plugin
+tsconfig.json            # "@/*" path alias → "./*"
 ```
 
-### 🗃️ Database (6 tables)
-`app_user` · `workflow` · `workflow_step`
+### 🗃️ Database (4 tables)
+`app_user` · `workflow` · `workflow_step` · `usage_counter`
+
+> Schema is **auto-created on first server request** via `ensureDbSchema()`. A `pdf_tools_health_check()` stored function runs hourly per server instance to detect and self-heal missing tables. Writes catch `42P01` (`undefined_table`) errors and re-init the schema once as a safety net.
 
 ### 📊 Usage Plans
 
-| Plan | Daily | Monthly | Max File Size |
-|---|---|---|---|
-| 🆓 Free | 5 | 30 | 20 MB |
-| ⭐ Premium | Unlimited | Unlimited | 200 MB |
+| Plan | Daily | Monthly | Max File Size | Price |
+|---|---|---|---|---|
+| 🆓 Free | 5 | 30 | 20 MB | $0 |
+| ⭐ Premium | Unlimited | Unlimited | 4 GB (iLoveAPI) · 100 MB (Adobe) | $20 / month |
+
+> Adobe-backed tools (`pdf-to-word`, `pdf-to-excel`, `pdf-to-powerpoint`, `ocr-pdf`) have a hard 100 MB input cap. All other tools accept up to 4 GB on Premium. See `/pricing` for the per-tool breakdown.
 
 ---
 
@@ -127,11 +168,13 @@ The app uses **Neon PostgreSQL**. Create a free database at [neon.tech](https://
 
 Create a free app at [clerk.com](https://clerk.com) and add your publishable and secret keys.
 
-### 5. 🔑 Set Up PDF & AI Services
+### 5. 🔑 Set Up PDF, AI & Payment Services
 
 - **iLoveAPI** — Get keys at [developer.ilovepdf.com](https://developer.ilovepdf.com)
-- **OpenAI** — Get an API key at [platform.openai.com](https://platform.openai.com)
+- **OpenRouter** — Get an API key at [openrouter.ai](https://openrouter.ai) (the AI summarizer and translate-pdf routes use the `openai` SDK pointed at OpenRouter, model `openai/gpt-oss-120b:free`)
 - **Adobe PDF Services** *(optional, for Word/Excel/PowerPoint export and OCR)* — Get credentials at [developer.adobe.com](https://developer.adobe.com/document-services)
+- **Stripe** *(optional, for Premium subscription)* — Get keys at [dashboard.stripe.com](https://dashboard.stripe.com)
+- **Vercel Blob** *(auto-injected on Vercel; locally run `vercel env pull .env.local`)* — Used for files > 4 MB via the [client-upload pattern](https://vercel.com/docs/vercel-blob/client-upload)
 
 ### 6. 🔧 Start the Dev Server
 
@@ -144,16 +187,29 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 ### ⚙️ Environment Variables
 
 ```env
+# ── Required ───────────────────────────────────────────────────────────
 DATABASE_URL=                        # Neon PostgreSQL
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=   # Clerk public key
 CLERK_SECRET_KEY=                    # Clerk secret key
 ILOVEAPI_PUBLIC_KEY=                 # iLoveAPI public key
 ILOVEAPI_SECRET_KEY=                 # iLoveAPI secret key
-OPENAI_API_KEY=                      # OpenAI API key
+OPENROUTER_API_KEY=                  # OpenRouter key (AI summarizer + translate-pdf)
 
-# Adobe PDF Services
-PDF_SERVICES_CLIENT_ID=              # Adobe PDF Services client ID
-PDF_SERVICES_CLIENT_SECRET=          # Adobe PDF Services client secret
+# ── Optional ──────────────────────────────────────────────────────────
+# Adobe PDF Services (pdf-to-word / excel / powerpoint / ocr-pdf)
+PDF_SERVICES_CLIENT_ID=
+PDF_SERVICES_CLIENT_SECRET=
+
+# Stripe (Premium subscription checkout + webhooks)
+STRIPE_SECRET_KEY=
+STRIPE_PREMIUM_PRICE_ID=             # Stripe price ID for the $20 / month Premium plan
+STRIPE_WEBHOOK_SECRET=
+
+# Vercel Blob (required for source-PDF uploads > 4 MB)
+BLOB_READ_WRITE_TOKEN=
+
+# Misc
+NEXT_PUBLIC_APP_URL=                 # Public app URL (defaults to http://localhost:3000)
 ```
 
 ---
