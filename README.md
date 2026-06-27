@@ -162,7 +162,7 @@ Create a `.env.local` file in the root directory (see [Environment Variables](#�
 
 ### 3. 🗄️ Set Up the Database
 
-The app uses **Neon PostgreSQL**. Create a free database at [neon.tech](https://neon.tech), then add the connection string to `DATABASE_URL`. The schema is **auto-created on first request** — no migrations needed.
+The app uses **Neon PostgreSQL**. Create a free database at [neon.com](https://neon.com), then add the connection string to `DATABASE_URL`. The schema is **auto-created on first request** — no migrations needed.
 
 ### 4. 🔐 Set Up Clerk Auth
 
@@ -170,7 +170,7 @@ Create a free app at [clerk.com](https://clerk.com) and add your publishable and
 
 ### 5. 🔑 Set Up PDF, AI & Payment Services
 
-- **iLoveAPI** — Get keys at [developer.ilovepdf.com](https://developer.ilovepdf.com)
+- **iLoveAPI** — Get keys at [iloveapi.com](https://iloveapi.com)
 - **OpenRouter** — Get an API key at [openrouter.ai](https://openrouter.ai) (the AI summarizer and translate-pdf routes use the `openai` SDK pointed at OpenRouter, model `openai/gpt-oss-120b:free`)
 - **Adobe PDF Services** *(optional, for Word/Excel/PowerPoint export and OCR)* — Get credentials at [developer.adobe.com](https://developer.adobe.com/document-services)
 - **Stripe** *(optional, for Premium subscription)* — Get keys at [dashboard.stripe.com](https://dashboard.stripe.com)
