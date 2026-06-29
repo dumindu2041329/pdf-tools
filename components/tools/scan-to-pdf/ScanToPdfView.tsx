@@ -67,6 +67,7 @@ export function ScanToPdfView() {
   const [connected, setConnected] = useState(false)
   const [device, setDevice] = useState<DeviceInfo | null>(null)
   const columnsPerRow = useColumnsPerRow()
+  const hasScanned = device !== null || images.length > 0
 
   useEffect(() => {
     const id = crypto.randomUUID()
@@ -125,9 +126,7 @@ export function ScanToPdfView() {
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-7xl mx-auto">
         {/* ── Left Panel - Step 1 (Active) ── */}
-        <div
-          className="md:col-span-1 bg-card rounded-2xl shadow-md p-8 flex flex-col items-center"
-        >
+        <div className={`md:col-span-1 bg-card rounded-2xl shadow-md p-8 flex flex-col items-center transition-opacity duration-300 ${hasScanned ? "opacity-60 pointer-events-none select-none" : "opacity-100"}`}>
           <h3 className="text-xl font-bold text-card-foreground">Step 1</h3>
           <p className="text-sm text-muted-foreground text-center mt-1 mb-6 max-w-xs">
             Use your smartphone&apos;s camera to scan this QR code
@@ -145,8 +144,8 @@ export function ScanToPdfView() {
             */}
             <motion.div
               animate={{
-                opacity: mobileScanUrl && !device ? 1 : 0,
-                scale: mobileScanUrl && !device ? 1 : 0.92,
+                opacity: mobileScanUrl && !hasScanned ? 1 : 0,
+                scale: mobileScanUrl && !hasScanned ? 1 : 0.92,
               }}
               transition={{ duration: 0.25, ease: "easeOut" }}
               className="flex items-center justify-center"
@@ -157,8 +156,8 @@ export function ScanToPdfView() {
             <motion.div
               initial={{ opacity: 0, scale: 0.85 }}
               animate={{
-                opacity: device ? 1 : 0,
-                scale: device ? 1 : 0.85,
+                opacity: hasScanned ? 1 : 0,
+                scale: hasScanned ? 1 : 0.85,
               }}
               transition={{
                 opacity: { duration: 0.25, ease: "easeOut" },
@@ -173,7 +172,7 @@ export function ScanToPdfView() {
                 <motion.span
                   className="absolute inline-flex h-24 w-24 rounded-full bg-emerald-400/40"
                   animate={
-                    device
+                    hasScanned
                       ? {
                           scale: [0.5, 1.4, 1.6],
                           opacity: [0.8, 0.2, 0],
@@ -183,24 +182,24 @@ export function ScanToPdfView() {
                   transition={{
                     duration: 1.6,
                     ease: "easeOut",
-                    repeat: device ? Infinity : 0,
+                    repeat: hasScanned ? Infinity : 0,
                     repeatDelay: 0.6,
                   }}
                 />
                 <motion.div
                   animate={{
-                    rotate: device ? 0 : -20,
+                    rotate: hasScanned ? 0 : -20,
                   }}
                   transition={{ duration: 0.35, ease: "easeOut" }}
                   className="relative flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500 text-white shadow-lg shadow-emerald-500/30"
                 >
                   <motion.div
                     animate={{
-                      scale: device ? 1 : 0,
-                      opacity: device ? 1 : 0,
+                      scale: hasScanned ? 1 : 0,
+                      opacity: hasScanned ? 1 : 0,
                     }}
                     transition={{
-                      delay: device ? 0.15 : 0,
+                      delay: hasScanned ? 0.15 : 0,
                       duration: 0.3,
                       ease: "easeOut",
                     }}
@@ -211,17 +210,17 @@ export function ScanToPdfView() {
               </div>
               <motion.p
                 animate={{
-                  opacity: device ? 1 : 0,
-                  y: device ? 0 : 4,
+                  opacity: hasScanned ? 1 : 0,
+                  y: hasScanned ? 0 : 4,
                 }}
-                transition={{ delay: device ? 0.25 : 0, duration: 0.3 }}
+                transition={{ delay: hasScanned ? 0.25 : 0, duration: 0.3 }}
                 className="text-sm font-semibold text-emerald-700 dark:text-emerald-300"
               >
-                Phone connected
+                {device ? device.label : "Detecting device…"}
               </motion.p>
             </motion.div>
           </div>
-          {device && (
+          {hasScanned && (
             <p className="text-xs font-medium text-emerald-700 dark:text-emerald-300 mt-4">
               ✓ QR code scanned — locked
             </p>
@@ -300,11 +299,9 @@ function ConnectionBadge({
           </span>
           {count > 0 ? `${count} captured` : "Connected"}
         </span>
-        {device && (
-          <span className="text-xs font-medium text-muted-foreground">
-            {device.label}
-          </span>
-        )}
+        <span className="text-xs font-medium text-muted-foreground">
+          {device ? device.label : count > 0 ? "Detecting device…" : null}
+        </span>
       </div>
     )
   }
