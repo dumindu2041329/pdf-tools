@@ -126,11 +126,7 @@ export function ScanToPdfView() {
     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-7xl mx-auto">
         {/* ── Left Panel - Step 1 (Active) ── */}
         <div
-          className={`md:col-span-1 bg-card rounded-2xl shadow-md p-8 flex flex-col items-center transition-opacity duration-300 ${
-            device
-              ? "opacity-60 pointer-events-none select-none"
-              : "opacity-100"
-          }`}
+          className="md:col-span-1 bg-card rounded-2xl shadow-md p-8 flex flex-col items-center"
         >
           <h3 className="text-xl font-bold text-card-foreground">Step 1</h3>
           <p className="text-sm text-muted-foreground text-center mt-1 mb-6 max-w-xs">
@@ -159,7 +155,7 @@ export function ScanToPdfView() {
             </motion.div>
 
             <motion.div
-              initial={false}
+              initial={{ opacity: 0, scale: 0.85 }}
               animate={{
                 opacity: device ? 1 : 0,
                 scale: device ? 1 : 0.85,
@@ -172,7 +168,6 @@ export function ScanToPdfView() {
                 },
               }}
               className="absolute inset-0 flex flex-col items-center justify-center gap-3"
-              style={{ pointerEvents: device ? "none" : "none" }}
             >
               <div className="relative flex items-center justify-center">
                 <motion.span
