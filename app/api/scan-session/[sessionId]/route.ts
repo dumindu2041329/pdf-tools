@@ -65,7 +65,9 @@ export async function GET(
     for (const blob of result.blobs) {
       if (blob.pathname.endsWith(`/${DEVICE_FILENAME}`)) {
         try {
-          const res = await fetch(blob.url)
+          const res = await fetch(`${blob.url}?t=${blob.uploadedAt.getTime()}`, {
+            cache: "no-store",
+          })
           if (res.ok) {
             const parsed = (await res.json()) as DeviceInfo
             if (parsed && typeof parsed.label === "string") {
