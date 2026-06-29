@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import QRCode from "qrcode"
 import { Smartphone } from "lucide-react"
+import type { DeviceInfo } from "@/lib/device-info"
 
 function QrCodeSvg({ value }: { value: string }) {
   const [svg, setSvg] = useState<string>("")
@@ -64,6 +65,7 @@ export function ScanToPdfView() {
   const [sessionId, setSessionId] = useState<string>("")
   const [images, setImages] = useState<ScannedImage[]>([])
   const [connected, setConnected] = useState(false)
+  const [device, setDevice] = useState<DeviceInfo | null>(null)
 
   useEffect(() => {
     const id = crypto.randomUUID()
@@ -82,15 +84,25 @@ export function ScanToPdfView() {
           cache: "no-store",
         })
         if (!res.ok) {
-          if (!cancelled) setConnected(false)
+          if (!cancelled) {
+            setConnected(false)
+            setDevice(null)
+          }
           return
         }
-        const data = (await res.json()) as { images: ScannedImage[] }
+        const data = (await res.json()) as {
+          images: ScannedImage[]
+          device: DeviceInfo | null
+        }
         if (cancelled) return
         setImages(data.images)
+        setDevice(data.device)
         setConnected(true)
       } catch {
-        if (!cancelled) setConnected(false)
+        if (!cancelled) {
+          setConnected(false)
+          setDevice(null)
+        }
       }
     }
 
@@ -109,9 +121,13 @@ export function ScanToPdfView() {
     : ""
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl mx-auto">
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-7xl mx-auto">
         {/* ── Left Panel - Step 1 (Active) ── */}
-        <div className="bg-card rounded-2xl shadow-md p-8 flex flex-col items-center">
+        <div
+          className={`md:col-span-1 bg-card rounded-2xl shadow-md p-8 flex flex-col items-center transition-all duration-300 ${
+            device ? "blur-sm opacity-60 pointer-events-none select-none" : ""
+          }`}
+        >
           <h3 className="text-xl font-bold text-card-foreground">Step 1</h3>
           <p className="text-sm text-muted-foreground text-center mt-1 mb-6 max-w-xs">
             Use your smartphone&apos;s camera to scan this QR code
@@ -123,20 +139,26 @@ export function ScanToPdfView() {
               <div className="h-[180px] w-[180px] rounded-lg bg-muted/40 animate-pulse" />
             )}
           </div>
+          {device && (
+            <p className="text-xs font-medium text-emerald-700 dark:text-emerald-300 mt-4">
+              ✓ QR code scanned — locked
+            </p>
+          )}
         </div>
 
         {/* ── Right Panel - Step 2 (Live captures) ── */}
-        <div className="bg-card rounded-2xl shadow-md p-8 flex flex-col">
-          <div className="flex items-center justify-between">
+        <div className="md:col-span-2 bg-card rounded-2xl shadow-md p-8 flex flex-col">
+          <div className="flex items-center justify-between gap-3">
             <h3 className="text-xl font-bold text-card-foreground">Step 2</h3>
-            <ConnectionBadge connected={connected} count={images.length} />
+            <ConnectionBadge
+              connected={connected}
+              count={images.length}
+              device={device}
+            />
           </div>
 
           <p className="text-sm leading-relaxed text-foreground/80 mt-3 mb-4">
             Captured pages from your phone will appear here in real time.
-            When you&apos;re done scanning, tap{" "}
-            <span className="font-semibold text-foreground">Save</span> on
-            your phone.
           </p>
 
           <ScannedGallery images={images} />
@@ -152,19 +174,28 @@ export function ScanToPdfView() {
 function ConnectionBadge({
   connected,
   count,
+  device,
 }: {
   connected: boolean
   count: number
+  device: DeviceInfo | null
 }) {
   if (connected) {
     return (
-      <span className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/40 px-2.5 py-1 rounded-full">
-        <span className="relative flex h-2 w-2">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-          <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+      <div className="flex flex-col items-end gap-1">
+        <span className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/40 px-2.5 py-1 rounded-full">
+          <span className="relative flex h-2 w-2">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+          </span>
+          {count > 0 ? `${count} captured` : "Connected"}
         </span>
-        {count > 0 ? `${count} captured` : "Connected"}
-      </span>
+        {device && (
+          <span className="text-xs font-medium text-muted-foreground">
+            {device.label}
+          </span>
+        )}
+      </div>
     )
   }
 

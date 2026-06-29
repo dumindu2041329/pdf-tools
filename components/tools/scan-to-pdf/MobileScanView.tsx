@@ -1,10 +1,11 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Camera, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { uploadFileDirect } from "@/lib/blob-upload"
+import { parseDeviceInfo } from "@/lib/device-info"
 
 interface MobileScanViewProps {
   sessionId: string
@@ -24,6 +25,27 @@ export function MobileScanView({ sessionId }: MobileScanViewProps) {
   const inputRef = useRef<HTMLInputElement>(null)
 
   const validSession = SAFE_SESSION.test(sessionId)
+
+  // Tell the desktop session that this phone just joined. Sent once
+  // on mount; the desktop uses the response to blur Step 1 and display
+  // the device label in Step 2. Fire-and-forget — UI doesn't depend
+  // on it succeeding.
+  useEffect(() => {
+    if (!validSession) return
+    const device = parseDeviceInfo(navigator.userAgent) ?? {
+      type: "mobile" as const,
+      os: "Unknown",
+      browser: "Unknown",
+      label: "Mobile · Unknown",
+    }
+    fetch(`/api/scan-session/${sessionId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ device }),
+    }).catch((err) => {
+      console.warn("[mobile-scan] join ping failed:", err)
+    })
+  }, [validSession, sessionId])
 
   async function handleCapture(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
