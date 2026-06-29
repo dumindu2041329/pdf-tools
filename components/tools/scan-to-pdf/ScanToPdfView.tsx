@@ -66,6 +66,7 @@ export function ScanToPdfView() {
   const [images, setImages] = useState<ScannedImage[]>([])
   const [connected, setConnected] = useState(false)
   const [device, setDevice] = useState<DeviceInfo | null>(null)
+  const columnsPerRow = useColumnsPerRow()
 
   useEffect(() => {
     const id = crypto.randomUUID()
@@ -228,6 +229,9 @@ export function ScanToPdfView() {
 
           <p className="text-sm leading-relaxed text-foreground/80 mt-3 mb-4">
             Captured pages from your phone will appear here in real time.
+            <span className="block text-xs text-muted-foreground mt-1">
+              Up to {columnsPerRow} images per row at this screen size.
+            </span>
           </p>
 
           <ScannedGallery images={images} />
@@ -238,6 +242,31 @@ export function ScanToPdfView() {
         </div>
     </div>
   )
+}
+
+function useColumnsPerRow(): number {
+  // The grid uses `grid-cols-3 sm:grid-cols-4 md:grid-cols-5`, so the
+  // active column count depends on the viewport:
+  //   <sm  → 3
+  //   sm   → 4
+  //   md+  → 5
+  // We mirror Tailwind's breakpoints (640px / 768px) with a matchMedia
+  // listener so the displayed count stays in sync if the user resizes.
+  const [columns, setColumns] = useState(3)
+
+  useEffect(() => {
+    function compute() {
+      const w = window.innerWidth
+      if (w >= 768) setColumns(5)
+      else if (w >= 640) setColumns(4)
+      else setColumns(3)
+    }
+    compute()
+    window.addEventListener("resize", compute)
+    return () => window.removeEventListener("resize", compute)
+  }, [])
+
+  return columns
 }
 
 function ConnectionBadge({

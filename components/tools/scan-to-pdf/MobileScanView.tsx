@@ -149,7 +149,7 @@ export function MobileScanView({ sessionId }: MobileScanViewProps) {
 
   return (
     <main className="min-h-svh bg-background p-4 sm:p-6">
-      <div className="max-w-md mx-auto space-y-6">
+      <div className="max-w-md mx-auto flex flex-col">
         <header className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold text-foreground">Mobile Scanner</h1>
@@ -181,7 +181,7 @@ export function MobileScanView({ sessionId }: MobileScanViewProps) {
           onClick={() => inputRef.current?.click()}
           disabled={uploading}
           size="lg"
-          className="w-full h-20 text-lg gap-3"
+          className="w-full h-20 text-lg gap-3 mt-6"
         >
           {uploading ? (
             <>
@@ -196,31 +196,40 @@ export function MobileScanView({ sessionId }: MobileScanViewProps) {
           )}
         </Button>
 
-        {captures.length > 0 && (
-          <section className="space-y-3">
-            <h2 className="text-sm font-semibold text-foreground">
-              Captured pages ({captures.length})
-            </h2>
-            <ul className="grid grid-cols-3 gap-2">
-              {captures.map((cap, idx) => (
-                <li
-                  key={cap.id}
-                  className="relative aspect-[3/4] rounded-lg overflow-hidden border border-border bg-muted"
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={cap.url}
-                    alt={`Captured page ${idx + 1}`}
-                    className="w-full h-full object-cover"
-                  />
-                  <span className="absolute top-1 left-1 bg-background/80 text-foreground text-[10px] font-semibold px-1.5 py-0.5 rounded">
-                    {idx + 1}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
+        {/* Captures region — takes remaining viewport height so the
+            scrollbar lives here, not on the whole page. min-h-0 lets
+            overflow-y-auto actually constrain the child. */}
+        <section className="mt-6 flex-1 min-h-0 flex flex-col">
+          <h2 className="text-sm font-semibold text-foreground mb-3">
+            Captured pages ({captures.length})
+          </h2>
+          <div className="flex-1 min-h-0 overflow-y-auto pr-1 -mr-1">
+            {captures.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-6 border border-dashed border-border rounded-lg">
+                No pages captured yet.
+              </p>
+            ) : (
+              <ul className="grid grid-cols-3 gap-2">
+                {captures.map((cap, idx) => (
+                  <li
+                    key={cap.id}
+                    className="relative aspect-[3/4] rounded-lg overflow-hidden border border-border bg-muted"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={cap.url}
+                      alt={`Captured page ${idx + 1}`}
+                      className="w-full h-full object-cover"
+                    />
+                    <span className="absolute top-1 left-1 bg-background/80 text-foreground text-[10px] font-semibold px-1.5 py-0.5 rounded">
+                      {idx + 1}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </section>
 
         <footer className="text-center text-xs text-muted-foreground pt-4">
           Switch back to your computer to see the pages appear in real time.
