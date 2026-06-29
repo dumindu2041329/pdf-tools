@@ -93,17 +93,46 @@ export async function POST(request: Request): Promise<NextResponse> {
         // `@vercel/blob/client`. The browser forwards it from the
         // `upload(file, { clientPayload })` call in `lib/blob-upload.ts`.
         // We use it to forward the file's content type without forcing
-        // the client to round-trip through a separate API.
+        // the client to round-trip through a separate API, and to
+        // optionally tag the upload with a scan session id so the
+        // ScanToPdf flow can group mobile captures by session.
+        let parsedPayload: { contentType?: string; sessionId?: string } = {}
         if (clientPayload) {
           try {
-            const payload = JSON.parse(clientPayload) as { contentType?: string }
-            if (payload.contentType && !allowed.includes(payload.contentType)) {
-              throw new Error(`Unsupported content type: ${payload.contentType}`)
+            parsedPayload = JSON.parse(clientPayload) as {
+              contentType?: string
+              sessionId?: string
+            }
+            if (
+              parsedPayload.contentType &&
+              !allowed.includes(parsedPayload.contentType)
+            ) {
+              throw new Error(`Unsupported content type: ${parsedPayload.contentType}`)
+            }
+            // When a sessionId is supplied (mobile-scan flow), the client
+            // is expected to upload under `scan-sessions/<sessionId>/…`.
+            // Validate the prefix matches so a leaked token can't write
+            // into someone else's session. sessionId is constrained to
+            // a safe charset to keep it usable as a path segment.
+            if (parsedPayload.sessionId) {
+              const safe = parsedPayload.sessionId.replace(/[^a-zA-Z0-9-]/g, "")
+              if (safe.length === 0 || safe.length > 100) {
+                throw new Error("Invalid sessionId")
+              }
+              const expectedPrefix = `scan-sessions/${safe}/`
+              if (!pathname.startsWith(expectedPrefix)) {
+                throw new Error("Pathname must start with the session prefix")
+              }
             }
           } catch (err) {
             // Malformed client payload — reject so a stolen token can't
             // smuggle an unsupported content type past the server check.
-            if (err instanceof Error && err.message.startsWith("Unsupported content type")) {
+            if (
+              err instanceof Error &&
+              (err.message.startsWith("Unsupported content type") ||
+                err.message === "Invalid sessionId" ||
+                err.message === "Pathname must start with the session prefix")
+            ) {
               throw err
             }
             throw new Error("Invalid clientPayload")
@@ -127,9 +156,15 @@ export async function POST(request: Request): Promise<NextResponse> {
           // other — the SDK appends a random suffix to make the final
           // pathname unique.
           addRandomSuffix: true,
-          // Carries the userId (or "guest") into `onUploadCompleted` so
-          // future cleanup hooks know who owns the blob.
-          tokenPayload: JSON.stringify({ userId: userId ?? "guest" }),
+          // Carries the userId (or "guest") and the scan sessionId (if
+          // any) into `onUploadCompleted` so future cleanup hooks know
+          // who owns the blob and which session it belongs to.
+          tokenPayload: JSON.stringify({
+            userId: userId ?? "guest",
+            ...(parsedPayload.sessionId
+              ? { sessionId: parsedPayload.sessionId }
+              : {}),
+          }),
         }
       },
       onUploadCompleted: async ({ blob, tokenPayload }) => {

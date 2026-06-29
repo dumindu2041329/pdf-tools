@@ -361,13 +361,6 @@ export default function PricingPage() {
                   </Link>
                 </Button>
               </div>
-
-              <p className="mt-8 text-xs text-white/70 max-w-2xl mx-auto">
-                Limits shown reflect a single processing request. Premium raises
-                the per-file size cap from 20 MB to up to 4 GB on iLoveAPI-backed
-                tools and up to 100 MB on Adobe-backed tools (PDF → Word, PDF →
-                Excel, PDF → PowerPoint, OCR).
-              </p>
             </div>
           </div>
         </div>
