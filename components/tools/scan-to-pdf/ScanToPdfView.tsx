@@ -84,10 +84,11 @@ export function ScanToPdfView() {
           cache: "no-store",
         })
         if (!res.ok) {
-          if (!cancelled) {
-            setConnected(false)
-            setDevice(null)
-          }
+          // Transient failure — don't clear `device`/`images` we already
+          // have. Just flip `connected` off so the badge reflects that
+          // we lost touch with the server. The next successful poll
+          // will restore it.
+          if (!cancelled) setConnected(false)
           return
         }
         const data = (await res.json()) as {
@@ -96,13 +97,13 @@ export function ScanToPdfView() {
         }
         if (cancelled) return
         setImages(data.images)
-        setDevice(data.device)
+        // `device` is sticky — once a phone has joined, treat the
+        // session as locked for its lifetime. A transient response that
+        // happens to omit the device blob shouldn't "un-lock" Step 1.
+        setDevice((prev) => data.device ?? prev)
         setConnected(true)
       } catch {
-        if (!cancelled) {
-          setConnected(false)
-          setDevice(null)
-        }
+        if (!cancelled) setConnected(false)
       }
     }
 
@@ -124,8 +125,10 @@ export function ScanToPdfView() {
     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-7xl mx-auto">
         {/* ── Left Panel - Step 1 (Active) ── */}
         <div
-          className={`md:col-span-1 bg-card rounded-2xl shadow-md p-8 flex flex-col items-center transition-all duration-300 ${
-            device ? "blur-sm opacity-60 pointer-events-none select-none" : ""
+          className={`md:col-span-1 bg-card rounded-2xl shadow-md p-8 flex flex-col items-center transition-opacity duration-300 ${
+            device
+              ? "opacity-50 pointer-events-none select-none"
+              : "opacity-100"
           }`}
         >
           <h3 className="text-xl font-bold text-card-foreground">Step 1</h3>
