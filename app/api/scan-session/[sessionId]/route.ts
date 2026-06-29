@@ -83,10 +83,21 @@ export async function GET(
 
       if (leaf === DEVICE_FILENAME) {
         try {
+<<<<<<< HEAD
           const buffer = await downloadFromStorage(url)
           const parsed = JSON.parse(buffer.toString("utf-8")) as DeviceInfo
           if (parsed && typeof parsed.label === "string") {
             device = parsed
+=======
+          const res = await fetch(`${blob.url}?t=${blob.uploadedAt.getTime()}`, {
+            cache: "no-store",
+          })
+          if (res.ok) {
+            const parsed = (await res.json()) as DeviceInfo
+            if (parsed && typeof parsed.label === "string") {
+              device = parsed
+            }
+>>>>>>> 8b11c997319b9bc2d2ada88a978ddf0ba5127f98
           }
         } catch (err) {
           // Device-info blob is best-effort metadata — never fail the
@@ -194,6 +205,7 @@ export async function POST(
     )
   }
 }
+<<<<<<< HEAD
 
 /**
  * Builds the public URL of an object. The Supabase SDK exposes
@@ -211,3 +223,5 @@ function publicUrlFor(bucket: string, path: string): string {
   }
   return `${base}/storage/v1/object/public/${bucket}/${path}`
 }
+=======
+>>>>>>> 8b11c997319b9bc2d2ada88a978ddf0ba5127f98

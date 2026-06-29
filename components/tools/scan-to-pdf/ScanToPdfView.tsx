@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import QRCode from "qrcode"
 import { Check, Smartphone } from "lucide-react"
-import { motion, AnimatePresence } from "framer-motion"
+import { motion } from "framer-motion"
 import { useTheme } from "next-themes"
 import type { DeviceInfo } from "@/lib/device-info"
 
@@ -66,6 +66,8 @@ export function ScanToPdfView() {
   const [images, setImages] = useState<ScannedImage[]>([])
   const [connected, setConnected] = useState(false)
   const [device, setDevice] = useState<DeviceInfo | null>(null)
+  const columnsPerRow = useColumnsPerRow()
+  const hasScanned = device !== null || images.length > 0
 
   useEffect(() => {
     const id = crypto.randomUUID()
@@ -124,91 +126,101 @@ export function ScanToPdfView() {
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-7xl mx-auto">
         {/* ── Left Panel - Step 1 (Active) ── */}
-        <div
-          className={`md:col-span-1 bg-card rounded-2xl shadow-md p-8 flex flex-col items-center transition-opacity duration-300 ${
-            device
-              ? "opacity-50 pointer-events-none select-none"
-              : "opacity-100"
-          }`}
-        >
+        <div className={`md:col-span-1 bg-card rounded-2xl shadow-md p-8 flex flex-col items-center transition-opacity duration-300 ${hasScanned ? "opacity-60 pointer-events-none select-none" : "opacity-100"}`}>
           <h3 className="text-xl font-bold text-card-foreground">Step 1</h3>
           <p className="text-sm text-muted-foreground text-center mt-1 mb-6 max-w-xs">
             Use your smartphone&apos;s camera to scan this QR code
           </p>
-          <div className="flex items-center justify-center p-4 bg-card rounded-xl border border-border min-h-[208px] min-w-[208px]">
-            <AnimatePresence mode="wait" initial={false}>
-              {mobileScanUrl && !device ? (
-                <motion.div
-                  key="qr"
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.9 }}
-                  transition={{ duration: 0.25, ease: "easeOut" }}
-                >
-                  <QrCodeSvg value={mobileScanUrl} />
-                </motion.div>
-              ) : device ? (
-                <motion.div
-                  key="scanned"
-                  initial={{ opacity: 0, scale: 0.6 }}
-                  animate={{ opacity: 1, scale: 1 }}
+          <div className="flex items-center justify-center p-4 bg-card rounded-xl border border-border min-h-[208px] min-w-[208px] relative overflow-hidden">
+            {/*
+              Render BOTH the QR and the success overlay together so we
+              don't have to wrestle with AnimatePresence + mode="wait"
+              exit timing. The success overlay uses absolute positioning
+              and is shown/hidden via the `device` state — fade in when
+              a phone joins, fade out if the session is somehow reset.
+              Pointer events stay disabled on the panel as a whole once
+              scanned (parent has pointer-events-none) so the overlay
+              can't be tapped through.
+            */}
+            <motion.div
+              animate={{
+                opacity: mobileScanUrl && !hasScanned ? 1 : 0,
+                scale: mobileScanUrl && !hasScanned ? 1 : 0.92,
+              }}
+              transition={{ duration: 0.25, ease: "easeOut" }}
+              className="flex items-center justify-center"
+            >
+              {mobileScanUrl ? <QrCodeSvg value={mobileScanUrl} /> : null}
+            </motion.div>
+
+            <motion.div
+              initial={{ opacity: 0, scale: 0.85 }}
+              animate={{
+                opacity: hasScanned ? 1 : 0,
+                scale: hasScanned ? 1 : 0.85,
+              }}
+              transition={{
+                opacity: { duration: 0.25, ease: "easeOut" },
+                scale: {
+                  duration: 0.45,
+                  ease: [0.16, 1, 0.3, 1],
+                },
+              }}
+              className="absolute inset-0 flex flex-col items-center justify-center gap-3"
+            >
+              <div className="relative flex items-center justify-center">
+                <motion.span
+                  className="absolute inline-flex h-24 w-24 rounded-full bg-emerald-400/40"
+                  animate={
+                    hasScanned
+                      ? {
+                          scale: [0.5, 1.4, 1.6],
+                          opacity: [0.8, 0.2, 0],
+                        }
+                      : { scale: 0.5, opacity: 0 }
+                  }
                   transition={{
-                    duration: 0.45,
-                    ease: [0.16, 1, 0.3, 1],
+                    duration: 1.6,
+                    ease: "easeOut",
+                    repeat: hasScanned ? Infinity : 0,
+                    repeatDelay: 0.6,
                   }}
-                  className="flex flex-col items-center gap-3"
-                >
-                  <div className="relative flex items-center justify-center">
-                    <motion.span
-                      className="absolute inline-flex h-24 w-24 rounded-full bg-emerald-400/40"
-                      initial={{ scale: 0.5, opacity: 0.8 }}
-                      animate={{ scale: [0.5, 1.4, 1.6], opacity: [0.8, 0.2, 0] }}
-                      transition={{
-                        duration: 1.6,
-                        ease: "easeOut",
-                        repeat: Infinity,
-                        repeatDelay: 0.6,
-                      }}
-                    />
-                    <motion.div
-                      initial={{ rotate: -20 }}
-                      animate={{ rotate: 0 }}
-                      transition={{ duration: 0.35, ease: "easeOut" }}
-                      className="relative flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500 text-white shadow-lg shadow-emerald-500/30"
-                    >
-                      <motion.div
-                        initial={{ scale: 0, opacity: 0 }}
-                        animate={{ scale: 1, opacity: 1 }}
-                        transition={{
-                          delay: 0.15,
-                          duration: 0.3,
-                          ease: "easeOut",
-                        }}
-                      >
-                        <Check className="h-10 w-10" strokeWidth={3} />
-                      </motion.div>
-                    </motion.div>
-                  </div>
-                  <motion.p
-                    initial={{ opacity: 0, y: 4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.25, duration: 0.3 }}
-                    className="text-sm font-semibold text-emerald-700 dark:text-emerald-300"
-                  >
-                    Phone connected
-                  </motion.p>
-                </motion.div>
-              ) : (
-                <motion.div
-                  key="placeholder"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="h-[180px] w-[180px] rounded-lg bg-muted/40 animate-pulse"
                 />
-              )}
-            </AnimatePresence>
+                <motion.div
+                  animate={{
+                    rotate: hasScanned ? 0 : -20,
+                  }}
+                  transition={{ duration: 0.35, ease: "easeOut" }}
+                  className="relative flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500 text-white shadow-lg shadow-emerald-500/30"
+                >
+                  <motion.div
+                    animate={{
+                      scale: hasScanned ? 1 : 0,
+                      opacity: hasScanned ? 1 : 0,
+                    }}
+                    transition={{
+                      delay: hasScanned ? 0.15 : 0,
+                      duration: 0.3,
+                      ease: "easeOut",
+                    }}
+                  >
+                    <Check className="h-10 w-10" strokeWidth={3} />
+                  </motion.div>
+                </motion.div>
+              </div>
+              <motion.p
+                animate={{
+                  opacity: hasScanned ? 1 : 0,
+                  y: hasScanned ? 0 : 4,
+                }}
+                transition={{ delay: hasScanned ? 0.25 : 0, duration: 0.3 }}
+                className="text-sm font-semibold text-emerald-700 dark:text-emerald-300"
+              >
+                {device ? device.label : "Detecting device…"}
+              </motion.p>
+            </motion.div>
           </div>
-          {device && (
+          {hasScanned && (
             <p className="text-xs font-medium text-emerald-700 dark:text-emerald-300 mt-4">
               ✓ QR code scanned — locked
             </p>
@@ -228,6 +240,9 @@ export function ScanToPdfView() {
 
           <p className="text-sm leading-relaxed text-foreground/80 mt-3 mb-4">
             Captured pages from your phone will appear here in real time.
+            <span className="block text-xs text-muted-foreground mt-1">
+              Up to {columnsPerRow} images per row at this screen size.
+            </span>
           </p>
 
           <ScannedGallery images={images} />
@@ -238,6 +253,31 @@ export function ScanToPdfView() {
         </div>
     </div>
   )
+}
+
+function useColumnsPerRow(): number {
+  // The grid uses `grid-cols-3 sm:grid-cols-4 md:grid-cols-5`, so the
+  // active column count depends on the viewport:
+  //   <sm  → 3
+  //   sm   → 4
+  //   md+  → 5
+  // We mirror Tailwind's breakpoints (640px / 768px) with a matchMedia
+  // listener so the displayed count stays in sync if the user resizes.
+  const [columns, setColumns] = useState(3)
+
+  useEffect(() => {
+    function compute() {
+      const w = window.innerWidth
+      if (w >= 768) setColumns(5)
+      else if (w >= 640) setColumns(4)
+      else setColumns(3)
+    }
+    compute()
+    window.addEventListener("resize", compute)
+    return () => window.removeEventListener("resize", compute)
+  }, [])
+
+  return columns
 }
 
 function ConnectionBadge({
@@ -259,11 +299,9 @@ function ConnectionBadge({
           </span>
           {count > 0 ? `${count} captured` : "Connected"}
         </span>
-        {device && (
-          <span className="text-xs font-medium text-muted-foreground">
-            {device.label}
-          </span>
-        )}
+        <span className="text-xs font-medium text-muted-foreground">
+          {device ? device.label : count > 0 ? "Detecting device…" : null}
+        </span>
       </div>
     )
   }
