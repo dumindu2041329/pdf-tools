@@ -2,32 +2,32 @@
 
 import { useEffect, useState } from "react"
 import QRCode from "qrcode"
-import { Smartphone } from "lucide-react"
+import { Check, Smartphone } from "lucide-react"
+import { motion, AnimatePresence } from "framer-motion"
+import { useTheme } from "next-themes"
 import type { DeviceInfo } from "@/lib/device-info"
 
 function QrCodeSvg({ value }: { value: string }) {
   const [svg, setSvg] = useState<string>("")
+  const { resolvedTheme } = useTheme()
 
   useEffect(() => {
     let cancelled = false
+
+    const dark = resolvedTheme === "dark" ? "#ffffffff" : "#000000ff"
 
     QRCode.toString(value, {
       type: "svg",
       margin: 1,
       width: 180,
       color: {
-        dark: "#000000ff",
+        dark,
         light: "#00000000",
       },
     })
       .then((result) => {
         if (cancelled) return
-        // Re-map QR module fills to the project's theme tokens so the code
-        // matches both light and dark themes without relying on inheritance.
-        const themed = result
-          .replace(/fill="#000000ff"/g, 'fill="hsl(var(--foreground))"')
-          .replace(/fill="#00000000"/g, 'fill="hsl(var(--card))"')
-        setSvg(themed)
+        setSvg(result)
       })
       .catch((err) => {
         console.error("QR code generation failed", err)
@@ -36,7 +36,7 @@ function QrCodeSvg({ value }: { value: string }) {
     return () => {
       cancelled = true
     }
-  }, [value])
+  }, [value, resolvedTheme])
 
   return (
     <div
@@ -135,12 +135,78 @@ export function ScanToPdfView() {
           <p className="text-sm text-muted-foreground text-center mt-1 mb-6 max-w-xs">
             Use your smartphone&apos;s camera to scan this QR code
           </p>
-          <div className="flex items-center justify-center p-4 bg-card rounded-xl border border-border">
-            {mobileScanUrl ? (
-              <QrCodeSvg value={mobileScanUrl} />
-            ) : (
-              <div className="h-[180px] w-[180px] rounded-lg bg-muted/40 animate-pulse" />
-            )}
+          <div className="flex items-center justify-center p-4 bg-card rounded-xl border border-border min-h-[208px] min-w-[208px]">
+            <AnimatePresence mode="wait" initial={false}>
+              {mobileScanUrl && !device ? (
+                <motion.div
+                  key="qr"
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.9 }}
+                  transition={{ duration: 0.25, ease: "easeOut" }}
+                >
+                  <QrCodeSvg value={mobileScanUrl} />
+                </motion.div>
+              ) : device ? (
+                <motion.div
+                  key="scanned"
+                  initial={{ opacity: 0, scale: 0.6 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{
+                    duration: 0.45,
+                    ease: [0.16, 1, 0.3, 1],
+                  }}
+                  className="flex flex-col items-center gap-3"
+                >
+                  <div className="relative flex items-center justify-center">
+                    <motion.span
+                      className="absolute inline-flex h-24 w-24 rounded-full bg-emerald-400/40"
+                      initial={{ scale: 0.5, opacity: 0.8 }}
+                      animate={{ scale: [0.5, 1.4, 1.6], opacity: [0.8, 0.2, 0] }}
+                      transition={{
+                        duration: 1.6,
+                        ease: "easeOut",
+                        repeat: Infinity,
+                        repeatDelay: 0.6,
+                      }}
+                    />
+                    <motion.div
+                      initial={{ rotate: -20 }}
+                      animate={{ rotate: 0 }}
+                      transition={{ duration: 0.35, ease: "easeOut" }}
+                      className="relative flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500 text-white shadow-lg shadow-emerald-500/30"
+                    >
+                      <motion.div
+                        initial={{ scale: 0, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        transition={{
+                          delay: 0.15,
+                          duration: 0.3,
+                          ease: "easeOut",
+                        }}
+                      >
+                        <Check className="h-10 w-10" strokeWidth={3} />
+                      </motion.div>
+                    </motion.div>
+                  </div>
+                  <motion.p
+                    initial={{ opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.25, duration: 0.3 }}
+                    className="text-sm font-semibold text-emerald-700 dark:text-emerald-300"
+                  >
+                    Phone connected
+                  </motion.p>
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="placeholder"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="h-[180px] w-[180px] rounded-lg bg-muted/40 animate-pulse"
+                />
+              )}
+            </AnimatePresence>
           </div>
           {device && (
             <p className="text-xs font-medium text-emerald-700 dark:text-emerald-300 mt-4">
@@ -233,7 +299,7 @@ function ScannedGallery({ images }: { images: ScannedImage[] }) {
 
   return (
     <div className="flex-1 space-y-3">
-      <ul className="grid grid-cols-3 gap-2">
+      <ul className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 max-w-xl">
         {images.map((img, idx) => (
           <li
             key={img.pathname}
