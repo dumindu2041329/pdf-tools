@@ -1,31 +1,32 @@
 import { auth } from "@clerk/nextjs/server"
-import { handleUpload, type HandleUploadBody } from "@vercel/blob/client"
 import { NextResponse } from "next/server"
 import { getLimitsForPlan } from "@/lib/usageLimits"
+import {
+  createSignedUploadUrl,
+  isSupabaseStorageConfigured,
+  PDF_UPLOADS_BUCKET,
+  SCAN_SESSIONS_BUCKET,
+} from "@/lib/supabase-storage"
 
 /**
- * Issues Vercel Blob client-upload tokens.
+ * Issues Supabase Storage signed upload URLs.
  *
- * The flow is the official "client upload" pattern from
- * https://vercel.com/docs/vercel-blob/client-upload :
+ * Mirrors the old Vercel Blob client-upload pattern:
  *
  *   1. Browser asks this route for an upload token (POST /api/upload).
- *   2. We call `handleUpload` which validates the request, runs our
- *      `onBeforeGenerateToken` hook, and returns a signed token + URL.
- *   3. Browser POSTs the file directly to the signed URL (this never
- *      touches our Next.js server, so it bypasses Vercel's ~4.5 MB
- *      serverless function body limit).
- *   4. Vercel Blob calls back to `onUploadCompleted` with the resulting
- *      blob URL so we can persist it / kick off downstream processing.
+ *   2. We validate the request (bucket, content type, size, optional
+ *      `scan-sessions/<id>/` prefix) and call
+ *      `supabase.storage.createSignedUploadUrl(path)`.
+ *   3. Browser PUTs the file directly to Supabase with the returned
+ *      signed URL — the Next.js serverless body cap never applies.
+ *   4. The browser forwards the resulting public URL to
+ *      `/api/tools/[tool]` via the `blobUrls` form field.
  *
- * Why we need this: the previous pipeline shipped PDFs to /api/tools/[tool]
- * inside a multipart FormData, which Vercel truncates at ~4.5 MB. The
- * free tier allows files up to 20 MB, the premium tier up to 4 GB — neither
- * is reachable without a direct-to-blob leg.
- *
- * Guests are allowed to use this route too, but with the free-plan
- * per-file cap (20 MB). The premium cap is reserved for signed-in
- * users; the guest's `userId` is simply absent from the token payload.
+ * Why we need this: the previous pipeline shipped PDFs to
+ * `/api/tools/[tool]` inside a multipart FormData, which Vercel
+ * truncates at ~4.5 MB. The free tier allows files up to 20 MB and
+ * the premium tier up to 4 GB — neither is reachable without the
+ * direct-to-storage leg.
  */
 
 export const runtime = "nodejs"
@@ -34,156 +35,151 @@ export const runtime = "nodejs"
 // short-circuited by Vercel's default 10 s / 60 s function timeout.
 export const maxDuration = 60
 
-export async function POST(request: Request): Promise<NextResponse> {
-  const { userId } = await auth()
-  const isGuest = !userId
+const ALLOWED_CONTENT_TYPES = [
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+] as const
 
-  // Fail fast with a useful message if the Blob token isn't visible to
-  // the serverless function. This is the #1 cause of "Failed to retrieve
-  // the client token" — usually a missing env var or a deployment that
-  // pre-dates when the variable was added. Vercel does NOT re-inject
-  // env vars into already-deployed functions; you must redeploy.
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+const ALLOWED_BUCKETS = new Set<string>([PDF_UPLOADS_BUCKET, SCAN_SESSIONS_BUCKET])
+
+const SAFE_SESSION = /^[a-zA-Z0-9-]{1,100}$/
+
+interface UploadTokenRequest {
+  bucket?: unknown
+  pathname?: unknown
+  contentType?: unknown
+  size?: unknown
+}
+
+export async function POST(request: Request): Promise<NextResponse> {
+  if (!isSupabaseStorageConfigured()) {
     console.error(
-      "[blob] BLOB_READ_WRITE_TOKEN is not set on the server. " +
-        "Add it in the Vercel dashboard (Project → Settings → Environment Variables) " +
-        "for Production and Preview, then redeploy."
+      "[supabase] NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY are not set."
     )
     return NextResponse.json(
       {
         error:
-          "Server is missing BLOB_READ_WRITE_TOKEN. Add it in Vercel project settings and redeploy.",
+          "Server is missing Supabase credentials. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to .env.local and redeploy.",
       },
       { status: 500 }
     )
   }
 
-  const body = (await request.json()) as HandleUploadBody
+  const { userId } = await auth()
+  const isGuest = !userId
 
+  let payload: UploadTokenRequest
   try {
-    const jsonResponse = await handleUpload({
-      body,
-      request,
-      onBeforeGenerateToken: async (pathname, clientPayload /*, multipart */) => {
-        // The client SDK sends whatever pathname the browser used to call
-        // `upload()` (typically just the file name, e.g. `report.pdf`).
-        // We don't try to enforce a `uploads/<userId>/` prefix here —
-        // doing so rejects every legitimate request — but we DO block
-        // path traversal and absolute paths so a stolen token can't be
-        // used to escape the store.
-        if (pathname.length === 0 || pathname.length > 1024) {
-          throw new Error("Invalid pathname length")
-        }
-        if (pathname.includes("..") || pathname.startsWith("/")) {
-          throw new Error("Invalid pathname")
-        }
+    payload = (await request.json()) as UploadTokenRequest
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 })
+  }
 
-        // Only allow PDF / image uploads. The browser should also
-        // validate, but the server is the source of truth.
-        const allowed = [
-          "application/pdf",
-          "image/jpeg",
-          "image/png",
-          "image/webp",
-          "image/gif",
-        ]
+  const bucket = typeof payload.bucket === "string" ? payload.bucket : PDF_UPLOADS_BUCKET
+  const pathname = typeof payload.pathname === "string" ? payload.pathname : ""
+  const contentType = typeof payload.contentType === "string" ? payload.contentType : ""
+  const size = typeof payload.size === "number" ? payload.size : 0
 
-        // `clientPayload` is a JSON string (or null) per the SDK
-        // signature — see `HandleUploadOptions.onBeforeGenerateToken` in
-        // `@vercel/blob/client`. The browser forwards it from the
-        // `upload(file, { clientPayload })` call in `lib/blob-upload.ts`.
-        // We use it to forward the file's content type without forcing
-        // the client to round-trip through a separate API, and to
-        // optionally tag the upload with a scan session id so the
-        // ScanToPdf flow can group mobile captures by session.
-        let parsedPayload: { contentType?: string; sessionId?: string } = {}
-        if (clientPayload) {
-          try {
-            parsedPayload = JSON.parse(clientPayload) as {
-              contentType?: string
-              sessionId?: string
-            }
-            if (
-              parsedPayload.contentType &&
-              !allowed.includes(parsedPayload.contentType)
-            ) {
-              throw new Error(`Unsupported content type: ${parsedPayload.contentType}`)
-            }
-            // When a sessionId is supplied (mobile-scan flow), the client
-            // is expected to upload under `scan-sessions/<sessionId>/…`.
-            // Validate the prefix matches so a leaked token can't write
-            // into someone else's session. sessionId is constrained to
-            // a safe charset to keep it usable as a path segment.
-            if (parsedPayload.sessionId) {
-              const safe = parsedPayload.sessionId.replace(/[^a-zA-Z0-9-]/g, "")
-              if (safe.length === 0 || safe.length > 100) {
-                throw new Error("Invalid sessionId")
-              }
-              const expectedPrefix = `scan-sessions/${safe}/`
-              if (!pathname.startsWith(expectedPrefix)) {
-                throw new Error("Pathname must start with the session prefix")
-              }
-            }
-          } catch (err) {
-            // Malformed client payload — reject so a stolen token can't
-            // smuggle an unsupported content type past the server check.
-            if (
-              err instanceof Error &&
-              (err.message.startsWith("Unsupported content type") ||
-                err.message === "Invalid sessionId" ||
-                err.message === "Pathname must start with the session prefix")
-            ) {
-              throw err
-            }
-            throw new Error("Invalid clientPayload")
-          }
-        }
+  if (!ALLOWED_BUCKETS.has(bucket)) {
+    return NextResponse.json({ error: `Unknown bucket: ${bucket}` }, { status: 400 })
+  }
 
-        return {
-          // Public read so the server route can `fetch()` the URL during
-          // processing and the user can re-download via the same URL.
-          // Switch to "private" + `access: "private"` reads if the store
-          // is later configured as private.
-          allowedContentTypes: allowed,
-          // Per-file cap. Guests inherit the free-plan limit (20 MB);
-          // signed-in users get the premium 4 GB cap. The client also
-          // enforces this via `getLimitsForPlan`, but the server is the
-          // source of truth.
-          maximumSizeInBytes: isGuest
-            ? getLimitsForPlan("free").maxFileSizeMB * 1024 * 1024
-            : 4 * 1024 * 1024 * 1024,
-          // Different users uploading `report.pdf` shouldn't clobber each
-          // other — the SDK appends a random suffix to make the final
-          // pathname unique.
-          addRandomSuffix: true,
-          // Carries the userId (or "guest") and the scan sessionId (if
-          // any) into `onUploadCompleted` so future cleanup hooks know
-          // who owns the blob and which session it belongs to.
-          tokenPayload: JSON.stringify({
-            userId: userId ?? "guest",
-            ...(parsedPayload.sessionId
-              ? { sessionId: parsedPayload.sessionId }
-              : {}),
-          }),
-        }
-      },
-      onUploadCompleted: async ({ blob, tokenPayload }) => {
-        // No-op for now: the browser hands the blob URL to /api/tools/[tool]
-        // in the same request, so we don't need to persist anything here.
-        // Hook is kept so future iterations (e.g. background virus scan)
-        // can plug in without changing the route signature.
-        console.log(
-          `[blob] Upload complete: ${blob.url} (payload=${tokenPayload ?? "none"})`
-        )
-      },
-    })
+  if (pathname.length === 0 || pathname.length > 1024) {
+    return NextResponse.json({ error: "Invalid pathname length" }, { status: 400 })
+  }
+  if (pathname.includes("..") || pathname.startsWith("/")) {
+    return NextResponse.json({ error: "Invalid pathname" }, { status: 400 })
+  }
 
-    return NextResponse.json(jsonResponse)
-  } catch (err) {
-    console.error("[blob] handleUpload error:", err)
+  if (!ALLOWED_CONTENT_TYPES.includes(contentType as (typeof ALLOWED_CONTENT_TYPES)[number])) {
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Upload token request failed" },
+      { error: `Unsupported content type: ${contentType}` },
       { status: 400 }
     )
   }
+
+  // Per-file cap. Guests inherit the free-plan limit (20 MB); signed-in
+  // users get the premium 4 GB cap. The client also enforces this via
+  // `getLimitsForPlan`, but the server is the source of truth.
+  const maxBytes = isGuest
+    ? getLimitsForPlan("free").maxFileSizeMB * 1024 * 1024
+    : 4 * 1024 * 1024 * 1024
+  if (size <= 0 || size > maxBytes) {
+    return NextResponse.json(
+      {
+        error: `File too large for ${isGuest ? "guest" : "signed-in"} plan (max ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`,
+      },
+      { status: 413 }
+    )
+  }
+
+  // Scan-session flows must upload under `scan-sessions/<sessionId>/…`.
+  // We validate the prefix up front so a leaked signed URL can't be
+  // abused to write into another session's namespace.
+  if (bucket === SCAN_SESSIONS_BUCKET) {
+    const expectedPrefix = `${SCAN_SESSIONS_BUCKET}/`
+    if (!pathname.startsWith(expectedPrefix)) {
+      return NextResponse.json(
+        { error: `Pathname must start with ${expectedPrefix}` },
+        { status: 400 }
+      )
+    }
+    const rest = pathname.slice(expectedPrefix.length)
+    const sessionSegment = rest.split("/")[0]
+    if (!SAFE_SESSION.test(sessionSegment)) {
+      return NextResponse.json({ error: "Invalid sessionId" }, { status: 400 })
+    }
+  }
+
+  // Strip the bucket prefix from the client-provided pathname before
+  // handing the path to the SDK. Supabase Storage treats `pathname` as
+  // a path *relative* to the bucket, but our public API mirrors the
+  // old Vercel Blob shape where the client passes the full key (bucket
+  // name included). Validating the full path keeps the API stable and
+  // gives us a single place to enforce "only this bucket's prefix is
+  // writable" without leaking the bucket-vs-key distinction to callers.
+  const pathRelativeToBucket = pathname.startsWith(`${bucket}/`)
+    ? pathname.slice(bucket.length + 1)
+    : pathname
+
+  // Append a random suffix to the leaf filename so concurrent uploads
+  // of `report.pdf` from different users don't collide on the same
+  // object path.
+  const finalPath = withRandomSuffix(pathRelativeToBucket)
+
+  try {
+    const { signedUrl, token, path } = await createSignedUploadUrl(bucket, finalPath)
+    return NextResponse.json({ signedUrl, token, path })
+  } catch (err) {
+    console.error("[supabase] createSignedUploadUrl failed:", err)
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Failed to create signed upload URL" },
+      { status: 500 }
+    )
+  }
+}
+
+/**
+ * Adds a short random suffix to the leaf of `path` so concurrent
+ * uploads of the same filename don't overwrite each other. Mirrors
+ * Vercel Blob's `addRandomSuffix: true` behaviour.
+ */
+function withRandomSuffix(path: string): string {
+  const slash = path.lastIndexOf("/")
+  const dir = slash === -1 ? "" : path.slice(0, slash + 1)
+  const name = slash === -1 ? path : path.slice(slash + 1)
+  if (name.length === 0) return path
+  const dot = name.lastIndexOf(".")
+  const stem = dot === -1 ? name : name.slice(0, dot)
+  const ext = dot === -1 ? "" : name.slice(dot)
+  const suffix = randomToken()
+  return `${dir}${stem}-${suffix}${ext}`
+}
+
+function randomToken(): string {
+  // 9-char base36 token → ~47 bits of entropy. Cheap and URL-safe.
+  return Math.random().toString(36).slice(2, 11)
 }

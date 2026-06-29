@@ -4,7 +4,7 @@ import { useState, useCallback } from "react"
 import { toast } from "sonner"
 import type { ProcessingStep } from "@/components/tools/ProcessingModal"
 import { recordActivity } from "@/lib/activityStore"
-import { shouldUseDirectUpload, uploadFileDirect } from "@/lib/blob-upload"
+import { shouldUseDirectUpload, uploadFileDirect } from "@/lib/supabase-upload"
 
 function postActivity(toolSlug: string, fileName: string, outputSize: number): void {
   fetch("/api/activity", {
@@ -119,11 +119,11 @@ interface BuildUploadPayloadArgs {
 }
 
 /**
- * Uploads any file that exceeds the direct-body limit to Vercel Blob via
- * the client SDK. Files under the limit are returned untouched so the
- * caller can keep the cheap multipart path for small PDFs.
+ * Uploads any file that exceeds the direct-body limit to Supabase Storage
+ * via the client SDK. Files under the limit are returned untouched so
+ * the caller can keep the cheap multipart path for small PDFs.
  */
-async function uploadLargeFilesToBlob(
+async function uploadLargeFilesToStorage(
   files: File[],
   watermarkImage: File | undefined,
   onFileProgress: (file: File, loaded: number, total: number) => void
@@ -156,9 +156,10 @@ async function uploadLargeFilesToBlob(
  *
  *  - **Inline**: appended as a `file` multipart entry (cheap, works for
  *    PDFs under ~4 MB).
- *  - **Via Blob**: uploaded directly to Vercel Blob first, then their public
- *    URLs are forwarded as a JSON `blobUrls` field. The server route fetches
- *    each URL and falls back into the same processing pipeline.
+ *  - **Via Storage**: uploaded directly to Supabase Storage first, then their
+ *    public URLs are forwarded as a JSON `blobUrls` field. The server
+ *    route fetches each URL and falls back into the same processing
+ *    pipeline.
  *
  * The caller decides which path to take via the optional `directUploads`
  * argument; if omitted, every file is inlined.
@@ -229,9 +230,9 @@ export function useTool(toolSlug: string) {
         cleanOptions = optionsWithoutImage
       }
 
-      // Decide which files need the direct-to-Blob path. Anything
-      // exceeding `MAX_DIRECT_BODY_BYTES` (4 MB, see lib/blob-upload.ts)
-      // is uploaded to Vercel Blob first so we don't run into Vercel's
+      // Decide which files need the direct-to-Storage path. Anything
+      // exceeding `MAX_DIRECT_BODY_BYTES` (4 MB, see lib/supabase-upload.ts)
+      // is uploaded to Supabase Storage first so we don't run into Vercel's
       // ~4.5 MB serverless function body limit. Smaller files stay on
       // the cheap multipart path.
       const needsDirectUpload =
@@ -263,7 +264,7 @@ export function useTool(toolSlug: string) {
             uploadBytes: { loaded: combinedLoaded, total: totalBytes },
           })
         }
-        const result = await uploadLargeFilesToBlob(
+        const result = await uploadLargeFilesToStorage(
           files,
           watermarkImage,
           onFileProgress
@@ -272,9 +273,9 @@ export function useTool(toolSlug: string) {
         watermarkDirectUpload = result.watermarkBlobUpload
       }
 
-      // Build the multipart payload. Files that took the Blob path are
+      // Build the multipart payload. Files that took the Storage path are
       // omitted from the `file` field and forwarded via `blobUrls` JSON
-      // instead. The server route re-hydrates them with `downloadFromBlob`.
+      // instead. The server route re-hydrates them with `downloadFromStorage`.
       const onUploadProgress = (percent: number, loaded: number, total: number) => {
         const safeTotal = total > 0 ? total : loaded
         // Once we've sent every byte we own, mark serverProcessing so the UI

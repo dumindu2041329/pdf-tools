@@ -63,7 +63,7 @@ Chain multiple tools into reusable multi-step pipelines, stored in Neon PostgreS
 | 📑 PDF Engine | iLoveAPI + Adobe PDF Services + pdf-lib | — |
 | 🤖 AI | OpenRouter (via the `openai` SDK, model `openai/gpt-oss-120b:free`) | ^6.33.0 |
 | 💳 Payments | Stripe (Premium subscription) | ^16.12.0 |
-| 📦 Object Storage | Vercel Blob (client-upload for files > 4 MB) | ^2.4.0 |
+| 💾 Object Storage | Supabase Storage (client-upload for files > 4 MB) | ^2.45.0 |
 | 🗄️ Database | Neon PostgreSQL (`@neondatabase/serverless`) | ^1.1.0 |
 | 📄 PDF Parsing (client) | pdfjs-dist | ^4.10.38 |
 | 🧩 Utilities | jszip + jsonwebtoken | ^3.10.1 / ^9.0.3 |
@@ -108,8 +108,8 @@ lib/
   pdf/                   # pdf-lib helpers (merge, split, rotate) + Adobe converters
   activityStore.ts       # localStorage activity feed
   auth.ts                # Clerk plan helpers (getUserPlan, grant/revoke)
-  blob-storage.ts        # Server: uploadToBlob, downloadFromBlob, delete, list
-  blob-upload.ts         # Client: shouldUseDirectUpload, uploadFileDirect
+  supabase-storage.ts     # Server: uploadToStorage, downloadFromStorage, delete, list, createSignedUploadUrl
+  supabase-upload.ts      # Client: shouldUseDirectUpload, uploadFileDirect
   db.ts                  # Neon client + auto schema + self-heal
   extractFormatConverter.ts  # extract-data → csv/json/md/txt
   fileStore.ts           # In-memory Map<id, file> for /api/download/[id]
@@ -174,7 +174,7 @@ Create a free app at [clerk.com](https://clerk.com) and add your publishable and
 - **OpenRouter** — Get an API key at [openrouter.ai](https://openrouter.ai) (the AI summarizer and translate-pdf routes use the `openai` SDK pointed at OpenRouter, model `openai/gpt-oss-120b:free`)
 - **Adobe PDF Services** *(optional, for Word/Excel/PowerPoint export and OCR)* — Get credentials at [developer.adobe.com](https://developer.adobe.com/document-services)
 - **Stripe** *(optional, for Premium subscription)* — Get keys at [dashboard.stripe.com](https://dashboard.stripe.com)
-- **Vercel Blob** *(auto-injected on Vercel; locally run `vercel env pull .env.local`)* — Used for files > 4 MB via the [client-upload pattern](https://vercel.com/docs/vercel-blob/client-upload)
+- **Supabase Storage** *(auto-configured on Supabase; locally add NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY to `.env.local`)* — Used for files > 4 MB via the [client-upload pattern](https://supabase.com/docs/guides/storage/uploads/standard-uploads)
 
 ### 6. 🔧 Start the Dev Server
 
@@ -205,8 +205,11 @@ STRIPE_SECRET_KEY=
 STRIPE_PREMIUM_PRICE_ID=             # Stripe price ID for the $20 / month Premium plan
 STRIPE_WEBHOOK_SECRET=
 
-# Vercel Blob (required for source-PDF uploads > 4 MB)
-BLOB_READ_WRITE_TOKEN=
+# Supabase Storage (required for source-PDF uploads > 4 MB)
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+# Optional — service role key bypasses RLS for server-side list/delete
+SUPABASE_SERVICE_ROLE_KEY=
 
 # Misc
 NEXT_PUBLIC_APP_URL=                 # Public app URL (defaults to http://localhost:3000)

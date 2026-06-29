@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server"
-import { listBlobs } from "@/lib/blob-storage"
-import { put } from "@vercel/blob"
+import {
+  downloadFromStorage,
+  isSupabaseStorageConfigured,
+  listStorageObjects,
+  SCAN_SESSIONS_BUCKET,
+  uploadToStorage,
+} from "@/lib/supabase-storage"
 import type { DeviceInfo } from "@/lib/device-info"
 
 /**
@@ -30,11 +35,11 @@ function isValidSessionId(id: string): boolean {
 }
 
 function ensureToken(): NextResponse | null {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+  if (!isSupabaseStorageConfigured()) {
     return NextResponse.json(
       {
         error:
-          "Server is missing BLOB_READ_WRITE_TOKEN. Add it in Vercel project settings and redeploy.",
+          "Server is missing Supabase credentials. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to .env.local and redeploy.",
       },
       { status: 500 }
     )
@@ -56,21 +61,32 @@ export async function GET(
   if (tokenError) return tokenError
 
   try {
-    const result = await listBlobs(`scan-sessions/${sessionId}/`)
+    // List under `<sessionId>/` (relative to the bucket). The /api/upload
+    // route strips the bucket prefix before storing, so files live at
+    // `<sessionId>/<filename>` — not `scan-sessions/<sessionId>/<filename>`.
+    const prefix = `${sessionId}/`
+    const objects = await listStorageObjects({ bucket: SCAN_SESSIONS_BUCKET, prefix })
 
     // Pull the special device-info blob out of the listing so callers
     // don't have to filter it themselves.
     let device: DeviceInfo | null = null
-    const images = []
-    for (const blob of result.blobs) {
-      if (blob.pathname.endsWith(`/${DEVICE_FILENAME}`)) {
+    const images: Array<{ url: string; pathname: string; uploadedAt: string }> = []
+
+    for (const obj of objects) {
+      // Supabase Storage returns `name` as the path RELATIVE to the
+      // listed prefix. So `obj.name` is just the leaf filename — we
+      // re-attach the prefix to get the full path used by public URLs
+      // and download helpers.
+      const leaf = obj.name
+      const fullPath = `${prefix}${leaf}`
+      const url = publicUrlFor(SCAN_SESSIONS_BUCKET, fullPath)
+
+      if (leaf === DEVICE_FILENAME) {
         try {
-          const res = await fetch(blob.url)
-          if (res.ok) {
-            const parsed = (await res.json()) as DeviceInfo
-            if (parsed && typeof parsed.label === "string") {
-              device = parsed
-            }
+          const buffer = await downloadFromStorage(url)
+          const parsed = JSON.parse(buffer.toString("utf-8")) as DeviceInfo
+          if (parsed && typeof parsed.label === "string") {
+            device = parsed
           }
         } catch (err) {
           // Device-info blob is best-effort metadata — never fail the
@@ -79,14 +95,15 @@ export async function GET(
         }
         continue
       }
+
       images.push({
-        url: blob.url,
-        pathname: blob.pathname,
-        uploadedAt: blob.uploadedAt.toISOString(),
+        url,
+        pathname: fullPath,
+        uploadedAt: (obj.updated_at ?? obj.created_at ?? new Date().toISOString()),
       })
     }
 
-    // Stable ordering — newest capture last so the desktop UI shows
+    // Stable ordering — oldest capture first so the desktop UI shows
     // them in the order they were scanned.
     images.sort((a, b) => a.uploadedAt.localeCompare(b.uploadedAt))
 
@@ -103,9 +120,9 @@ export async function GET(
 /**
  * Records the phone that just joined this scan session. Idempotent —
  * re-joining (e.g. refreshing the mobile page) overwrites the device
- * blob with the latest info. We store as a regular Vercel Blob rather
- * than in-memory so the desktop poll can read it across serverless
- * cold starts.
+ * blob with the latest info. We store as a regular object in the
+ * Supabase bucket rather than in-memory so the desktop poll can read
+ * it across serverless cold starts.
  */
 export async function POST(
   request: Request,
@@ -160,15 +177,14 @@ export async function POST(
   }
 
   try {
-    await put(
-      `scan-sessions/${sessionId}/${DEVICE_FILENAME}`,
-      JSON.stringify(sanitized),
-      {
-        access: "public",
-        contentType: "application/json",
-        addRandomSuffix: false,
-      }
-    )
+    // `pathname` is relative to the bucket (Supabase Storage convention).
+    await uploadToStorage({
+      bucket: SCAN_SESSIONS_BUCKET,
+      pathname: `${sessionId}/${DEVICE_FILENAME}`,
+      body: JSON.stringify(sanitized),
+      contentType: "application/json",
+      upsert: true,
+    })
     return NextResponse.json({ ok: true })
   } catch (err) {
     console.error("[scan-session] join failed:", err)
@@ -177,4 +193,21 @@ export async function POST(
       { status: 500 }
     )
   }
+}
+
+/**
+ * Builds the public URL of an object. The Supabase SDK exposes
+ * `getPublicUrl()` but we already have the bucket + path; using the
+ * project URL keeps the helper pure (no extra SDK call per list
+ * item).
+ */
+function publicUrlFor(bucket: string, path: string): string {
+  const base = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (!base) {
+    // `ensureToken()` already guards against this for the happy path;
+    // this fallback exists so a misconfigured server still returns a
+    // syntactically valid URL rather than throwing mid-list.
+    return ""
+  }
+  return `${base}/storage/v1/object/public/${bucket}/${path}`
 }

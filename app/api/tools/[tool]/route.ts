@@ -14,7 +14,7 @@ import { canProcessFile, recordProcessingEvent } from "@/lib/usage"
 import { getUserPlan } from "@/lib/auth"
 import { getLimitsForPlan } from "@/lib/usageLimits"
 import { checkGuestLimits, incrementGuestUsage } from "@/lib/guest-usage"
-import { downloadFromBlob, deleteFromBlob } from "@/lib/blob-storage"
+import { downloadFromStorage, deleteFromStorage } from "@/lib/supabase-storage"
 
 /**
  * Map an error thrown by the Adobe PDF Services SDK into a user-friendly
@@ -88,7 +88,7 @@ async function processToolRequest(
   // Track every blob URL we hydrate (or attempt to hydrate) so we can
   // clean them up after processing — success or failure (e.g. iLoveAPI /
   // Adobe credit exhaustion, 4xx from the engine, network blip, guest
-  // cap hit, etc.). `deleteFromBlob` is safe to call on unknown URLs
+  // cap hit, etc.). `deleteFromStorage` is safe to call on unknown URLs
   // and swallows errors, so this is fire-and-forget.
   const downloadedBlobUrls: string[] = []
 
@@ -142,10 +142,10 @@ async function processToolRequest(
   const optionsRaw = formData.get("options")
   const options = optionsRaw ? JSON.parse(optionsRaw as string) : {}
 
-  // Direct-to-Blob uploads arrive as a JSON list of `{ url, filename }`
+  // Direct-to-Storage uploads arrive as a JSON list of `{ url, filename }`
   // pairs in the `blobUrls` form field. The client uploads the file
-  // straight to Vercel Blob (bypassing the ~4.5 MB serverless body cap)
-  // and hands the resulting URL back here so we can `fetch()` it.
+  // straight to Supabase Storage (bypassing the ~4.5 MB serverless body
+  // cap) and hands the resulting URL back here so we can `fetch()` it.
   // The legacy `file` multipart field is kept for backward compatibility
   // with the small-file path.
   const blobUrlsRaw = formData.get("blobUrls")
@@ -177,7 +177,7 @@ async function processToolRequest(
       // results in the blob being cleaned up by the finally block.
       downloadedBlobUrls.push(url)
       try {
-        const buffer = await downloadFromBlob(url)
+        const buffer = await downloadFromStorage(url)
         files.push({ buffer, filename })
       } catch (err) {
         console.error(`Failed to download blob ${url}:`, err)
@@ -200,7 +200,7 @@ async function processToolRequest(
         ? watermarkFilenameRaw
         : "watermark.png"
     try {
-      const buffer = await downloadFromBlob(watermarkImageUrl)
+      const buffer = await downloadFromStorage(watermarkImageUrl)
       watermarkImage = { buffer, filename: watermarkFilename }
     } catch (err) {
       console.error(`Failed to download watermark blob ${watermarkImageUrl}:`, err)
@@ -1323,10 +1323,10 @@ async function processToolRequest(
     // Always clean up the uploaded source blobs once the request
     // finishes — whether the tool succeeded, an iLoveAPI/Adobe call
     // failed (e.g. credits exhausted), or we short-circuited on a
-    // usage cap. Deleting in parallel keeps it fast; `deleteFromBlob`
+    // usage cap. Deleting in parallel keeps it fast; `deleteFromStorage`
     // swallows per-URL errors so one bad URL can't block the others.
     await Promise.allSettled(
-      downloadedBlobUrls.map((url) => deleteFromBlob(url))
+      downloadedBlobUrls.map((url) => deleteFromStorage(url))
     )
   }
 }

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react"
 import { Camera, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
-import { uploadFileDirect } from "@/lib/blob-upload"
+import { uploadFileDirect } from "@/lib/supabase-upload"
 import { parseDeviceInfo } from "@/lib/device-info"
 
 interface MobileScanViewProps {
@@ -101,17 +101,19 @@ export function MobileScanView({ sessionId }: MobileScanViewProps) {
     setUploading(true)
     try {
       const result = await uploadFileDirect(file, {
-        // Pathname must be `scan-sessions/<sessionId>/<filename>` so the
-        // server's onBeforeGenerateToken hook can validate that the
-        // upload belongs to the requested session and group it under
-        // the right prefix when listing.
+        // Pathname must be `scan-sessions/<sessionId>/…` so the
+        // server-side `/api/upload` route can validate that the
+        // upload belongs to the requested session and group it
+        // under the right prefix when listing. Scan captures go in
+        // the dedicated `scan-sessions` bucket so we can keep their
+        // lifecycle (smaller size cap, simpler policies) separate
+        // from the main `pdf-uploads` bucket.
+        bucket: "scan-sessions",
         pathname: `scan-sessions/${sessionId}/${file.name}`,
-        clientPayload: JSON.stringify({
-          contentType: file.type,
-          sessionId,
-        }),
+        contentType: file.type,
+        onProgress: undefined,
       })
-      // The blob URL is public so we can display it inline immediately.
+      // The storage URL is public so we can display it inline immediately.
       setCaptures((prev) => [
         ...prev,
         {

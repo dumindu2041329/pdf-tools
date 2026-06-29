@@ -12,7 +12,7 @@
 | **Styling** | Tailwind CSS v4 + shadcn/ui (Radix primitives + CVA) |
 | **Auth** | Clerk (`@clerk/nextjs` ^7.0.7) |
 | **PDF Engine** | iLoveAPI (`@ilovepdf/ilovepdf-nodejs` ^0.3.1) + Adobe PDF Services (`@adobe/pdfservices-node-sdk` ^4.1.0) + `pdf-lib` ^1.17.1 / `jszip` ^3.10.1 / `jsonwebtoken` ^9.0.3 |
-| **Object Storage** | Vercel Blob (`@vercel/blob` ^2.4.0) — client uploads for source PDFs > 4 MB |
+| **Object Storage** | Supabase Storage (`@supabase/supabase-js` ^2.45.0) — client uploads for source PDFs > 4 MB |
 | **AI Services** | OpenRouter (via the `openai` ^6.33.0 SDK pointed at `https://openrouter.ai/api/v1`). The `openai` SDK is used purely as a generic OpenAI-compatible client; the actual provider is OpenRouter (model `openai/gpt-oss-120b:free`) |
 | **Payments** | Stripe (`stripe` ^16.12.0) for Premium subscription |
 | **Telemetry** | `@vercel/analytics` ^2.0.1 + `@vercel/speed-insights` ^2.0.0 (mounted in root layout) |
@@ -136,7 +136,7 @@ app/                        # Next.js App Router
     tools/
       [tool]/route.ts       # Main PDF processing endpoint
       sign/route.ts         # PDF signing via iLoveAPI Signature API
-    upload/route.ts         # Vercel Blob client-upload token endpoint
+    upload/route.ts         # Supabase Storage signed-upload-token endpoint
     usage/route.ts
     webhooks/
       iloveapi/route.ts
@@ -218,8 +218,8 @@ lib/
     split-client.ts            # processSplitLocal() — pdf-lib, client-side
   activityStore.ts          # localStorage activity feed (≤50 entries)
   auth.ts                   # Clerk plan helpers (getUserPlan, grant/revoke)
-  blob-storage.ts           # Server: uploadToBlob, downloadFromBlob, delete, list
-  blob-upload.ts            # Client: shouldUseDirectUpload, uploadFileDirect
+  supabase-storage.ts     # Server: uploadToStorage, downloadFromStorage, delete, list, createSignedUploadUrl
+  supabase-upload.ts      # Client: shouldUseDirectUpload, uploadFileDirect
   db.ts                     # Neon client + ensureDbSchema + self-heal + helpers
   extractFormatConverter.ts # extract-data → csv/json/md/txt
   fileStore.ts              # In-memory Map<id, file> for /api/download/[id]
@@ -287,28 +287,40 @@ Indexes: `workflow_user_created_at_idx`, `workflow_step_workflow_step_index_idx`
 - `setUserPlan(userId, plan)` — **UPSERT** into `app_user`; no longer requires a separate `upsertUser()` call
 - `getUserPlanFromDb(userId)` — reads `plan` column for fallback auth checks
 
-### Vercel Blob
+### Supabase Storage
 
-Vercel Blob is the project's CDN-backed object store for source PDFs. The store ID lives in the Vercel dashboard (see `BLOB_READ_WRITE_TOKEN` below) and is auto-injected into all Vercel environments; locally run `vercel env pull .env.local` to populate the value.
+Supabase Storage is the project's CDN-backed object store for source PDFs and scan captures. Two buckets back the app:
+
+- `pdf-uploads` — source PDFs / images uploaded via the tool page (4 GB per-file cap, public).
+- `scan-sessions` — mobile-scan captures grouped by `scan-sessions/<sessionId>/` (50 MB per-file cap, public).
+
+The project URL lives in `NEXT_PUBLIC_SUPABASE_URL` (auto-detected from the Supabase dashboard) and credentials are split across `NEXT_PUBLIC_SUPABASE_ANON_KEY` (browser-safe, ships to the client) and `SUPABASE_SERVICE_ROLE_KEY` (server-only, optional — the anon key is sufficient when RLS policies allow the required operations).
 
 #### Why
-Vercel serverless functions truncate request bodies at ~4.5 MB. The free plan allows files up to 20 MB and the premium plan up to 4 GB, so neither is reachable via the original "POST the PDF in a FormData body" path. The official workaround is the **client upload** pattern from <https://vercel.com/docs/vercel-blob/client-upload>: the browser asks the server for a signed token, uploads the file straight to Blob, and hands the resulting URL back to the server for downstream processing.
+
+Vercel serverless functions truncate request bodies at ~4.5 MB. The free plan allows files up to 20 MB and the premium plan up to 4 GB, so neither is reachable via the original "POST the PDF in a FormData body" path. The official workaround is the **client upload** pattern from <https://supabase.com/docs/guides/storage/uploads/standard-uploads>: the browser asks the server for a signed upload URL, uploads the file straight to Supabase Storage, and hands the resulting public URL back to the server for downstream processing.
 
 #### Files
-- `app/api/upload/route.ts` — issues client upload tokens via `handleUpload` from `@vercel/blob/client`. Requires Clerk auth (guests are allowed but capped at 20 MB), restricts content type to PDFs / images, and caps each upload at 4 GB for signed-in users. Fails fast with a useful message if `BLOB_READ_WRITE_TOKEN` is not set on the server.
-- `lib/blob-upload.ts` — browser-side helpers: `shouldUseDirectUpload(file)` (true for files > 4 MB) and `uploadFileDirect(file, { onProgress })`.
-- `lib/blob-storage.ts` — server-side helpers: `uploadToBlob`, `downloadFromBlob`, `deleteFromBlob`, `listBlobs`.
+
+- `app/api/upload/route.ts` — issues signed upload URLs via `createSignedUploadUrl()` from `@supabase/supabase-js`. Requires Clerk auth (guests are allowed but capped at 20 MB), restricts content type to PDFs / images, validates the `scan-sessions/<sessionId>/` prefix for scan flows, and caps each upload at 4 GB for signed-in users. Fails fast with a useful message if Supabase env vars are not set.
+- `lib/supabase-storage.ts` — server-side helpers: `uploadToStorage`, `downloadFromStorage`, `deleteFromStorage`, `listStorageObjects`, `createSignedUploadUrl`.
+- `lib/supabase-upload.ts` — browser-side helpers: `shouldUseDirectUpload(file)` (true for files > 4 MB) and `uploadFileDirect(file, { onProgress })`.
 
 #### Flow
-1. `useTool` calls `shouldUseDirectUpload(file)` for every file. Anything over 4 MB is sent to `/api/upload` first, which returns a signed token + URL.
-2. The browser PUTs the file directly to Vercel Blob (this never touches the Next.js server, so the body cap doesn't apply).
-3. The resulting `url` is forwarded to `/api/tools/[tool]` as a JSON-encoded `blobUrls` form field; the server route calls `downloadFromBlob(url)` to re-hydrate the file as a `Buffer` and continues into the existing processing pipeline.
+
+1. `useTool` calls `shouldUseDirectUpload(file)` for every file. Anything over 4 MB is sent to `/api/upload` first, which returns a `{ signedUrl, token, path }` triple.
+2. The browser PUTs the file directly to Supabase Storage via the signed URL (this never touches the Next.js server, so the body cap doesn't apply).
+3. The resulting public `url` is forwarded to `/api/tools/[tool]` as a JSON-encoded `blobUrls` form field; the server route calls `downloadFromStorage(url)` to re-hydrate the file as a `Buffer` and continues into the existing processing pipeline.
 4. Small files still ride the original `multipart/form-data` path so the common case stays cheap.
 5. The same flow applies to the optional `watermarkImage` for the `watermark-pdf` tool (uses `watermarkImageUrl` + `watermarkImageFilename` form fields).
 
+#### Buckets & RLS
+
+Two public buckets are created on first setup (`pdf-uploads`, `scan-sessions`) with permissive RLS policies for the `anon` and `authenticated` roles (SELECT / INSERT / UPDATE / DELETE on `storage.objects`). Object paths are unguessable (random suffixes appended to every leaf) so the broad policies are safe in practice. To tighten later, swap the policies for narrower ones (e.g. allow only INSERT under a specific prefix) and require a server-issued signed download URL for reads.
+
 ### Tool Pipeline
 1. `FileUploader` component accepts user files (drag-and-drop, sortable list, per-tool color coding)
-2. `useTool` hook manages state. Files over 4 MB are first uploaded directly to **Vercel Blob** via the client SDK (see "Vercel Blob" section) and replaced in the request with their public URLs; smaller files ride the cheap multipart path
+2. `useTool` hook manages state. Files over 4 MB are first uploaded directly to **Supabase Storage** via the client SDK (see "Supabase Storage" section) and replaced in the request with their public URLs; smaller files ride the cheap multipart path
 3. `useTool` POSTs to `/api/tools/[tool]` via `XMLHttpRequest` (so the browser exposes real upload progress) with the FormData
 4. API handler re-hydrates `blobUrls`, runs any tool-specific preprocessing, then dispatches to the right engine:
    - **iLoveAPI tools** (`compress`, `repair`, `watermark`, `pagenumber`, `extract`, `imagepdf`, `officepdf`, `htmlpdf`, `pdfjpg`, `pdfa`, `validatepdfa`, `protect`, `unlock`): `runTool()` runs the 4-step Start/Upload/Process/Download flow
@@ -355,7 +367,7 @@ Vercel serverless functions truncate request bodies at ~4.5 MB. The free plan al
 |---|---|---|
 | `/api/tools/[tool]` | POST | Main PDF processing endpoint (rate-limited, all engines) |
 | `/api/tools/sign` | POST | PDF signing via iLoveAPI Signature API |
-| `/api/upload` | POST | Issues Vercel Blob client-upload tokens (used by `useTool` for files > 4 MB) |
+| `/api/upload` | POST | Issues Supabase Storage signed upload URLs (used by `useTool` for files > 4 MB) |
 | `/api/download/[id]` | GET | Stream file from in-memory `fileStore` (RFC 5987 filename) |
 | `/api/ai/summarize` | POST | AI summarization |
 | `/api/ai/translate` | POST | AI translation |
@@ -474,7 +486,7 @@ Plan is stored in Clerk user metadata (`publicMetadata.plan` + `planUpdatedAt`) 
 5. Never use `dangerouslySetInnerHTML` without sanitization.
 6. Never commit `.env`, `.env.local`, or secrets files.
 7. Treat the guest cookie counter as a soft gate only — do not rely on it for security boundaries.
-8. The `/api/upload` route should always validate `BLOB_READ_WRITE_TOKEN` is set and return a useful error if missing.
+8. The `/api/upload` route should always validate `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` are set and return a useful error if missing.
 
 ## Environment Variables
 
@@ -485,6 +497,8 @@ Plan is stored in Clerk user metadata (`publicMetadata.plan` + `planUpdatedAt`) 
 - `ILOVEAPI_PUBLIC_KEY` — iLoveAPI public key
 - `ILOVEAPI_SECRET_KEY` — iLoveAPI secret key
 - `OPENROUTER_API_KEY` — OpenRouter API key. Required for the AI summarizer AND translate-pdf — routes completions to `openai/gpt-oss-120b:free` via `https://openrouter.ai/api/v1` (both routes use the `openai` SDK pointed at OpenRouter). When unset, both endpoints fall back to streaming the prompt back in tiny chunks so the UI still has *something* to render during development.
+- `NEXT_PUBLIC_SUPABASE_URL` — Supabase project URL. Public — safe to ship to the browser.
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY` — Supabase anon (publishable) key. Public — safe to ship to the browser.
 
 ### Optional
 - `PDF_SERVICES_CLIENT_ID` — Adobe PDF Services client ID (for pdf-to-word, pdf-to-excel, pdf-to-powerpoint, ocr-pdf)
@@ -493,7 +507,7 @@ Plan is stored in Clerk user metadata (`publicMetadata.plan` + `planUpdatedAt`) 
 - `STRIPE_PREMIUM_PRICE_ID` — Stripe price ID for the Premium plan ($20/month)
 - `STRIPE_WEBHOOK_SECRET` — Stripe webhook signing secret (for subscription lifecycle events)
 - `NEXT_PUBLIC_APP_URL` — Public app URL used to build Stripe `success_url` / `cancel_url` and the sitemap base (defaults to `http://localhost:3000` in dev, `https://pdftools.app` for the sitemap)
-- `BLOB_READ_WRITE_TOKEN` — Vercel Blob read-write token. Auto-injected by Vercel when a Blob store is connected to this project; run `vercel env pull .env.local` to populate it locally. Required for source-PDF uploads > 4 MB (see "Vercel Blob" section).
+- `SUPABASE_SERVICE_ROLE_KEY` — Optional Supabase service role key. When unset, `lib/supabase.ts` falls back to the anon key for server-side operations (relying on RLS policies on the public buckets). Locally populate `.env.local` from the Supabase dashboard if you need to bypass RLS (e.g. to list objects across all sessions).
 - `PDF_TO_WORD_PYTHON_BIN` / `PYTHON_BIN` — Optional Python interpreter override (legacy; the active `pdf-to-word` path uses Adobe, but the variable is still honored by `getPythonCandidates()` for any future python-backed converter).
 
 ## Agent Rules
@@ -523,8 +537,8 @@ Plan is stored in Clerk user metadata (`publicMetadata.plan` + `planUpdatedAt`) 
 2. Options are configured via tool-specific option components in `components/tools/options/`
 3. `useTool` hook manages processing state via `ToolState` discriminated union
 4. For local tools (merge/split/rotate): processed in-browser (or in the server route for rotate), blob URL returned directly
-5. For server tools: files are first checked against `shouldUseDirectUpload` (4 MB). Files over the cap go through `uploadFileDirect` (Vercel Blob) and the resulting URL is sent to the server in a `blobUrls` JSON field; files under the cap ride the original `multipart/form-data` path.
-6. API route (`/api/tools/[tool]`) re-hydrates `blobUrls` via `downloadFromBlob`, then processes via the appropriate engine and returns either:
+5. For server tools: files are first checked against `shouldUseDirectUpload` (4 MB). Files over the cap go through `uploadFileDirect` (Supabase Storage) and the resulting URL is sent to the server in a `blobUrls` JSON field; files under the cap ride the original `multipart/form-data` path.
+6. API route (`/api/tools/[tool]`) re-hydrates `blobUrls` via `downloadFromStorage`, then processes via the appropriate engine and returns either:
    - `{ fileData: base64, filename, processingTime, outputSize }` — decoded to blob URL client-side
    - `{ downloadId, filename, processingTime, outputSize }` — downloaded via `/api/download/[id]` (legacy path)
    - `{ validationSuccess, message, result, processingTime }` — for `validate-pdfa`
