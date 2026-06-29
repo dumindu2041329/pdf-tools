@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import QRCode from "qrcode"
 import { Check, Smartphone } from "lucide-react"
-import { motion, AnimatePresence } from "framer-motion"
+import { motion } from "framer-motion"
 import { useTheme } from "next-themes"
 import type { DeviceInfo } from "@/lib/device-info"
 
@@ -128,7 +128,7 @@ export function ScanToPdfView() {
         <div
           className={`md:col-span-1 bg-card rounded-2xl shadow-md p-8 flex flex-col items-center transition-opacity duration-300 ${
             device
-              ? "opacity-50 pointer-events-none select-none"
+              ? "opacity-60 pointer-events-none select-none"
               : "opacity-100"
           }`}
         >
@@ -136,78 +136,95 @@ export function ScanToPdfView() {
           <p className="text-sm text-muted-foreground text-center mt-1 mb-6 max-w-xs">
             Use your smartphone&apos;s camera to scan this QR code
           </p>
-          <div className="flex items-center justify-center p-4 bg-card rounded-xl border border-border min-h-[208px] min-w-[208px]">
-            <AnimatePresence mode="wait" initial={false}>
-              {mobileScanUrl && !device ? (
-                <motion.div
-                  key="qr"
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.9 }}
-                  transition={{ duration: 0.25, ease: "easeOut" }}
-                >
-                  <QrCodeSvg value={mobileScanUrl} />
-                </motion.div>
-              ) : device ? (
-                <motion.div
-                  key="scanned"
-                  initial={{ opacity: 0, scale: 0.6 }}
-                  animate={{ opacity: 1, scale: 1 }}
+          <div className="flex items-center justify-center p-4 bg-card rounded-xl border border-border min-h-[208px] min-w-[208px] relative overflow-hidden">
+            {/*
+              Render BOTH the QR and the success overlay together so we
+              don't have to wrestle with AnimatePresence + mode="wait"
+              exit timing. The success overlay uses absolute positioning
+              and is shown/hidden via the `device` state — fade in when
+              a phone joins, fade out if the session is somehow reset.
+              Pointer events stay disabled on the panel as a whole once
+              scanned (parent has pointer-events-none) so the overlay
+              can't be tapped through.
+            */}
+            <motion.div
+              animate={{
+                opacity: mobileScanUrl && !device ? 1 : 0,
+                scale: mobileScanUrl && !device ? 1 : 0.92,
+              }}
+              transition={{ duration: 0.25, ease: "easeOut" }}
+              className="flex items-center justify-center"
+            >
+              {mobileScanUrl ? <QrCodeSvg value={mobileScanUrl} /> : null}
+            </motion.div>
+
+            <motion.div
+              initial={false}
+              animate={{
+                opacity: device ? 1 : 0,
+                scale: device ? 1 : 0.85,
+              }}
+              transition={{
+                opacity: { duration: 0.25, ease: "easeOut" },
+                scale: {
+                  duration: 0.45,
+                  ease: [0.16, 1, 0.3, 1],
+                },
+              }}
+              className="absolute inset-0 flex flex-col items-center justify-center gap-3"
+              style={{ pointerEvents: device ? "none" : "none" }}
+            >
+              <div className="relative flex items-center justify-center">
+                <motion.span
+                  className="absolute inline-flex h-24 w-24 rounded-full bg-emerald-400/40"
+                  animate={
+                    device
+                      ? {
+                          scale: [0.5, 1.4, 1.6],
+                          opacity: [0.8, 0.2, 0],
+                        }
+                      : { scale: 0.5, opacity: 0 }
+                  }
                   transition={{
-                    duration: 0.45,
-                    ease: [0.16, 1, 0.3, 1],
+                    duration: 1.6,
+                    ease: "easeOut",
+                    repeat: device ? Infinity : 0,
+                    repeatDelay: 0.6,
                   }}
-                  className="flex flex-col items-center gap-3"
-                >
-                  <div className="relative flex items-center justify-center">
-                    <motion.span
-                      className="absolute inline-flex h-24 w-24 rounded-full bg-emerald-400/40"
-                      initial={{ scale: 0.5, opacity: 0.8 }}
-                      animate={{ scale: [0.5, 1.4, 1.6], opacity: [0.8, 0.2, 0] }}
-                      transition={{
-                        duration: 1.6,
-                        ease: "easeOut",
-                        repeat: Infinity,
-                        repeatDelay: 0.6,
-                      }}
-                    />
-                    <motion.div
-                      initial={{ rotate: -20 }}
-                      animate={{ rotate: 0 }}
-                      transition={{ duration: 0.35, ease: "easeOut" }}
-                      className="relative flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500 text-white shadow-lg shadow-emerald-500/30"
-                    >
-                      <motion.div
-                        initial={{ scale: 0, opacity: 0 }}
-                        animate={{ scale: 1, opacity: 1 }}
-                        transition={{
-                          delay: 0.15,
-                          duration: 0.3,
-                          ease: "easeOut",
-                        }}
-                      >
-                        <Check className="h-10 w-10" strokeWidth={3} />
-                      </motion.div>
-                    </motion.div>
-                  </div>
-                  <motion.p
-                    initial={{ opacity: 0, y: 4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.25, duration: 0.3 }}
-                    className="text-sm font-semibold text-emerald-700 dark:text-emerald-300"
-                  >
-                    Phone connected
-                  </motion.p>
-                </motion.div>
-              ) : (
-                <motion.div
-                  key="placeholder"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="h-[180px] w-[180px] rounded-lg bg-muted/40 animate-pulse"
                 />
-              )}
-            </AnimatePresence>
+                <motion.div
+                  animate={{
+                    rotate: device ? 0 : -20,
+                  }}
+                  transition={{ duration: 0.35, ease: "easeOut" }}
+                  className="relative flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500 text-white shadow-lg shadow-emerald-500/30"
+                >
+                  <motion.div
+                    animate={{
+                      scale: device ? 1 : 0,
+                      opacity: device ? 1 : 0,
+                    }}
+                    transition={{
+                      delay: device ? 0.15 : 0,
+                      duration: 0.3,
+                      ease: "easeOut",
+                    }}
+                  >
+                    <Check className="h-10 w-10" strokeWidth={3} />
+                  </motion.div>
+                </motion.div>
+              </div>
+              <motion.p
+                animate={{
+                  opacity: device ? 1 : 0,
+                  y: device ? 0 : 4,
+                }}
+                transition={{ delay: device ? 0.25 : 0, duration: 0.3 }}
+                className="text-sm font-semibold text-emerald-700 dark:text-emerald-300"
+              >
+                Phone connected
+              </motion.p>
+            </motion.div>
           </div>
           {device && (
             <p className="text-xs font-medium text-emerald-700 dark:text-emerald-300 mt-4">
