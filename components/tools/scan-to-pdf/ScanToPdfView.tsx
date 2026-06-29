@@ -216,7 +216,7 @@ export function ScanToPdfView() {
         </div>
 
         {/* ── Right Panel - Step 2 (Live captures) ── */}
-        <div className="md:col-span-2 bg-card rounded-2xl shadow-md p-8 flex flex-col">
+        <div className="md:col-span-2 bg-card rounded-2xl shadow-md p-8 flex flex-col max-h-[80vh]">
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-xl font-bold text-card-foreground">Step 2</h3>
             <ConnectionBadge
@@ -282,7 +282,7 @@ function ConnectionBadge({
 function ScannedGallery({ images }: { images: ScannedImage[] }) {
   if (images.length === 0) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center text-center border-2 border-dashed border-border rounded-xl py-10 px-4">
+      <div className="flex-1 min-h-0 flex flex-col items-center justify-center text-center border-2 border-dashed border-border rounded-xl py-10 px-4">
         <div className="size-12 rounded-full bg-muted/60 flex items-center justify-center mb-3">
           <Smartphone className="size-6 text-muted-foreground" />
         </div>
@@ -298,7 +298,10 @@ function ScannedGallery({ images }: { images: ScannedImage[] }) {
   }
 
   return (
-    <div className="flex-1 space-y-3">
+    // `min-h-0` is required on a flex child for `overflow-y-auto` to
+    // actually constrain its height — otherwise the child grows to fit
+    // its content and the scrollbar never appears.
+    <div className="flex-1 min-h-0 overflow-y-auto pr-1 -mr-1 space-y-3">
       <ul className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 max-w-xl">
         {images.map((img, idx) => (
           <li

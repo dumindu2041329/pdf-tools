@@ -47,6 +47,41 @@ export function MobileScanView({ sessionId }: MobileScanViewProps) {
     })
   }, [validSession, sessionId])
 
+  // Hydrate existing captures on mount and whenever the session changes.
+  // Without this, reloading the mobile page wipes local state and the
+  // user can't see what they already uploaded in this session.
+  useEffect(() => {
+    if (!validSession) return
+    let cancelled = false
+
+    async function loadExisting() {
+      try {
+        const res = await fetch(`/api/scan-session/${sessionId}`, {
+          cache: "no-store",
+        })
+        if (!res.ok || cancelled) return
+        const data = (await res.json()) as { images?: CapturedItem[] }
+        if (cancelled || !Array.isArray(data.images)) return
+        setCaptures(
+          data.images.map((img) => ({
+            id: img.id ?? img.url,
+            url: img.url,
+            uploadedAt: img.uploadedAt,
+          }))
+        )
+      } catch (err) {
+        // Best-effort — a failed hydration shouldn't block the user
+        // from capturing new pages.
+        console.warn("[mobile-scan] hydrate failed:", err)
+      }
+    }
+
+    loadExisting()
+    return () => {
+      cancelled = true
+    }
+  }, [validSession, sessionId])
+
   async function handleCapture(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
     if (!file) return
