@@ -44,6 +44,11 @@ export function MobileScanView({ sessionId }: MobileScanViewProps) {
     setUploading(true)
     try {
       const result = await uploadFileDirect(file, {
+        // Pathname must be `scan-sessions/<sessionId>/<filename>` so the
+        // server's onBeforeGenerateToken hook can validate that the
+        // upload belongs to the requested session and group it under
+        // the right prefix when listing.
+        pathname: `scan-sessions/${sessionId}/${file.name}`,
         clientPayload: JSON.stringify({
           contentType: file.type,
           sessionId,

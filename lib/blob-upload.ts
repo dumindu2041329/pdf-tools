@@ -42,6 +42,13 @@ export interface DirectUploadOptions {
    * itself cannot set the pathname directly.
    */
   clientPayload?: string
+  /**
+   * Optional override for the blob pathname. By default the SDK uses the
+   * file's `name`, but some flows (e.g. mobile-scan captures that need
+   * a `scan-sessions/<id>/…` prefix so the server can group them by
+   * session) need to inject a prefix before the filename.
+   */
+  pathname?: string
 }
 
 export interface DirectUploadResult {
@@ -63,7 +70,7 @@ export async function uploadFileDirect(
   file: File,
   options: DirectUploadOptions = {}
 ): Promise<DirectUploadResult> {
-  const result = await upload(file.name, file, {
+  const result = await upload(options.pathname ?? file.name, file, {
     access: "public",
     handleUploadUrl: "/api/upload",
     contentType: file.type || undefined,
