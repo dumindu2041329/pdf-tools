@@ -1,7 +1,8 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { Camera, Loader2 } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { Camera, Loader2, Save } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { uploadFileDirect } from "@/lib/supabase-upload"
@@ -20,6 +21,7 @@ interface CapturedItem {
 const SAFE_SESSION = /^[a-zA-Z0-9-]{1,100}$/
 
 export function MobileScanView({ sessionId }: MobileScanViewProps) {
+  const router = useRouter()
   const [captures, setCaptures] = useState<CapturedItem[]>([])
   const [uploading, setUploading] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -150,8 +152,8 @@ export function MobileScanView({ sessionId }: MobileScanViewProps) {
   }
 
   return (
-    <main className="min-h-svh bg-background p-4 sm:p-6">
-      <div className="max-w-md mx-auto flex flex-col">
+    <main className="h-svh bg-background p-4 sm:p-6 overflow-hidden flex flex-col">
+      <div className="max-w-md w-full mx-auto flex flex-col flex-1 min-h-0">
         <header className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold text-foreground">Mobile Scanner</h1>
@@ -197,6 +199,24 @@ export function MobileScanView({ sessionId }: MobileScanViewProps) {
             </>
           )}
         </Button>
+
+        {/* Desktop-only shortcut — opens the editor page so a user
+            who happens to open the mobile-scan URL on a laptop can
+            review their captures without going back to the QR step.
+            Hidden below the `md` breakpoint because the editor is a
+            two-column desktop layout. */}
+        <div className="hidden md:flex mt-4">
+          <Button
+            variant="outline"
+            size="lg"
+            className="w-full"
+            disabled={!validSession}
+            onClick={() => router.push(`/scan-editor?session=${sessionId}`)}
+          >
+            <Save className="size-4" />
+            Save &amp; review on this device
+          </Button>
+        </div>
 
         {/* Captures region — takes remaining viewport height so the
             scrollbar lives here, not on the whole page. min-h-0 lets

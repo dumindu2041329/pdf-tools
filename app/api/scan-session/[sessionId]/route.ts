@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import {
+  deleteFromStorage,
   downloadFromStorage,
   isSupabaseStorageConfigured,
   listStorageObjects,
@@ -210,4 +211,121 @@ function publicUrlFor(bucket: string, path: string): string {
     return ""
   }
   return `${base}/storage/v1/object/public/${bucket}/${path}`
+}
+
+/**
+ * Deletes a single image (or `_device.json`) from a scan session. The
+ * Scan Editor page calls this when the user removes a page from the
+ * preview list — both the desktop gallery and the editor's local
+ * state update on the next poll / refetch.
+ *
+ * Body: `{ pathname: string }` where `pathname` is the bucket-relative
+ * path of the object to delete (e.g. `<sessionId>/IMG_1234.jpg`).
+ * The route rejects any pathname that escapes the session's prefix so
+ * a caller can't delete an unrelated object by guessing a sessionId.
+ */
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ sessionId: string }> }
+): Promise<NextResponse> {
+  const { sessionId } = await params
+
+  if (!isValidSessionId(sessionId)) {
+    return NextResponse.json({ error: "Invalid sessionId" }, { status: 400 })
+  }
+
+  const tokenError = ensureToken()
+  if (tokenError) return tokenError
+
+  let payload: unknown
+  try {
+    payload = await request.json()
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 })
+  }
+
+  if (!payload || typeof payload !== "object") {
+    return NextResponse.json({ error: "Expected JSON object" }, { status: 400 })
+  }
+
+  const { pathname, destroy } = payload as {
+    pathname?: unknown
+    destroy?: unknown
+  }
+
+  // `destroy: true` wipes the entire session: every object under
+  // `scan-sessions/<sessionId>/…` plus the `_device.json` marker.
+  // The Scan Editor triggers this when the user clicks "Process
+  // another" so the next visit to /tools/scan-to-pdf starts with a
+  // clean storage prefix.
+  if (destroy === true) {
+    try {
+      const objects = await listStorageObjects({
+        bucket: SCAN_SESSIONS_BUCKET,
+        prefix: `${sessionId}/`,
+      })
+      // `listStorageObjects` returns each file with a `name` field;
+      // combine it with the requested prefix to get the bucket-
+      // relative pathname expected by `publicUrlFor`.
+      await Promise.all(
+        objects.map((obj) => {
+          const relPath = `${sessionId}/${obj.name}`
+          return deleteFromStorage(publicUrlFor(SCAN_SESSIONS_BUCKET, relPath))
+        })
+      )
+      return NextResponse.json({ ok: true, deleted: objects.length })
+    } catch (err) {
+      console.error("[scan-session] destroy failed:", err)
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : "Failed to destroy session" },
+        { status: 500 }
+      )
+    }
+  }
+
+  if (typeof pathname !== "string" || pathname.length === 0) {
+    return NextResponse.json(
+      { error: "Missing `pathname` payload" },
+      { status: 400 }
+    )
+  }
+
+  // Strip a leading slash so callers can pass either `<id>/file.jpg`
+  // (bucket-relative, what the GET endpoint returns) or `/<id>/file.jpg`.
+  const normalized = pathname.replace(/^\/+/, "")
+
+  // Defence-in-depth: only allow deleting objects inside this session's
+  // prefix. `..` segments are also blocked to prevent path traversal.
+  const expectedPrefix = `${sessionId}/`
+  if (
+    !normalized.startsWith(expectedPrefix) ||
+    normalized.includes("..") ||
+    normalized.includes("//")
+  ) {
+    return NextResponse.json(
+      { error: "Pathname is outside this session" },
+      { status: 403 }
+    )
+  }
+
+  // Leaf must be a sane filename (same regex the upload route uses).
+  const leaf = normalized.slice(expectedPrefix.length)
+  if (leaf.length === 0 || leaf.length > 200 || !/^[a-zA-Z0-9._-]+$/.test(leaf)) {
+    return NextResponse.json(
+      { error: "Invalid filename" },
+      { status: 400 }
+    )
+  }
+
+  try {
+    const url = publicUrlFor(SCAN_SESSIONS_BUCKET, normalized)
+    await deleteFromStorage(url)
+    return NextResponse.json({ ok: true })
+  } catch (err) {
+    console.error("[scan-session] delete failed:", err)
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Failed to delete image" },
+      { status: 500 }
+    )
+  }
 }
