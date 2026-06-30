@@ -84,6 +84,31 @@ export function MobileScanView({ sessionId }: MobileScanViewProps) {
     }
   }, [validSession, sessionId])
 
+  // If the user navigates away from the mobile page (tab close,
+  // back button, app switch) destroy the session so unfinished
+  // captures don't linger in Supabase Storage. `sendBeacon` is
+  // the only reliable transport for page-leave requests.
+  useEffect(() => {
+    if (!validSession) return
+    const url = `/api/scan-session/${sessionId}/destroy`
+    const beacon = () => {
+      try {
+        const blob = new Blob([JSON.stringify({ destroy: true })], {
+          type: "application/json",
+        })
+        navigator.sendBeacon(url, blob)
+      } catch (err) {
+        console.warn("[mobile-scan] destroy beacon failed:", err)
+      }
+    }
+    window.addEventListener("pagehide", beacon)
+    window.addEventListener("beforeunload", beacon)
+    return () => {
+      window.removeEventListener("pagehide", beacon)
+      window.removeEventListener("beforeunload", beacon)
+    }
+  }, [validSession, sessionId])
+
   async function handleCapture(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
     if (!file) return

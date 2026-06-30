@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import {
   deleteFromStorage,
+  deleteStoragePrefix,
   downloadFromStorage,
   isSupabaseStorageConfigured,
   listStorageObjects,
@@ -254,26 +255,19 @@ export async function DELETE(
   }
 
   // `destroy: true` wipes the entire session: every object under
-  // `scan-sessions/<sessionId>/…` plus the `_device.json` marker.
-  // The Scan Editor triggers this when the user clicks "Process
+  // `scan-sessions/<sessionId>/…` plus any nested sub-folders. The
+  // Scan Editor triggers this when the user clicks "Process
   // another" so the next visit to /tools/scan-to-pdf starts with a
-  // clean storage prefix.
+  // clean storage prefix. In Supabase Storage folders are virtual,
+  // so removing every object beneath the prefix removes the folder
+  // itself from the dashboard listing.
   if (destroy === true) {
     try {
-      const objects = await listStorageObjects({
+      const deleted = await deleteStoragePrefix({
         bucket: SCAN_SESSIONS_BUCKET,
         prefix: `${sessionId}/`,
       })
-      // `listStorageObjects` returns each file with a `name` field;
-      // combine it with the requested prefix to get the bucket-
-      // relative pathname expected by `publicUrlFor`.
-      await Promise.all(
-        objects.map((obj) => {
-          const relPath = `${sessionId}/${obj.name}`
-          return deleteFromStorage(publicUrlFor(SCAN_SESSIONS_BUCKET, relPath))
-        })
-      )
-      return NextResponse.json({ ok: true, deleted: objects.length })
+      return NextResponse.json({ ok: true, deleted })
     } catch (err) {
       console.error("[scan-session] destroy failed:", err)
       return NextResponse.json(

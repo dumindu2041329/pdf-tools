@@ -135,6 +135,56 @@ export async function listStorageObjects(options: ListStorageObjectsOptions) {
 }
 
 /**
+ * Recursively deletes every object under `prefix` in `bucket`. Walks
+ * sub-folders (Supabase Storage's flat namespace still reports them
+ * via `list()`) and batches up to 100 removes per call — the SDK
+ * rejects larger arrays. The Supabase console hides the prefix
+ * folder once every object beneath it is gone, which is how callers
+ * "delete a folder" in Supabase Storage.
+ *
+ * Returns the number of objects removed (for logging / API response).
+ */
+export async function deleteStoragePrefix(options: {
+  bucket: string
+  prefix: string
+}): Promise<number> {
+  return collectAndDelete(options.bucket, options.prefix)
+}
+
+async function collectAndDelete(
+  bucket: string,
+  prefix: string
+): Promise<number> {
+  const supabase = getSupabaseServer()
+  const entries = await supabase.storage
+    .from(bucket)
+    .list(prefix, { limit: 1000 })
+  if (entries.error) {
+    throw new Error(
+      `Supabase list failed for prefix ${prefix}: ${entries.error.message}`
+    )
+  }
+  let total = 0
+  for (const entry of entries.data ?? []) {
+    const rel = `${prefix}${entry.name}`
+    // `id` is null for sub-folders in the Supabase SDK; descend
+    // recursively. `id` is a non-null UUID for actual file objects.
+    if (!entry.id) {
+      total += await collectAndDelete(bucket, `${rel}/`)
+    } else {
+      const { error } = await supabase.storage.from(bucket).remove([rel])
+      if (error) {
+        throw new Error(
+          `Supabase remove failed for ${rel}: ${error.message}`
+        )
+      }
+      total += 1
+    }
+  }
+  return total
+}
+
+/**
  * Parses a Supabase Storage public URL into its `{ bucket, pathname }`
  * parts. Returns null for non-Supabase URLs so `deleteFromStorage`
  * degrades gracefully on stale entries.

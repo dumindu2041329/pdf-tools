@@ -1,6 +1,7 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
+import { usePathname } from "next/navigation"
 import QRCode from "qrcode"
 import { Check, Smartphone } from "lucide-react"
 import { motion } from "framer-motion"
@@ -116,6 +117,70 @@ export function ScanToPdfView() {
       window.clearInterval(pollId)
     }
   }, [])
+
+  // If the user navigates away (tab close, refresh, route change),
+  // destroy the session so the next visit to this page starts clean.
+  // `sendBeacon` is the only reliable way to fire a request on
+  // `pagehide`/`beforeunload` — `fetch` with `keepalive` is the
+  // alternative but it doesn't survive a tab close in every browser.
+  //
+  // In-app Next.js navigation (Link clicks, router.push) does NOT
+  // fire `pagehide`, so we additionally watch the current pathname
+  // and trigger a regular `fetch` when it leaves this tool page.
+  useEffect(() => {
+    if (!sessionId) return
+    const url = `/api/scan-session/${sessionId}/destroy`
+
+    // Fired by the pagehide/beforeunload listeners below. Send a
+    // beacon because the page is about to be torn down — a regular
+    // fetch would be cancelled.
+    const beacon = () => {
+      try {
+        const blob = new Blob([JSON.stringify({ destroy: true })], {
+          type: "application/json",
+        })
+        navigator.sendBeacon(url, blob)
+      } catch (err) {
+        // Best-effort — if beacon fails the worst case is a stale
+        // session sitting in storage until the next destroy.
+        console.warn("[scan-to-pdf] destroy beacon failed:", err)
+      }
+    }
+    window.addEventListener("pagehide", beacon)
+    // `beforeunload` covers Safari where `pagehide` is inconsistent.
+    window.addEventListener("beforeunload", beacon)
+    return () => {
+      window.removeEventListener("pagehide", beacon)
+      window.removeEventListener("beforeunload", beacon)
+    }
+  }, [sessionId])
+
+  // In-app route changes (Next.js client-side navigation). When the
+  // pathname leaves the scan-to-PDF tool, fire a normal fetch — the
+  // page is still alive so we don't need a beacon.
+  const pathname = usePathname()
+  const lastPathnameRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!sessionId) return
+    if (lastPathnameRef.current === null) {
+      lastPathnameRef.current = pathname
+      return
+    }
+    if (pathname === lastPathnameRef.current) return
+    lastPathnameRef.current = pathname
+    // Only react when the user is actually leaving the tool page.
+    if (pathname.startsWith("/tools/scan-to-pdf")) return
+
+    const url = `/api/scan-session/${sessionId}/destroy`
+    fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ destroy: true }),
+      keepalive: true,
+    }).catch((err) => {
+      console.warn("[scan-to-pdf] destroy fetch failed:", err)
+    })
+  }, [pathname, sessionId])
 
   // Build the mobile-scan URL only when we have a session id so the QR
   // code updates as soon as the id is ready.
