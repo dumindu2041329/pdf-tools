@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import {
@@ -188,6 +188,32 @@ export function ScanEditorClient({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     refresh()
   }, [refresh])
+
+  // Once the user's PDF is ready and the download card shows up, the
+  // original scan captures in Supabase have done their job. Wipe the
+  // session folder eagerly so it doesn't linger between visits — the
+  // download card itself is a local React state (the PDF is held in
+  // a Blob URL on the client), so removing the storage objects
+  // doesn't affect what's already on screen. The page-leave beacon
+  // still acts as a safety net for users who close the tab straight
+  // after the PDF renders.
+  const cleanupFiredRef = useRef(false)
+  useEffect(() => {
+    if (!validSession) return
+    if (state.status !== "success") return
+    if (cleanupFiredRef.current) return
+    cleanupFiredRef.current = true
+
+    fetch(`/api/scan-session/${sessionId}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ destroy: true }),
+    }).catch((err) => {
+      // Best-effort — a stale session is harmless. The page-leave
+      // beacon will retry on navigation/close if this one fails.
+      console.warn("[scan-editor] post-success cleanup failed:", err)
+    })
+  }, [validSession, sessionId, state.status])
 
   const rotate = (pathname: string) => {
     setImages((prev) =>
