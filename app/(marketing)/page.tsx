@@ -76,7 +76,7 @@ function HeroSection({ onGetStarted }: { onGetStarted: () => void }) {
             className="mt-6 text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto font-serif"
           >
             Merge, split, compress, convert, and edit your PDF files.
-            Fast, secure, and completely free. No registration needed.
+            Fast, secure, and built for everyone. No registration needed.
           </motion.p>
 
           {/* CTA buttons */}
@@ -164,14 +164,14 @@ function HowItWorksSection() {
       icon: Upload,
       title: "Upload Your File",
       description:
-        "Drag and drop your PDF or choose from your device. We support files up to 20MB.",
+        "Drag and drop your PDF or choose from your device. We support files up to 4GB.",
       color: "hsl(262, 83%, 58%)",
     },
     {
       icon: Zap,
       title: "Process Instantly",
       description:
-        "Our iLoveAPI-powered engine processes your file on dedicated servers. Fast, reliable, and secure.",
+        "Our processing engine handles your file on dedicated servers. Fast, reliable, and secure.",
       color: "hsl(173, 58%, 39%)",
     },
     {
@@ -250,7 +250,7 @@ function FeaturesSection() {
       icon: Zap,
       title: "Lightning Fast",
       description:
-        "Files are processed on dedicated iLoveAPI servers. Most operations complete in under 10 seconds.",
+        "Files are processed on dedicated servers. Most operations complete in under 10 seconds.",
     },
     {
       icon: Shield,
@@ -331,7 +331,7 @@ function AboutSection() {
                 or privacy concerns.
               </p>
               <p>
-                Powered by the reliable iLoveAPI, we provide a blazingly fast, 
+                Powered by industry-leading document processing technology, we provide a blazingly fast, 
                 secure, and intuitive interface for performing complex document 
                 operations directly in your browser. From simple merges to AI-driven summaries, 
                 we&apos;re constantly evolving to bring you the best tools possible.
