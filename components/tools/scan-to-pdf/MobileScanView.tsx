@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
-import { Camera, Loader2, Save } from "lucide-react"
+import { AnimatePresence, motion } from "framer-motion"
+import { Camera, Check, Loader2, Save } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { uploadFileDirect } from "@/lib/supabase-upload"
@@ -24,9 +25,21 @@ export function MobileScanView({ sessionId }: MobileScanViewProps) {
   const router = useRouter()
   const [captures, setCaptures] = useState<CapturedItem[]>([])
   const [uploading, setUploading] = useState(false)
+  const [showDoneAnimation, setShowDoneAnimation] = useState(false)
+  // We only know if the visitor is on a real mobile/tablet once
+  // we're on the client — `navigator` doesn't exist on the server.
+  // `null` means "not yet determined" so the Save handler can wait
+  // for the real value before deciding whether to navigate or show
+  // the confirmation overlay.
+  const [isMobileDevice, setIsMobileDevice] = useState<boolean | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const validSession = SAFE_SESSION.test(sessionId)
+
+  useEffect(() => {
+    const info = parseDeviceInfo(navigator.userAgent)
+    setIsMobileDevice(info?.type === "mobile" || info?.type === "tablet")
+  }, [])
 
   // Tell the desktop session that this phone just joined. Sent once
   // on mount; the desktop uses the response to blur Step 1 and display
@@ -108,6 +121,20 @@ export function MobileScanView({ sessionId }: MobileScanViewProps) {
       window.removeEventListener("beforeunload", beacon)
     }
   }, [validSession, sessionId])
+
+  // Save button handler — branches on the form factor we detected
+  // in the mount effect. On a real phone/tablet we want to keep the
+  // user on the device and surface a confirmation overlay that points
+  // them at the desktop for the next step. On desktop (e.g. when this
+  // view is opened from DevTools) we keep the previous behaviour of
+  // jumping straight into the editor.
+  function handleSave() {
+    if (isMobileDevice === true) {
+      setShowDoneAnimation(true)
+      return
+    }
+    router.push(`/scan-editor?session=${sessionId}`)
+  }
 
   async function handleCapture(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
@@ -225,16 +252,17 @@ export function MobileScanView({ sessionId }: MobileScanViewProps) {
           )}
         </Button>
 
-        {/* Opens the editor page so a user who captured pages on
-            this device can review them without going back to the
-            QR step on the desktop. */}
+        {/* On real mobile devices we show a "Pages saved" overlay
+            instead of navigating away — the next step happens on the
+            desktop. The button stays the same on desktop so anyone
+            previewing this page in DevTools still gets the editor. */}
         <div className="mt-4">
           <Button
             variant="outline"
             size="lg"
             className="w-full"
-            disabled={!validSession}
-            onClick={() => router.push(`/scan-editor?session=${sessionId}`)}
+            disabled={!validSession || isMobileDevice === null}
+            onClick={handleSave}
           >
             <Save className="size-4" />
             Save
@@ -280,6 +308,89 @@ export function MobileScanView({ sessionId }: MobileScanViewProps) {
           Switch back to your computer to see the pages appear in real time.
         </footer>
       </div>
+
+      {/* Mobile-only confirmation overlay. Shown after the user taps
+          Save on a phone/tablet — tells them the pages are safely
+          uploaded and points them at the desktop for the rest of the
+          flow. The "Done" button just dismisses the overlay so they
+          can capture more pages if they want; the page-leave beacon
+          still fires when they actually close the tab/navigate away. */}
+      <AnimatePresence>
+        {showDoneAnimation && (
+          <motion.div
+            key="done-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-background/90 backdrop-blur-sm p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="scan-done-title"
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              transition={{ type: "spring", stiffness: 320, damping: 26 }}
+              className="bg-card text-card-foreground rounded-2xl shadow-2xl p-7 max-w-sm w-full text-center space-y-5 border border-border"
+            >
+              <motion.div
+                initial={{ scale: 0, rotate: -45 }}
+                animate={{ scale: 1, rotate: 0 }}
+                transition={{
+                  delay: 0.1,
+                  type: "spring",
+                  stiffness: 220,
+                  damping: 14,
+                }}
+                className="mx-auto w-20 h-20 rounded-full bg-emerald-100 dark:bg-emerald-950/50 flex items-center justify-center"
+              >
+                <Check
+                  className="w-10 h-10 text-emerald-600 dark:text-emerald-400"
+                  strokeWidth={3}
+                />
+              </motion.div>
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.25, duration: 0.3 }}
+                className="space-y-2"
+              >
+                <h2
+                  id="scan-done-title"
+                  className="text-2xl font-bold text-foreground"
+                >
+                  Pages saved!
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  {captures.length === 0
+                    ? "No pages were captured this session."
+                    : captures.length === 1
+                      ? "1 page is ready on your computer."
+                      : `${captures.length} pages are ready on your computer.`}
+                </p>
+                <p className="text-xs text-muted-foreground pt-1">
+                  Switch to your computer to review and create the PDF.
+                </p>
+              </motion.div>
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.35, duration: 0.3 }}
+              >
+                <Button
+                  size="lg"
+                  className="w-full"
+                  onClick={() => setShowDoneAnimation(false)}
+                >
+                  Done
+                </Button>
+              </motion.div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </main>
   )
 }
