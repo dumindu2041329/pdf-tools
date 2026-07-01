@@ -333,71 +333,17 @@ async function processToolRequest(
       const JSZip = (await import("jszip")).default
       const zip = new JSZip()
 
-      // Convert each image to its own PDF in parallel. The previous
-      // serial loop turned N images into N sequential iLoveAPI calls
-      // — with Vercel's 120s function timeout each call can take
-      // 5-15s end-to-end (upload + process + download), so 5+ images
-      // would routinely blow the budget. Fanning out via `Promise.all`
-      // bounds the wall-clock time by the slowest single conversion
-      // rather than the sum. We also cap concurrency at 4 to avoid
-      // hammering iLoveAPI's task-create rate limit and to keep peak
-      // memory bounded (each in-flight buffer is held in RAM).
-      const CONCURRENCY = 4
-      const perImageResults: Array<{ idx: number; pdfBuffer: Uint8Array }> = []
-      const failures: Array<{ idx: number; error: unknown }> = []
-
-      for (let i = 0; i < files.length; i += CONCURRENCY) {
-        const chunk = files.slice(i, i + CONCURRENCY)
-        const chunkSettled = await Promise.allSettled(
-          chunk.map(async (file, offset) => {
-            const singleResult = await runTool({
-              tool: "imagepdf",
-              files: [file],
-              options: { ...options },
-            })
-            const pdfBuffer = singleResult.buffer instanceof Uint8Array
-              ? singleResult.buffer
-              : new Uint8Array(singleResult.buffer as ArrayBuffer)
-            return { idx: i + offset, pdfBuffer }
-          })
-        )
-        for (const result of chunkSettled) {
-          if (result.status === "fulfilled") {
-            perImageResults.push(result.value)
-          } else {
-            failures.push({ idx: -1, error: result.reason })
-          }
-        }
-      }
-
-      // If every image failed, surface a 500 — we have no zip to send
-      // and silently shipping an empty archive would be worse.
-      if (perImageResults.length === 0) {
-        console.error(
-          "JPG to PDF (no merge) — all conversions failed:",
-          failures
-        )
-        return NextResponse.json(
-          { error: "Failed to convert images to PDF" },
-          { status: 500 }
-        )
-      }
-
-      // Some images failed but at least one succeeded — log the
-      // failures (with the original 0-based index reconstructed from
-      // the file order) and ship a zip with what we have. A partial
-      // download is more useful than a hard error mid-batch.
-      if (failures.length > 0) {
-        console.warn(
-          `JPG to PDF (no merge) — ${failures.length}/${files.length} conversions failed; shipping partial zip`
-        )
-      }
-
-      // Sort by original index so the filenames (pdf_1, pdf_2, …)
-      // stay in the order the user uploaded them.
-      perImageResults.sort((a, b) => a.idx - b.idx)
-      for (const { idx, pdfBuffer } of perImageResults) {
-        const pdfFilename = `pdf_${idx + 1}.pdf`
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        const singleResult = await runTool({
+          tool: "imagepdf",
+          files: [file],
+          options: { ...options },
+        })
+        const pdfBuffer = singleResult.buffer instanceof Uint8Array
+          ? singleResult.buffer
+          : new Uint8Array(singleResult.buffer as ArrayBuffer)
+        const pdfFilename = `pdf_${i + 1}.pdf`
         zip.file(pdfFilename, pdfBuffer)
       }
 
@@ -909,24 +855,50 @@ async function processToolRequest(
     }
   }
 
-  if (tool === "scan-to-pdf" && files.length > 1) {
+  if (tool === "scan-to-pdf" && options.merge_after === false) {
     try {
       const start = Date.now()
       const JSZip = (await import("jszip")).default
       const zip = new JSZip()
 
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i]
-        const singleResult = await runTool({
-          tool: "imagepdf",
-          files: [file],
-          options: { ...options },
-        })
-        const pdfBuffer = singleResult.buffer instanceof Uint8Array
-          ? singleResult.buffer
-          : new Uint8Array(singleResult.buffer as ArrayBuffer)
-        const pdfFilename = `pdf_${i + 1}.pdf`
-        zip.file(pdfFilename, pdfBuffer)
+      const CONCURRENCY = 4
+      let successCount = 0
+      const failures: { index: number; filename: string; error: unknown }[] = []
+
+      console.log(`[ScanPDF] Processing ${files.length} files with concurrency=${CONCURRENCY}`)
+
+      const tasks = files.map((file, i) => async () => {
+        try {
+          const singleResult = await runTool({
+            tool: "imagepdf",
+            files: [file],
+            options: { ...options },
+          })
+          const pdfBuffer = singleResult.buffer instanceof Uint8Array
+            ? singleResult.buffer
+            : new Uint8Array(singleResult.buffer as ArrayBuffer)
+          const pdfFilename = `pdf_${i + 1}.pdf`
+          zip.file(pdfFilename, pdfBuffer)
+          successCount++
+          console.log(`[ScanPDF] Added to zip: ${pdfFilename}`)
+        } catch (err) {
+          console.warn(`[ScanPDF] File ${i + 1} (${file.filename}) failed:`, err)
+          failures.push({ index: i, filename: file.filename, error: err })
+        }
+      })
+
+      for (let i = 0; i < tasks.length; i += CONCURRENCY) {
+        const chunk = tasks.slice(i, i + CONCURRENCY)
+        await Promise.allSettled(chunk.map((t) => t()))
+      }
+
+      if (successCount === 0) {
+        console.error(`[ScanPDF] All ${files.length} files failed`)
+        return NextResponse.json({ error: "Failed to convert images to PDF" }, { status: 500 })
+      }
+
+      if (failures.length > 0) {
+        console.warn(`[ScanPDF] ${failures.length}/${files.length} files failed but ${successCount} succeeded`)
       }
 
       const zipBuffer = await zip.generateAsync({ type: "uint8array" })
@@ -950,7 +922,7 @@ async function processToolRequest(
         outputSize: zipBuffer.byteLength,
       })
     } catch (err) {
-      console.error("Scan to PDF (multiple) processing error:", err)
+      console.error("Scan to PDF (no merge) processing error:", err)
       return NextResponse.json({ error: "Failed to convert images to PDF" }, { status: 500 })
     }
   }
