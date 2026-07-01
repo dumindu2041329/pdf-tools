@@ -31,6 +31,13 @@ import type { DeviceInfo } from "@/lib/device-info"
 export const runtime = "nodejs"
 
 const DEVICE_FILENAME = "_device.json"
+// Sentinel file written by the mobile page when the user taps "Save".
+// Its presence is what the desktop poll keys off to auto-navigate
+// into the Scan Editor — keeping it as a separate blob (rather than
+// stuffing a flag into `_device.json`) means the device-join payload
+// and the save-signal payload stay decoupled and each route handler
+// stays small.
+const SAVED_FILENAME = "_saved.json"
 
 function isValidSessionId(id: string): boolean {
   return /^[a-zA-Z0-9-]{1,100}$/.test(id)
@@ -70,8 +77,10 @@ export async function GET(
     const objects = await listStorageObjects({ bucket: SCAN_SESSIONS_BUCKET, prefix })
 
     // Pull the special device-info blob out of the listing so callers
-    // don't have to filter it themselves.
+    // don't have to filter it themselves. Same treatment for the
+    // `_saved.json` sentinel — its mere presence is the signal.
     let device: DeviceInfo | null = null
+    let saved = false
     const images: Array<{ url: string; pathname: string; uploadedAt: string }> = []
 
     for (const obj of objects) {
@@ -98,6 +107,11 @@ export async function GET(
         continue
       }
 
+      if (leaf === SAVED_FILENAME) {
+        saved = true
+        continue
+      }
+
       images.push({
         url,
         pathname: fullPath,
@@ -109,7 +123,7 @@ export async function GET(
     // them in the order they were scanned.
     images.sort((a, b) => a.uploadedAt.localeCompare(b.uploadedAt))
 
-    return NextResponse.json({ images, device })
+    return NextResponse.json({ images, device, saved })
   } catch (err) {
     console.error("[scan-session] list failed:", err)
     return NextResponse.json(
@@ -150,10 +164,43 @@ export async function POST(
     return NextResponse.json({ error: "Expected JSON object" }, { status: 400 })
   }
 
-  const { device } = payload as { device?: unknown }
+  const { device, saved } = payload as { device?: unknown; saved?: unknown }
+
+  // Two flavors of POST on this endpoint:
+  //   1. `{ device }`    — phone/tablet joining the session (records _device.json)
+  //   2. `{ saved: true }` — phone/tablet tapped "Save"; we drop a
+  //                         `_saved.json` sentinel that the desktop poll
+  //                         keys off to auto-navigate into the editor.
+  // We handle them as separate branches so the validation stays tight
+  // for each (a stray `saved: true` from a misbehaving client can't
+  // clobber the device blob and vice-versa).
+
+  if (saved === true) {
+    try {
+      await uploadToStorage({
+        bucket: SCAN_SESSIONS_BUCKET,
+        pathname: `${sessionId}/${SAVED_FILENAME}`,
+        // Storing a small JSON object (with a timestamp) makes the
+        // sentinel self-describing in the Supabase dashboard — handy
+        // when debugging "did the mobile actually fire the save
+        // signal?" Without the timestamp we'd just see a 2-byte `{}`.
+        body: JSON.stringify({ savedAt: new Date().toISOString() }),
+        contentType: "application/json",
+        upsert: true,
+      })
+      return NextResponse.json({ ok: true })
+    } catch (err) {
+      console.error("[scan-session] save signal failed:", err)
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : "Failed to record save signal" },
+        { status: 500 }
+      )
+    }
+  }
+
   if (!device || typeof device !== "object") {
     return NextResponse.json(
-      { error: "Missing `device` payload" },
+      { error: "Expected `device` payload or `{ saved: true }`" },
       { status: 400 }
     )
   }

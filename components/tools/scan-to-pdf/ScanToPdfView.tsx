@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import QRCode from "qrcode"
 import { Check, Smartphone } from "lucide-react"
 import { motion } from "framer-motion"
@@ -63,10 +63,17 @@ export function ScanToPdfView() {
   // matches (avoids hydration mismatch); the real id is generated on
   // mount inside the polling effect below — that keeps generation and
   // consumption in a single effect to avoid a cascading re-render.
+  const router = useRouter()
   const [sessionId, setSessionId] = useState<string>("")
   const [images, setImages] = useState<ScannedImage[]>([])
   const [connected, setConnected] = useState(false)
   const [device, setDevice] = useState<DeviceInfo | null>(null)
+  // Latches `true` the first time the desktop sees the mobile's
+  // "Save" signal so we only auto-navigate once per session. The
+  // mobile might keep the page open (showing the success overlay)
+  // and re-fire the signal — without this latch we'd loop back into
+  // the editor every poll cycle.
+  const autoNavTriggeredRef = useRef(false)
   const columnsPerRow = useColumnsPerRow()
   const hasScanned = device !== null || images.length > 0
 
@@ -97,6 +104,7 @@ export function ScanToPdfView() {
         const data = (await res.json()) as {
           images: ScannedImage[]
           device: DeviceInfo | null
+          saved?: boolean
         }
         if (cancelled) return
         setImages(data.images)
@@ -105,6 +113,17 @@ export function ScanToPdfView() {
         // happens to omit the device blob shouldn't "un-lock" Step 1.
         setDevice((prev) => data.device ?? prev)
         setConnected(true)
+
+        // Mobile user tapped "Save" → jump into the Scan Editor. We
+        // do this from inside the poll (rather than wiring a separate
+        // channel) so the trigger rides on the same transport the
+        // rest of the session state already uses. The ref latch
+        // guarantees we only navigate once even if the mobile keeps
+        // re-firing the signal while its success overlay is up.
+        if (data.saved === true && !autoNavTriggeredRef.current) {
+          autoNavTriggeredRef.current = true
+          router.push(`/scan-editor?session=${id}`)
+        }
       } catch {
         if (!cancelled) setConnected(false)
       }
@@ -116,7 +135,13 @@ export function ScanToPdfView() {
       cancelled = true
       window.clearInterval(pollId)
     }
-  }, [])
+    // `router` is stable across renders (Next.js returns the same
+    // singleton) but the exhaustive-deps lint rule can't prove that,
+    // so we list it explicitly. `id` is captured in the closure from
+    // `crypto.randomUUID()` on mount; intentionally NOT pulled from
+    // `sessionId` state to avoid restarting the poll on the re-render
+    // that sets the state.
+  }, [router])
 
   // If the user navigates away (tab close, refresh, route change),
   // destroy the session so the next visit to this page starts clean.

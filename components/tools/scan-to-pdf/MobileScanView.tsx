@@ -125,12 +125,27 @@ export function MobileScanView({ sessionId }: MobileScanViewProps) {
   // Save button handler — branches on the form factor we detected
   // in the mount effect. On a real phone/tablet we want to keep the
   // user on the device and surface a confirmation overlay that points
-  // them at the desktop for the next step. On desktop (e.g. when this
-  // view is opened from DevTools) we keep the previous behaviour of
-  // jumping straight into the editor.
+  // them at the desktop for the next step. We also fire a `{ saved:
+  // true }` POST so the desktop's existing session poll picks it up
+  // on its next tick and auto-navigates into the Scan Editor — the
+  // user shouldn't have to click anything on the computer to keep
+  // going. On desktop (e.g. when this view is opened from DevTools)
+  // we keep the previous behaviour of jumping straight into the
+  // editor locally.
   function handleSave() {
     if (isMobileDevice === true) {
       setShowDoneAnimation(true)
+      // Fire-and-forget. A failure here just means the desktop
+      // won't auto-advance — the user can still reach the editor
+      // by hand and the session stays valid either way.
+      fetch(`/api/scan-session/${sessionId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ saved: true }),
+        keepalive: true,
+      }).catch((err) => {
+        console.warn("[mobile-scan] save signal failed:", err)
+      })
       return
     }
     router.push(`/scan-editor?session=${sessionId}`)
@@ -373,19 +388,6 @@ export function MobileScanView({ sessionId }: MobileScanViewProps) {
                 <p className="text-xs text-muted-foreground pt-1">
                   Switch to your computer to review and create the PDF.
                 </p>
-              </motion.div>
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.35, duration: 0.3 }}
-              >
-                <Button
-                  size="lg"
-                  className="w-full"
-                  onClick={() => setShowDoneAnimation(false)}
-                >
-                  Done
-                </Button>
               </motion.div>
             </motion.div>
           </motion.div>
