@@ -1,7 +1,8 @@
 "use client"
 
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
+import dynamic from "next/dynamic"
 import { motion } from "framer-motion"
 import {
   ArrowRight,
@@ -17,9 +18,26 @@ import {
 
 import { Button } from "@/components/ui/button"
 import { ToolGrid } from "@/components/tools/ToolGrid"
-import { GLSLHills } from "@/components/ui/glsl-hills"
 import { BackToTop } from "@/components/shared/BackToTop"
 import { useClerk } from "@clerk/nextjs"
+
+// Three.js (~600KB) split into its own chunk and deferred until the browser is idle
+const GLSLHills = dynamic(
+  () => import("@/components/ui/glsl-hills").then((m) => m.GLSLHills),
+  { ssr: false }
+)
+
+function GLSLHillsLazy() {
+  const [show, setShow] = useState(false)
+  useEffect(() => {
+    const schedule =
+      typeof window === "undefined" || !("requestIdleCallback" in window)
+        ? (cb: () => void) => setTimeout(cb, 200)
+        : (cb: () => void) => (window as Window).requestIdleCallback(cb)
+    schedule(() => setShow(true))
+  }, [])
+  return show ? <GLSLHills width="100%" height="100%" /> : null
+}
 
 // ── Animation variants ───────────────────────────────────────
 const fadeUp = {
@@ -37,7 +55,7 @@ function HeroSection({ onGetStarted }: { onGetStarted: () => void }) {
     <section className="relative overflow-hidden">
       {/* Background gradients */}
       <div className="absolute inset-0 -z-10 overflow-hidden">
-        <GLSLHills width="100%" height="100%" />
+        <GLSLHillsLazy />
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-primary/10 rounded-full blur-[120px] pointer-events-none" />
         <div className="absolute bottom-0 right-0 w-[400px] h-[400px] bg-cyan-500/10 rounded-full blur-[100px] pointer-events-none" />
       </div>
