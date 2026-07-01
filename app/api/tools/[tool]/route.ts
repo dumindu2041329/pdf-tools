@@ -333,17 +333,71 @@ async function processToolRequest(
       const JSZip = (await import("jszip")).default
       const zip = new JSZip()
 
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i]
-        const singleResult = await runTool({
-          tool: "imagepdf",
-          files: [file],
-          options: { ...options },
-        })
-        const pdfBuffer = singleResult.buffer instanceof Uint8Array
-          ? singleResult.buffer
-          : new Uint8Array(singleResult.buffer as ArrayBuffer)
-        const pdfFilename = `pdf_${i + 1}.pdf`
+      // Convert each image to its own PDF in parallel. The previous
+      // serial loop turned N images into N sequential iLoveAPI calls
+      // — with Vercel's 120s function timeout each call can take
+      // 5-15s end-to-end (upload + process + download), so 5+ images
+      // would routinely blow the budget. Fanning out via `Promise.all`
+      // bounds the wall-clock time by the slowest single conversion
+      // rather than the sum. We also cap concurrency at 4 to avoid
+      // hammering iLoveAPI's task-create rate limit and to keep peak
+      // memory bounded (each in-flight buffer is held in RAM).
+      const CONCURRENCY = 4
+      const perImageResults: Array<{ idx: number; pdfBuffer: Uint8Array }> = []
+      const failures: Array<{ idx: number; error: unknown }> = []
+
+      for (let i = 0; i < files.length; i += CONCURRENCY) {
+        const chunk = files.slice(i, i + CONCURRENCY)
+        const chunkSettled = await Promise.allSettled(
+          chunk.map(async (file, offset) => {
+            const singleResult = await runTool({
+              tool: "imagepdf",
+              files: [file],
+              options: { ...options },
+            })
+            const pdfBuffer = singleResult.buffer instanceof Uint8Array
+              ? singleResult.buffer
+              : new Uint8Array(singleResult.buffer as ArrayBuffer)
+            return { idx: i + offset, pdfBuffer }
+          })
+        )
+        for (const result of chunkSettled) {
+          if (result.status === "fulfilled") {
+            perImageResults.push(result.value)
+          } else {
+            failures.push({ idx: -1, error: result.reason })
+          }
+        }
+      }
+
+      // If every image failed, surface a 500 — we have no zip to send
+      // and silently shipping an empty archive would be worse.
+      if (perImageResults.length === 0) {
+        console.error(
+          "JPG to PDF (no merge) — all conversions failed:",
+          failures
+        )
+        return NextResponse.json(
+          { error: "Failed to convert images to PDF" },
+          { status: 500 }
+        )
+      }
+
+      // Some images failed but at least one succeeded — log the
+      // failures (with the original 0-based index reconstructed from
+      // the file order) and ship a zip with what we have. A partial
+      // download is more useful than a hard error mid-batch.
+      if (failures.length > 0) {
+        console.warn(
+          `JPG to PDF (no merge) — ${failures.length}/${files.length} conversions failed; shipping partial zip`
+        )
+      }
+
+      // Sort by original index so the filenames (pdf_1, pdf_2, …)
+      // stay in the order the user uploaded them.
+      perImageResults.sort((a, b) => a.idx - b.idx)
+      for (const { idx, pdfBuffer } of perImageResults) {
+        const pdfFilename = `pdf_${idx + 1}.pdf`
         zip.file(pdfFilename, pdfBuffer)
       }
 
