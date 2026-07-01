@@ -225,12 +225,10 @@ export function MobileScanView({ sessionId }: MobileScanViewProps) {
           )}
         </Button>
 
-        {/* Desktop-only shortcut — opens the editor page so a user
-            who happens to open the mobile-scan URL on a laptop can
-            review their captures without going back to the QR step.
-            Hidden below the `md` breakpoint because the editor is a
-            two-column desktop layout. */}
-        <div className="hidden md:flex mt-4">
+        {/* Opens the editor page so a user who captured pages on
+            this device can review them without going back to the
+            QR step on the desktop. */}
+        <div className="mt-4">
           <Button
             variant="outline"
             size="lg"
@@ -239,7 +237,7 @@ export function MobileScanView({ sessionId }: MobileScanViewProps) {
             onClick={() => router.push(`/scan-editor?session=${sessionId}`)}
           >
             <Save className="size-4" />
-            Save &amp; review on this device
+            Save
           </Button>
         </div>
 
