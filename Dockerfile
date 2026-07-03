@@ -40,6 +40,11 @@ FROM base
 # Copy built application
 COPY --from=build /app /app
 
+# Normalize line endings on the entrypoint (Windows CRLF -> Linux LF).
+# Avoids `env: 'node\r': No such file or directory` crash when the host
+# checked-in the file with CRLF.
+RUN sed -i 's/\r$//' /app/docker-entrypoint.js
+
 # Entrypoint sets up the container.
 ENTRYPOINT [ "/app/docker-entrypoint.js" ]
 
