@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+// docker-entrypoint.js runs directly under Node in the Fly.io container
+// (see Dockerfile ENTRYPOINT). Package has no "type": "module", so CJS is required.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { spawn } = require('node:child_process')
 
 const env = { ...process.env }

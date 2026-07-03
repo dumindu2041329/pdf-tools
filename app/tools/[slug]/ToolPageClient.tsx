@@ -15,6 +15,7 @@ import { PageNumberPreview } from "@/components/tools/options/PageNumberPreview"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { useTool } from "@/hooks/useTool"
+import { uploadFileDirect } from "@/lib/supabase-upload"
 import { AiSummarizerView } from "@/components/tools/ai-summarizer/AiSummarizerView"
 import { TranslatePdfView } from "@/components/tools/translate-pdf/TranslatePdfView"
 import { ScanToPdfView } from "@/components/tools/scan-to-pdf/ScanToPdfView"
@@ -22,7 +23,7 @@ import { validateToolOptions } from "@/lib/toolValidation"
 import type { Workflow } from "@/lib/workflowStore"
 import { getWorkflowSession, updateWorkflowSession, loadWorkflowSession } from "@/lib/workflowSession"
 import type { WorkflowSession } from "@/lib/workflowSession"
-import { Zap, CheckCircle, Clock, ArrowRight, ArrowLeft, Download } from "lucide-react"
+import { Zap, CheckCircle, Clock, ArrowRight, ArrowLeft, Download, Loader2 } from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
 import { toast } from "sonner"
 
@@ -92,6 +93,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
   const [options, setOptions] = useState<Record<string, unknown>>({})
   const [dailyLimitOpen, setDailyLimitOpen] = useState(false)
   const [upgradeLoading, setUpgradeLoading] = useState(false)
+  const [isUploadingForEditor, setIsUploadingForEditor] = useState(false)
   const { state, process, reset } = useTool(tool.slug)
   const isProcessingRef = useRef(false)
 
@@ -100,6 +102,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
     setFilesLoaded(false)
     setFiles([])
     setIsSavingAndRedirecting(false)
+    setIsUploadingForEditor(false)
   }, [stepIndex])
 
   useEffect(() => {
@@ -167,6 +170,14 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
 
   const handleProcess = async () => {
     if ((files.length === 0 && tool.slug !== "html-to-pdf") || isProcessingRef.current) return
+
+    // edit-pdf has its own dedicated editor page. The "Next" button
+    // uploads the source PDF to Supabase Storage and navigates the
+    // user to that page; we bypass the normal iLoveAPI processing path.
+    if (tool.slug === "edit-pdf") {
+      await handleEditPdfNext()
+      return
+    }
 
     // Enforce the daily file limit before sending anything to the server.
     // Premium has daily = -1 (unlimited) so this check only blocks free users.
@@ -251,6 +262,64 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
     isProcessingRef.current = false
     setIsSavingAndRedirecting(false)
     reset()
+  }
+
+  const handleEditPdfNext = async () => {
+    if (files.length === 0 || isUploadingForEditor) return
+    const file = files[0]
+
+    // Guest daily/monthly cap mirrors the other tool flows.
+    const dailyLimit = planLimits.daily
+    if (dailyLimit > 0) {
+      try {
+        const res = await fetch("/api/usage", { cache: "no-store" })
+        if (res.ok) {
+          const data = (await res.json()) as {
+            filesProcessedToday?: number
+            isGuest?: boolean
+          }
+          const usedToday = typeof data.filesProcessedToday === "number"
+            ? data.filesProcessedToday
+            : 0
+          if (usedToday >= dailyLimit) {
+            if (data.isGuest) {
+              toast.error("You've reached the daily limit for guests. Sign up for a free account to continue.")
+              router.replace("/sign-up")
+              return
+            }
+            setDailyLimitOpen(true)
+            return
+          }
+        }
+      } catch {
+        // If the usage check fails, fall through and let the server enforce it.
+      }
+    }
+
+    setIsUploadingForEditor(true)
+    try {
+      // Upload straight to Supabase Storage so the editor page can
+      // re-hydrate the file via its public URL. `uploadFileDirect`
+      // handles the signed-URL handshake for us and is the same
+      // mechanism the regular `/api/tools/[tool]` flow uses for
+      // files above the 4 MB FormData cap.
+      const { url } = await uploadFileDirect(file, {
+        pathname: `edit-pdf/${file.name}`,
+        bucket: "pdf-uploads",
+        contentType: "application/pdf",
+      })
+
+      const params = new URLSearchParams({
+        file: url,
+        filename: file.name,
+      })
+      router.push(`/edit-pdf-editor?${params.toString()}`)
+    } catch (err) {
+      console.error("Failed to upload PDF for editor:", err)
+      toast.error(err instanceof Error ? err.message : "Failed to prepare the file for editing. Please try again.")
+    } finally {
+      setIsUploadingForEditor(false)
+    }
   }
 
   const handleUpgrade = async () => {
@@ -486,9 +555,22 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
                       <Button
                         size="lg"
                         onClick={handleProcess}
+                        disabled={isUploadingForEditor}
                         className="w-full shadow-lg shadow-primary/25 text-base"
                       >
-                        {isWorkflowMode ? (
+                        {tool.slug === "edit-pdf" ? (
+                          isUploadingForEditor ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Uploading…
+                            </>
+                          ) : (
+                            <>
+                              Next
+                              <ArrowRight className="ml-2 h-4 w-4" />
+                            </>
+                          )
+                        ) : isWorkflowMode ? (
                           <>
                             Continue
                             <ArrowRight className="ml-2 h-4 w-4" />
