@@ -1,15 +1,20 @@
 "use client"
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
 import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
+  ALargeSmall,
   ArrowLeft,
   ArrowRightCircle,
   ChevronDown,
   ChevronUp,
   Crown,
   Hand,
+  Highlighter,
   Image as ImageIcon,
   Info,
   ListFilter,
@@ -21,8 +26,8 @@ import {
   Settings,
   Shapes,
   SquarePen,
+  Trash2,
   Type,
-  X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -36,6 +41,76 @@ let pdfjsLib: typeof import("pdfjs-dist") | null = null
 // points (origin = bottom-left).
 const RENDER_SCALE = 1.4
 
+const FONT_FAMILIES = [
+  { label: "Arial", value: "Arial", css: "Arial, Helvetica, sans-serif" },
+  { label: "Times New Roman", value: "Times New Roman", css: "'Times New Roman', Times, serif" },
+  { label: "Courier New", value: "Courier New", css: "'Courier New', Courier, monospace" },
+]
+
+const FONT_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 64, 72, 96]
+
+const COLOR_PALETTE = [
+  "#000000", "#434343", "#666666", "#999999", "#b7b7b7",
+  "#cccccc", "#d9d9d9", "#efefef", "#f3f3f3", "#ffffff",
+  "#980000", "#ff0000", "#ff9900", "#ffff00", "#00ff00",
+  "#00ffff", "#4a86e8", "#0000ff", "#9900ff", "#ff00ff",
+]
+
+interface TextStyle {
+  fontFamily: string
+  fontSize: number
+  bold: boolean
+  italic: boolean
+  underline: boolean
+  color: string
+  highlightColor: string
+  textAlign: "left" | "center" | "right"
+}
+
+const DEFAULT_TEXT_STYLE: TextStyle = {
+  fontFamily: "Arial",
+  fontSize: 24,
+  bold: false,
+  italic: false,
+  underline: false,
+  color: "#000000",
+  highlightColor: "transparent",
+  textAlign: "left",
+}
+
+function hexToRgbValues(hex: string): [number, number, number] {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+  if (!result) return [0, 0, 0]
+  return [
+    parseInt(result[1], 16) / 255,
+    parseInt(result[2], 16) / 255,
+    parseInt(result[3], 16) / 255,
+  ]
+}
+
+function getPdfFontName(fontFamily: string, bold: boolean, italic: boolean): string {
+  if (fontFamily === "Times New Roman") {
+    if (bold && italic) return StandardFonts.TimesRomanBoldItalic
+    if (bold) return StandardFonts.TimesRomanBold
+    if (italic) return StandardFonts.TimesRomanItalic
+    return StandardFonts.TimesRoman
+  }
+  if (fontFamily === "Courier New") {
+    if (bold && italic) return StandardFonts.CourierBoldOblique
+    if (bold) return StandardFonts.CourierBold
+    if (italic) return StandardFonts.CourierOblique
+    return StandardFonts.Courier
+  }
+  if (bold && italic) return StandardFonts.HelveticaBoldOblique
+  if (bold) return StandardFonts.HelveticaBold
+  if (italic) return StandardFonts.HelveticaOblique
+  return StandardFonts.Helvetica
+}
+
+function getCssFontFamily(fontFamily: string): string {
+  return FONT_FAMILIES.find((f) => f.value === fontFamily)?.css ?? "Arial, Helvetica, sans-serif"
+}
+
 async function getPdfJs() {
   if (!pdfjsLib) {
     pdfjsLib = await import("pdfjs-dist")
@@ -47,13 +122,19 @@ async function getPdfJs() {
 interface TextAnnotation {
   id: string
   pageIndex: number
-  // Coordinates are stored in the RENDER_SCALE canvas space (px, origin = top-left).
   x: number
   y: number
   text: string
   fontSize: number
   width: number
   height: number
+  fontFamily: string
+  bold: boolean
+  italic: boolean
+  underline: boolean
+  color: string
+  highlightColor: string
+  textAlign: "left" | "center" | "right"
 }
 
 interface RenderedPage {
@@ -121,6 +202,13 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     startAnnotationY: number
   } | null>(null)
   const [resizingAnnotationId, setResizingAnnotationId] = useState<string | null>(null)
+  // The annotation the user has clicked. Pressing the Delete key while an
+  // annotation is selected removes it (the document-level keydown
+  // listener below does the actual removal).
+  const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null)
+  const [textStyle, setTextStyle] = useState<TextStyle>(DEFAULT_TEXT_STYLE)
+  const [openDropdown, setOpenDropdown] = useState<string | null>(null)
+  const subToolbarRef = useRef<HTMLDivElement | null>(null)
   const resizeStateRef = useRef<{
     annotationId: string
     direction: ResizeDirection
@@ -139,6 +227,10 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
   // read offsetWidth/offsetHeight to size the wrapper to the text's
   // natural rendered size.
   const measureRefs = useRef<Map<string, HTMLSpanElement>>(new Map())
+  // Refs to the visible text spans. Used by the resize onUp handler to
+  // measure the wrapped text height at the current width and snap the
+  // annotation's height back to fit the content.
+  const visibleTextRefs = useRef<Map<string, HTMLSpanElement>>(new Map())
   // Tracks annotation IDs that have already been auto-fit by the initial
   // useLayoutEffect below. After the first auto-fit, the annotation keeps
   // its current size until the user "leaves" it (mouseleave) or finishes
@@ -147,8 +239,41 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
   // pageIndex → the rendered page element, used for scroll-to-page and the
   // visibility observer that drives the current-page indicator.
   const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map())
+  // Tracks how far the current page's center is from the viewport center.
+  // The scroll listener uses this to add hysteresis when deciding which
+  // page is "current", so the hint doesn't flicker when the viewport
+  // center sits between two pages.
+  const currentPageDistanceRef = useRef(Infinity)
 
   const displayScale = zoom / 100
+
+  const activeStyle = useMemo((): TextStyle => {
+    if (selectedAnnotationId) {
+      const ann = annotations.find((a) => a.id === selectedAnnotationId)
+      if (ann) return {
+        fontFamily: ann.fontFamily,
+        fontSize: ann.fontSize,
+        bold: ann.bold,
+        italic: ann.italic,
+        underline: ann.underline,
+        color: ann.color,
+        highlightColor: ann.highlightColor,
+        textAlign: ann.textAlign,
+      }
+    }
+    return textStyle
+  }, [selectedAnnotationId, annotations, textStyle])
+
+  const updateStyle = useCallback((updates: Partial<TextStyle>) => {
+    setTextStyle((prev) => ({ ...prev, ...updates }))
+    if (selectedAnnotationId) {
+      setAnnotations((prev) =>
+        prev.map((a) =>
+          a.id === selectedAnnotationId ? { ...a, ...updates } : a
+        )
+      )
+    }
+  }, [selectedAnnotationId])
 
   const setPageRef = useCallback(
     (pageIndex: number) => (el: HTMLDivElement | null) => {
@@ -184,6 +309,18 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
       cancelled = true
     }
   }, [fileUrl])
+
+  // Close sub-toolbar dropdowns when clicking outside.
+  useEffect(() => {
+    if (!openDropdown) return
+    const handleClick = (e: MouseEvent) => {
+      if (subToolbarRef.current && !subToolbarRef.current.contains(e.target as Node)) {
+        setOpenDropdown(null)
+      }
+    }
+    document.addEventListener("mousedown", handleClick)
+    return () => document.removeEventListener("mousedown", handleClick)
+  }, [openDropdown])
 
   // 2. Render every page to a JPEG dataURL for the in-browser preview.
   useEffect(() => {
@@ -277,7 +414,24 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
           bestPage = pageIndex + 1
         }
       })
-      setCurrentPage((prev) => (prev === bestPage ? prev : bestPage))
+      // Hysteresis: only switch `currentPage` to a neighbouring page when
+      // it is meaningfully closer than the current one. Without this, the
+      // page whose center sits nearest to the viewport center flips back
+      // and forth at the midpoint between two pages, which makes the
+      // text-tool hint flicker.
+      const HYSTERESIS_PX = 80
+      const prevDistance = currentPageDistanceRef.current
+      setCurrentPage((prev) => {
+        if (prev === bestPage) {
+          currentPageDistanceRef.current = bestDistance
+          return prev
+        }
+        if (bestDistance + HYSTERESIS_PX < prevDistance) {
+          currentPageDistanceRef.current = bestDistance
+          return bestPage
+        }
+        return prev
+      })
     }
 
     const onScroll = () => {
@@ -298,6 +452,9 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
         justCommittedRef.current = false
         return
       }
+      // Clicking the page background deselects any annotation so the next
+      // Delete press doesn't remove a box the user has moved away from.
+      setSelectedAnnotationId(null)
       const rect = event.currentTarget.getBoundingClientRect()
       // The container is displayed at `displayScale`; divide back out to
       // recover coordinates in the RENDER_SCALE canvas space.
@@ -326,18 +483,26 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
         x: draftPosition.x,
         y: draftPosition.y,
         text,
-        fontSize: 16,
+        fontSize: textStyle.fontSize,
         width: 200,
         height: 28,
+        fontFamily: textStyle.fontFamily,
+        bold: textStyle.bold,
+        italic: textStyle.italic,
+        underline: textStyle.underline,
+        color: textStyle.color,
+        highlightColor: textStyle.highlightColor,
+        textAlign: textStyle.textAlign,
       },
     ])
     setDraftPosition(null)
     setDraftText("")
     setActiveTool("hand")
-  }, [draftPosition, draftText])
+  }, [draftPosition, draftText, textStyle])
 
   const removeAnnotation = useCallback((id: string) => {
     setAnnotations((prev) => prev.filter((a) => a.id !== id))
+    setSelectedAnnotationId((current) => (current === id ? null : current))
   }, [])
 
   // Drop a placeholder text box at the center of the current page. Called
@@ -355,12 +520,19 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
         x: pageWidth / 2,
         y: pageHeight / 2,
         text: "Your text",
-        fontSize: 16,
+        fontSize: textStyle.fontSize,
         width: 200,
         height: 28,
+        fontFamily: textStyle.fontFamily,
+        bold: textStyle.bold,
+        italic: textStyle.italic,
+        underline: textStyle.underline,
+        color: textStyle.color,
+        highlightColor: textStyle.highlightColor,
+        textAlign: textStyle.textAlign,
       },
     ])
-  }, [activeRenderedPage, currentPage])
+  }, [activeRenderedPage, currentPage, textStyle])
 
   // Mousedown on an annotation starts a drag. The document-level listeners
   // in the effect below keep the drag alive even if the pointer leaves the
@@ -606,8 +778,27 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
       )
     }
     const onUp = () => {
+      const s = resizeStateRef.current
       resizeStateRef.current = null
       setResizingAnnotationId(null)
+      // Snap the height back to the text's wrapped height at the current
+      // width. The user can freely resize vertically while dragging, but
+      // on release the box always fits the text content vertically. Width
+      // is left as the user set it.
+      if (s) {
+        const el = visibleTextRefs.current.get(s.annotationId)
+        if (el) {
+          const textHeight = el.offsetHeight
+          // Inner content box padding (py-0.5 = 2px each side) + border
+          // (1px each side) = 6px vertical, all in displayed space.
+          const totalHeight = (textHeight + 6) / displayScale
+          setAnnotations((prev) =>
+            prev.map((a) =>
+              a.id === s.annotationId ? { ...a, height: totalHeight } : a
+            )
+          )
+        }
+      }
     }
     document.addEventListener("mousemove", onMove)
     document.addEventListener("mouseup", onUp)
@@ -616,6 +807,26 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
       document.removeEventListener("mouseup", onUp)
     }
   }, [resizingAnnotationId, displayScale])
+
+  // Document-level Delete key handler — removes the currently selected
+  // annotation. Skipped when the user is typing in an input or textarea
+  // (e.g. the draft editor) so Delete still edits characters.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Delete") return
+      const id = selectedAnnotationId
+      if (!id) return
+      const target = e.target as HTMLElement | null
+      if (target) {
+        const tag = target.tagName
+        if (tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable) return
+      }
+      e.preventDefault()
+      removeAnnotation(id)
+    }
+    document.addEventListener("keydown", onKeyDown)
+    return () => document.removeEventListener("keydown", onKeyDown)
+  }, [selectedAnnotationId, removeAnnotation])
 
   // One-time auto-fit for each new annotation. Sets the default size so a
   // freshly-placed box doesn't stay at the 200×28 placeholder dimensions.
@@ -659,24 +870,59 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
       // the worker, so we copy first to be safe.
       const source = sourceBuffer.slice(0)
       const pdfDoc = await PDFDocument.load(source)
-      const font = await pdfDoc.embedFont(StandardFonts.Helvetica)
+
+      const embeddedFonts = new Map<string, Awaited<ReturnType<typeof pdfDoc.embedFont>>>()
+      for (const annotation of annotations) {
+        const fontName = getPdfFontName(annotation.fontFamily, annotation.bold, annotation.italic)
+        if (!embeddedFonts.has(fontName)) {
+          embeddedFonts.set(fontName, await pdfDoc.embedFont(fontName))
+        }
+      }
 
       for (const annotation of annotations) {
         const pages = pdfDoc.getPages()
         const page = pages[annotation.pageIndex]
         if (!page) continue
         const { height: pageHeight } = page.getSize()
-        // Annotations were captured in the RENDER_SCALE coordinate
-        // space, so divide by the scale to get PDF points.
+        const fontName = getPdfFontName(annotation.fontFamily, annotation.bold, annotation.italic)
+        const font = embeddedFonts.get(fontName)!
+        const [cr, cg, cb] = hexToRgbValues(annotation.color)
+        const pdfX = annotation.x / RENDER_SCALE
+        const pdfY = pageHeight - annotation.y / RENDER_SCALE
+        const pdfWidth = annotation.width / RENDER_SCALE
+        const pdfHeight = annotation.height / RENDER_SCALE
+
+        if (annotation.highlightColor !== "transparent") {
+          const [hr, hg, hb] = hexToRgbValues(annotation.highlightColor)
+          page.drawRectangle({
+            x: pdfX,
+            y: pdfY - pdfHeight,
+            width: pdfWidth,
+            height: pdfHeight,
+            color: rgb(hr, hg, hb),
+          })
+        }
+
         page.drawText(annotation.text, {
-          x: annotation.x / RENDER_SCALE,
-          y: pageHeight - annotation.y / RENDER_SCALE,
+          x: pdfX,
+          y: pdfY,
           size: annotation.fontSize,
           font,
-          color: rgb(0, 0, 0),
-          maxWidth: annotation.width / RENDER_SCALE,
+          color: rgb(cr, cg, cb),
+          maxWidth: pdfWidth,
           lineHeight: annotation.fontSize * 1.2,
         })
+
+        if (annotation.underline) {
+          const textWidth = font.widthOfTextAtSize(annotation.text, annotation.fontSize)
+          const effectiveWidth = Math.min(textWidth, pdfWidth)
+          page.drawLine({
+            start: { x: pdfX, y: pdfY - 2 },
+            end: { x: pdfX + effectiveWidth, y: pdfY - 2 },
+            thickness: 0.5,
+            color: rgb(cr, cg, cb),
+          })
+        }
       }
 
       const bytes = await pdfDoc.save()
@@ -793,6 +1039,315 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
         </div>
       </div>
 
+      {/* ── Text sub-toolbar ───────────────────────────────────────── */}
+      {activeTool === "text" && (
+        <div
+          ref={subToolbarRef}
+          className="relative z-30 flex items-center justify-center gap-1.5 border-b border-border bg-card px-3 py-1.5 sm:pl-40 sm:pr-96"
+        >
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center text-base font-bold text-foreground">
+            T
+          </span>
+
+          {/* Font family */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setOpenDropdown(openDropdown === "font" ? null : "font")}
+              className="flex h-8 items-center gap-1 rounded border border-border bg-background px-2 text-sm text-foreground hover:bg-accent"
+              style={{ minWidth: 130 }}
+            >
+              <span className="flex-1 text-left" style={{ fontFamily: getCssFontFamily(activeStyle.fontFamily) }}>
+                {activeStyle.fontFamily}
+              </span>
+              <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+            </button>
+            {openDropdown === "font" && (
+              <div className="absolute left-0 top-full z-50 mt-1 min-w-[170px] rounded-md border border-border bg-popover p-1 shadow-lg">
+                {FONT_FAMILIES.map((f) => (
+                  <button
+                    key={f.value}
+                    type="button"
+                    onClick={() => { updateStyle({ fontFamily: f.value }); setOpenDropdown(null) }}
+                    className={cn(
+                      "flex w-full items-center rounded px-2 py-1.5 text-sm hover:bg-accent",
+                      activeStyle.fontFamily === f.value && "bg-accent font-medium"
+                    )}
+                    style={{ fontFamily: f.css }}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Font size */}
+          <ALargeSmall className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setOpenDropdown(openDropdown === "size" ? null : "size")}
+              className="flex h-8 items-center gap-1 rounded border border-border bg-background px-2 text-sm tabular-nums text-foreground hover:bg-accent"
+              style={{ minWidth: 56 }}
+            >
+              <span>{activeStyle.fontSize}</span>
+              <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+            </button>
+            {openDropdown === "size" && (
+              <div className="absolute left-0 top-full z-50 mt-1 max-h-52 min-w-[68px] overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-lg">
+                {FONT_SIZES.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => { updateStyle({ fontSize: s }); setOpenDropdown(null) }}
+                    className={cn(
+                      "flex w-full items-center rounded px-2 py-1 text-sm tabular-nums hover:bg-accent",
+                      activeStyle.fontSize === s && "bg-accent font-medium"
+                    )}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="mx-1 h-6 w-px shrink-0 bg-border" />
+
+          {/* Bold */}
+          <button
+            type="button"
+            onClick={() => updateStyle({ bold: !activeStyle.bold })}
+            className={cn(
+              "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-sm font-bold transition-colors",
+              activeStyle.bold
+                ? "bg-accent text-foreground"
+                : "text-muted-foreground hover:bg-accent hover:text-foreground"
+            )}
+            title="Bold"
+          >
+            B
+          </button>
+
+          {/* Italic */}
+          <button
+            type="button"
+            onClick={() => updateStyle({ italic: !activeStyle.italic })}
+            className={cn(
+              "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-sm italic transition-colors",
+              activeStyle.italic
+                ? "bg-accent text-foreground"
+                : "text-muted-foreground hover:bg-accent hover:text-foreground"
+            )}
+            title="Italic"
+          >
+            I
+          </button>
+
+          {/* Underline */}
+          <button
+            type="button"
+            onClick={() => updateStyle({ underline: !activeStyle.underline })}
+            className={cn(
+              "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-sm underline transition-colors",
+              activeStyle.underline
+                ? "bg-accent text-foreground"
+                : "text-muted-foreground hover:bg-accent hover:text-foreground"
+            )}
+            title="Underline"
+          >
+            U
+          </button>
+
+          {/* Text color */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setOpenDropdown(openDropdown === "textColor" ? null : "textColor")}
+              className="inline-flex h-8 shrink-0 items-center gap-0.5 rounded px-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              title="Text color"
+            >
+              <div className="flex flex-col items-center">
+                <span className="text-sm font-bold leading-tight" style={{ color: activeStyle.color }}>A</span>
+                <span className="-mt-0.5 block h-[3px] w-4 rounded-sm" style={{ backgroundColor: activeStyle.color }} />
+              </div>
+              <ChevronDown className="h-3 w-3" />
+            </button>
+            {openDropdown === "textColor" && (
+              <div className="absolute left-0 top-full z-50 mt-1 rounded-md border border-border bg-popover p-2 shadow-lg">
+                <div className="grid grid-cols-10 gap-1">
+                  {COLOR_PALETTE.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => { updateStyle({ color: c }); setOpenDropdown(null) }}
+                      className={cn(
+                        "h-5 w-5 rounded-sm border transition-transform hover:scale-125",
+                        activeStyle.color === c ? "border-primary ring-1 ring-primary" : "border-border/60"
+                      )}
+                      style={{ backgroundColor: c }}
+                      title={c}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Highlight color */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setOpenDropdown(openDropdown === "highlight" ? null : "highlight")}
+              className="inline-flex h-8 shrink-0 items-center gap-0.5 rounded px-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              title="Highlight color"
+            >
+              <div className="flex flex-col items-center">
+                <Highlighter className="h-4 w-4" />
+                <span
+                  className="-mt-0.5 block h-[3px] w-4 rounded-sm"
+                  style={{
+                    backgroundColor: activeStyle.highlightColor === "transparent" ? "currentColor" : activeStyle.highlightColor,
+                  }}
+                />
+              </div>
+              <ChevronDown className="h-3 w-3" />
+            </button>
+            {openDropdown === "highlight" && (
+              <div className="absolute left-0 top-full z-50 mt-1 rounded-md border border-border bg-popover p-2 shadow-lg">
+                <button
+                  type="button"
+                  onClick={() => { updateStyle({ highlightColor: "transparent" }); setOpenDropdown(null) }}
+                  className={cn(
+                    "mb-1.5 flex w-full items-center rounded px-2 py-1 text-sm hover:bg-accent",
+                    activeStyle.highlightColor === "transparent" && "bg-accent font-medium"
+                  )}
+                >
+                  No highlight
+                </button>
+                <div className="grid grid-cols-10 gap-1">
+                  {COLOR_PALETTE.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => { updateStyle({ highlightColor: c }); setOpenDropdown(null) }}
+                      className={cn(
+                        "h-5 w-5 rounded-sm border transition-transform hover:scale-125",
+                        activeStyle.highlightColor === c ? "border-primary ring-1 ring-primary" : "border-border/60"
+                      )}
+                      style={{ backgroundColor: c }}
+                      title={c}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="mx-1 h-6 w-px shrink-0 bg-border" />
+
+          {/* Text alignment */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setOpenDropdown(openDropdown === "align" ? null : "align")}
+              className="inline-flex h-8 shrink-0 items-center gap-0.5 rounded px-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              title="Text alignment"
+            >
+              {activeStyle.textAlign === "center" ? (
+                <AlignCenter className="h-4 w-4" />
+              ) : activeStyle.textAlign === "right" ? (
+                <AlignRight className="h-4 w-4" />
+              ) : (
+                <AlignLeft className="h-4 w-4" />
+              )}
+              <ChevronDown className="h-3 w-3" />
+            </button>
+            {openDropdown === "align" && (
+              <div className="absolute left-0 top-full z-50 mt-1 rounded-md border border-border bg-popover p-1 shadow-lg">
+                {([
+                  { value: "left" as const, icon: AlignLeft, label: "Left" },
+                  { value: "center" as const, icon: AlignCenter, label: "Center" },
+                  { value: "right" as const, icon: AlignRight, label: "Right" },
+                ]).map((a) => {
+                  const AlignIcon = a.icon
+                  return (
+                    <button
+                      key={a.value}
+                      type="button"
+                      onClick={() => { updateStyle({ textAlign: a.value }); setOpenDropdown(null) }}
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent",
+                        activeStyle.textAlign === a.value && "bg-accent font-medium"
+                      )}
+                    >
+                      <AlignIcon className="h-4 w-4" />
+                      {a.label}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="mx-1 h-6 w-px shrink-0 bg-border" />
+
+          {/* Fit to width */}
+          <button
+            type="button"
+            onClick={fitToWidth}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            title="Fit to width"
+          >
+            <Maximize2 className="h-4 w-4" />
+          </button>
+
+          {/* Zoom dropdown */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setOpenDropdown(openDropdown === "subZoom" ? null : "subZoom")}
+              className="flex h-8 items-center gap-1 rounded border border-border bg-background px-2 text-sm tabular-nums text-foreground hover:bg-accent"
+              style={{ minWidth: 64 }}
+            >
+              <span>{zoom}%</span>
+              <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+            </button>
+            {openDropdown === "subZoom" && (
+              <div className="absolute right-0 top-full z-50 mt-1 min-w-[80px] rounded-md border border-border bg-popover p-1 shadow-lg">
+                {[25, 50, 75, 100, 125, 150, 200, 300].map((z) => (
+                  <button
+                    key={z}
+                    type="button"
+                    onClick={() => { setZoom(z); setZoomInitialized(true); setOpenDropdown(null) }}
+                    className={cn(
+                      "flex w-full items-center rounded px-2 py-1 text-sm tabular-nums hover:bg-accent",
+                      zoom === z && "bg-accent font-medium"
+                    )}
+                  >
+                    {z}%
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="mx-1 h-6 w-px shrink-0 bg-border" />
+
+          {/* Delete selected */}
+          <button
+            type="button"
+            onClick={() => { if (selectedAnnotationId) removeAnnotation(selectedAnnotationId) }}
+            disabled={!selectedAnnotationId}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-40"
+            title="Delete selected"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       {/* ── Body: thumbnails | canvas | panel ───────────────────────── */}
       <div className="flex min-h-0 flex-1">
         {/* Left: page thumbnails */}
@@ -894,6 +1449,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                       {/* Saved annotations for this page */}
                       {pageAnnotations.map((annotation) => {
                         const isDragging = draggingAnnotationId === annotation.id
+                        const isSelected = selectedAnnotationId === annotation.id
                         const hs = 8
                         const hh = hs / 2
                         const handle = (dir: ResizeDirection, cursor: string, pos: React.CSSProperties) => (
@@ -918,12 +1474,18 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                               height: annotation.height * displayScale,
                               cursor: isDragging ? "grabbing" : "move",
                             }}
-                            className="group"
+                            className={cn(
+                              "group",
+                              isSelected && "ring-2 ring-primary ring-offset-1"
+                            )}
                             onMouseDown={(e) => {
                               e.stopPropagation()
                               handleAnnotationMouseDown(e, annotation)
                             }}
-                            onClick={(e) => e.stopPropagation()}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setSelectedAnnotationId(annotation.id)
+                            }}
                             onDoubleClick={(e) => {
                               e.stopPropagation()
                               startEditingAnnotation(annotation.id)
@@ -944,7 +1506,9 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                                 visibility: "hidden",
                                 pointerEvents: "none",
                                 fontSize: annotation.fontSize * displayScale,
-                                fontWeight: 500,
+                                fontFamily: getCssFontFamily(annotation.fontFamily),
+                                fontWeight: annotation.bold ? 700 : 400,
+                                fontStyle: annotation.italic ? "italic" : "normal",
                                 whiteSpace: "pre-wrap",
                                 wordBreak: "break-word",
                               }}
@@ -952,28 +1516,33 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                               {annotation.text || " "}
                             </span>
 
-                            <div className="relative h-full w-full overflow-hidden border border-[#2563eb] px-1.5 py-0.5">
+                            <div
+                              className="relative h-full w-full overflow-hidden border border-[#2563eb] px-1.5 py-0.5"
+                              style={{
+                                backgroundColor: annotation.highlightColor !== "transparent" ? annotation.highlightColor : undefined,
+                              }}
+                            >
                               <span
-                                className="whitespace-pre-wrap break-words text-left font-medium text-black"
-                                style={{ fontSize: annotation.fontSize * displayScale }}
+                                ref={(el) => {
+                                  if (el) visibleTextRefs.current.set(annotation.id, el)
+                                  else visibleTextRefs.current.delete(annotation.id)
+                                }}
+                                className={cn(
+                                  "block w-full whitespace-pre-wrap break-words",
+                                  annotation.underline && "underline"
+                                )}
+                                style={{
+                                  fontSize: annotation.fontSize * displayScale,
+                                  fontFamily: getCssFontFamily(annotation.fontFamily),
+                                  fontWeight: annotation.bold ? 700 : 400,
+                                  fontStyle: annotation.italic ? "italic" : "normal",
+                                  color: annotation.color,
+                                  textAlign: annotation.textAlign,
+                                }}
                               >
                                 {annotation.text}
                               </span>
                             </div>
-
-                            {/* Remove button */}
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                removeAnnotation(annotation.id)
-                              }}
-                              onMouseDown={(e) => e.stopPropagation()}
-                              className="absolute -right-2 -top-2 z-10 rounded-full bg-black/70 p-0.5 text-white opacity-0 transition-opacity group-hover:opacity-100"
-                              aria-label="Remove annotation"
-                            >
-                              <X className="h-3 w-3" />
-                            </button>
 
                             {/* 8 resize handles */}
                             {handle("top-left", "nwse-resize", { left: -hh, top: -hh })}
@@ -999,27 +1568,22 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                           className="z-10"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <div className="flex items-start gap-1">
-                            <textarea
-                              ref={draftInputRef}
-                              value={draftText}
-                              onChange={(e) => setDraftText(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Escape") {
-                                  e.preventDefault()
-                                  commitDraft()
-                                }
-                              }}
-                              onBlur={commitDraft}
-                              placeholder="Type here… Esc to confirm"
-                              rows={3}
-                              className="resize-none rounded border-2 border-primary bg-white/95 px-2 py-1 text-sm text-black shadow outline-none"
-                              style={{ minWidth: 180 }}
-                            />
-                            <Button size="icon" variant="default" onClick={commitDraft} aria-label="Confirm text">
-                              <Plus className="h-4 w-4" />
-                            </Button>
-                          </div>
+                          <textarea
+                            ref={draftInputRef}
+                            value={draftText}
+                            onChange={(e) => setDraftText(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Escape") {
+                                e.preventDefault()
+                                commitDraft()
+                              }
+                            }}
+                            onBlur={commitDraft}
+                            placeholder="Type here… Esc to confirm"
+                            rows={3}
+                            className="resize-none rounded border-2 border-primary bg-white/95 px-2 py-1 text-sm text-black shadow outline-none"
+                            style={{ minWidth: 180 }}
+                          />
                         </div>
                       )}
                     </div>
@@ -1035,15 +1599,6 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
               </div>
             )}
           </div>
-
-          {/* Text-tool hint */}
-          {activeTool === "text" && renderedPages.length > 0 && (
-            <div className="pointer-events-none absolute inset-x-0 top-4 flex justify-center">
-              <span className="rounded-full bg-foreground/90 px-3 py-1.5 text-xs font-medium text-background shadow-md">
-                Drag the text box to move · Double-click to edit · Esc to confirm
-              </span>
-            </div>
-          )}
         </div>
 
         {/* Right: Edit PDF panel */}
