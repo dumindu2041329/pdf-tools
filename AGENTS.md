@@ -19,7 +19,7 @@
 | **PDF Parsing (client)** | `pdfjs-dist` ^4.10.38 — used by the AI Summarizer + Translate-PDF for in-browser text extraction, by the Edit-PDF editor for page rasterisation, and by the AI Summarizer for the PDF preview |
 | **QR codes** | `qrcode` ^1.5.4 (mobile-scan pairing) |
 | **UI/UX** | framer-motion ^12.38.0, three.js ^0.183.2, @dnd-kit/core ^6.3.1 + @dnd-kit/sortable ^10.0.0 + @dnd-kit/utilities ^3.2.2, sonner ^2.0.7, lucide-react ^1.7.0, next-themes ^0.4.6, mermaid ^11.15.0 (dynamic-imported by AI Summarizer chat to render diagrams) |
-| **Database** | Neon PostgreSQL (`@neondatabase/serverless` ^1.1.0) |
+| **Database** | Supabase PostgreSQL (`@supabase/supabase-js` ^2.108.2 — same project as Storage) |
 | **Package Manager** | npm |
 | **Deployment** | **Vercel** (primary; reads `vercel.json` for security headers + per-route `maxDuration`) **and** **Fly.io** (Docker, `fly.toml` + `Dockerfile` + `docker-entrypoint.js` at `pdf-tools-chi.fly.dev`) — both targets are supported. The 2 GB Fly VM is what lets us bypass Vercel's 4.5 MB body cap and the 10 s / 60 s function timeouts. |
 
@@ -264,11 +264,11 @@ postcss.config.mjs          # Tailwind v4 PostCSS plugin
 tsconfig.json               # "@/*" path alias → "./*"
 ```
 
-### Database (Neon PostgreSQL)
+### Database (Supabase PostgreSQL)
 
-The app connects to Neon via `@neondatabase/serverless`. The connection is configured in `lib/db.ts` using the `DATABASE_URL` environment variable. **Schema is auto-created on first server request** via `ensureDbSchema()` — no manual migrations needed. Uses `pgcrypto` extension for UUID generation.
+The app uses the **same Supabase project** for both Storage and the database. The connection goes through the PostgREST API on top of the existing Supabase client (`getSupabaseServer()` in `lib/supabase.ts`); no separate `DATABASE_URL` or postgres driver is required. **Schema is managed via Supabase migrations applied through the Supabase MCP** (see `create_pdf_tools_schema` and `create_pdf_tools_rpcs`) — no DDL is run from the app, so there is no `CREATE TABLE IF NOT EXISTS` race on first request anymore. All date math uses explicit UTC.
 
-#### Schema (4 tables)
+#### Schema (4 tables + 9 stored procedures)
 
 | Table | Primary Key | Purpose |
 |---|---|---|
@@ -286,29 +286,49 @@ monthly_count    int  NOT NULL DEFAULT 0
 monthly_year_month text NOT NULL DEFAULT to_char((now() AT TIME ZONE 'UTC')::date, 'YYYY-MM')
 updated_at       timestamptz NOT NULL DEFAULT now()
 ```
-All date math uses explicit UTC. The CASE expression in `readCounterCounts()` returns 0 for stale buckets, so the counter is implicitly reset when the date/month rolls over.
+All date math uses explicit UTC. The CASE expression inside `pdf_tools_read_counter()` returns 0 for stale buckets, so the counter is implicitly reset when the date/month rolls over.
 
 Indexes: `workflow_user_created_at_idx`, `workflow_step_workflow_step_index_idx`, `usage_counter_daily_date_idx`.
 
+RLS is **disabled** on all four tables — server-side writes use the service role key (or anon key fallback) and the application is the only writer. The `anon` and `authenticated` roles therefore have unrestricted table access; this matches the previous Neon behaviour. To tighten later, add RLS policies and require the service role key on the server.
+
+#### Stored procedures (`public` schema)
+
+The complex workflow queries (list with join, create with steps, update with steps) and the usage counter upsert live in Postgres functions so the Supabase JS client can call them via `.rpc()`. They live next to the tables and are recreated by the `create_pdf_tools_rpcs` migration.
+
+| Function | Returns | Purpose |
+|---|---|---|
+| `pdf_tools_health_check()` | `TABLE(table_name text, table_exists boolean)` | Proactive self-heal: one row per expected table with a boolean existence flag. |
+| `pdf_tools_read_counter(p_user_id text)` | `TABLE(daily int, monthly int)` | O(1) read of the denormalized counter; returns 0s for stale date/month buckets. |
+| `pdf_tools_record_usage_event(p_user_id text, p_status text)` | `void` | Ensures the `app_user` row exists and upserts the counter atomically (only `success` events bump it). |
+| `pdf_tools_list_workflows(p_user_id text)` | `jsonb` | Newest-first list of the user's workflows with their ordered steps aggregated. |
+| `pdf_tools_get_workflow(p_user_id text, p_id uuid)` | `jsonb` | Single workflow with steps; `null` when not found. |
+| `pdf_tools_create_workflow(p_user_id text, p_name text, p_steps jsonb)` | `jsonb` | Inserts a workflow + its ordered steps in a single call. |
+| `pdf_tools_update_workflow(p_user_id text, p_id uuid, p_name text, p_steps jsonb)` | `void` | Updates name and/or replaces steps. Pass `null` to leave a field untouched. |
+| `pdf_tools_delete_workflow(p_user_id text, p_id uuid)` | `void` | Deletes the workflow (CASCADE removes its steps). |
+| `pdf_tools_run_workflow(p_user_id text, p_id uuid)` | `void` | Increments `run_count` and stamps `last_run`. |
+
 #### Schema self-healing
 
-`ensureDbSchema()` is a global-singleton promise — the DDL runs at most once per server instance. Three additional helpers guard against tables being dropped externally (e.g. via the Neon console):
+`ensureDbSchema()` is now a no-op — the DDL is owned by Supabase migrations. The self-heal chain is still wired up so callers that hit a missing-relation error get a single retry:
 
-- `ensureDbSchemaIfStale()` — fire-and-forget; at most once per hour per server instance, calls the `pdf_tools_health_check()` stored function and re-runs the DDL if any expected table is missing.
-- `isMissingRelationError(err)` — detects SQLSTATE `42P01` (`undefined_table`).
-- `resetSchemaInit()` — clears the cached init promise so the next caller re-runs the DDL.
+- `ensureDbSchemaIfStale()` — fire-and-forget; at most once per hour per server instance, calls `pdf_tools_health_check()` and logs a warning if any expected table is missing (the operator must re-apply the `create_pdf_tools_schema` migration; the app can no longer recreate the schema on its own).
+- `isMissingRelationError(err)` — detects SQLSTATE `42P01` (`undefined_table`) on Supabase errors.
+- `resetSchemaInit()` — clears the cached init promise so the next caller re-runs the (now no-op) init.
 
-`recordProcessingEvent()` catches `42P01`, calls `resetSchemaInit()`, and retries once. The health check + reactive catch together give full coverage (proactive hourly sweep + reactive per-write healing).
+`recordProcessingEvent()` catches `42P01`, calls `resetSchemaInit()`, and retries once. The hourly sweep + reactive catch pair is still the safety net for any transient schema-drift.
 
 #### DB Helper Functions (lib/db.ts)
 
-- `sql` — tagged template literal for type-safe Neon queries
-- `ensureDbSchema()` — runs all `CREATE TABLE IF NOT EXISTS` statements; uses a global singleton promise to avoid duplicate runs in dev
+- `ensureDbSchema()` — no-op (DDL is owned by Supabase migrations)
 - `ensureDbSchemaIfStale()` — hourly proactive health check (see above)
 - `resetSchemaInit()` / `isMissingRelationError()` — self-heal utilities
-- `upsertUser(userId)` — inserts or ignores the `app_user` row for a Clerk user
-- `setUserPlan(userId, plan)` — **UPSERT** into `app_user`; no longer requires a separate `upsertUser()` call
+- `upsertUser(userId)` — `INSERT ... ON CONFLICT DO NOTHING` into `app_user` via `.upsert()`
+- `setUserPlan(userId, plan)` — **UPSERT** into `app_user` via `.upsert()`; no longer requires a separate `upsertUser()` call
 - `getUserPlanFromDb(userId)` — reads `plan` column for fallback auth checks
+- `readUsageCounter(userId)` — calls `pdf_tools_read_counter` RPC
+- `recordUsageEvent(userId, status)` — calls `pdf_tools_record_usage_event` RPC
+- `listWorkflows(userId)` / `getWorkflow(userId, id)` / `createWorkflow(userId, name, steps)` / `updateWorkflow(userId, id, name, steps)` / `deleteWorkflow(userId, id)` / `runWorkflow(userId, id)` — each calls the matching `pdf_tools_*` RPC
 
 ### Supabase Storage
 
@@ -595,14 +615,13 @@ type ToolState =
 ## Environment Variables
 
 ### Required
-- `DATABASE_URL` — Neon PostgreSQL connection string
 - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` — Clerk public key
 - `CLERK_SECRET_KEY` — Clerk secret key
 - `ILOVEAPI_PUBLIC_KEY` — iLoveAPI public key
 - `ILOVEAPI_SECRET_KEY` — iLoveAPI secret key
 - `OPENROUTER_API_KEY` — OpenRouter API key. Required for the AI summarizer AND translate-pdf — routes completions to `openai/gpt-oss-120b:free` via `https://openrouter.ai/api/v1` (both routes use the `openai` SDK pointed at OpenRouter). When unset, both endpoints fall back to streaming the prompt back in tiny chunks so the UI still has *something* to render during development.
-- `NEXT_PUBLIC_SUPABASE_URL` — Supabase project URL. Public — safe to ship to the browser.
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY` — Supabase anon (publishable) key. Public — safe to ship to the browser.
+- `NEXT_PUBLIC_SUPABASE_URL` — Supabase project URL. Public — safe to ship to the browser. Used for both the database (via PostgREST) and Storage.
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY` — Supabase anon (publishable) key. Public — safe to ship to the browser. Required for Storage; used as the database fallback when `SUPABASE_SERVICE_ROLE_KEY` is unset.
 
 ### Optional
 - `PDF_SERVICES_CLIENT_ID` — Adobe PDF Services client ID (for pdf-to-word, pdf-to-excel, pdf-to-powerpoint, ocr-pdf)

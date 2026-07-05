@@ -1,12 +1,23 @@
-import { neon } from "@neondatabase/serverless"
+// lib/db.ts
+// Supabase-backed database layer.
+//
+// The schema (tables + stored procedures) is managed via the
+// `create_pdf_tools_schema` and `create_pdf_tools_rpcs` Supabase
+// migrations. The DDL is no longer run from the app — Supabase is the
+// source of truth. This file only contains the runtime helpers that
+// wrap Supabase calls and the (mostly vestigial) self-heal chain.
 
-const DATABASE_URL = process.env.DATABASE_URL
+import { getSupabaseServer } from "@/lib/supabase"
 
-if (!DATABASE_URL) {
-  throw new Error("DATABASE_URL environment variable is not set")
-}
-
-export const sql = neon(DATABASE_URL)
+// ---------------------------------------------------------------------------
+// Self-heal chain (kept for compatibility with existing callers).
+// `ensureDbSchema()` is a no-op now that schema is managed externally.
+// `ensureDbSchemaIfStale()` still calls the `pdf_tools_health_check()` RPC
+// once per hour per server instance and logs a warning if any table is
+// missing — but it can no longer recreate the schema on its own. The
+// reactive `isMissingRelationError` / `resetSchemaInit` pair continues to
+// work for callers that want to retry on transient schema errors.
+// ---------------------------------------------------------------------------
 
 const globalForSchema = globalThis as unknown as {
   __pdfToolsSchemaInitPromise?: Promise<void>
@@ -15,106 +26,30 @@ const globalForSchema = globalThis as unknown as {
 export async function ensureDbSchema(): Promise<void> {
   if (!globalForSchema.__pdfToolsSchemaInitPromise) {
     globalForSchema.__pdfToolsSchemaInitPromise = (async () => {
-      await sql`CREATE EXTENSION IF NOT EXISTS pgcrypto`
-
-      await sql`
-        CREATE TABLE IF NOT EXISTS app_user (
-          clerk_user_id text PRIMARY KEY,
-          plan text NOT NULL DEFAULT 'free',
-          created_at timestamptz NOT NULL DEFAULT now()
-        )
-      `
-
-      await sql`
-        CREATE TABLE IF NOT EXISTS workflow (
-          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-          user_id text NOT NULL REFERENCES app_user(clerk_user_id) ON DELETE CASCADE,
-          name text NOT NULL,
-          last_run timestamptz,
-          run_count int NOT NULL DEFAULT 0,
-          created_at timestamptz NOT NULL DEFAULT now(),
-          updated_at timestamptz NOT NULL DEFAULT now()
-        )
-      `
-
-      await sql`
-        CREATE TABLE IF NOT EXISTS workflow_step (
-          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-          workflow_id uuid NOT NULL REFERENCES workflow(id) ON DELETE CASCADE,
-          step_index int NOT NULL,
-          tool_slug text NOT NULL,
-          label text NOT NULL,
-          options jsonb NOT NULL DEFAULT '{}'::jsonb,
-          created_at timestamptz NOT NULL DEFAULT now(),
-          UNIQUE (workflow_id, step_index)
-        )
-      `
-
-      await sql`
-        CREATE TABLE IF NOT EXISTS usage_counter (
-          user_id text PRIMARY KEY REFERENCES app_user(clerk_user_id) ON DELETE CASCADE,
-          daily_count int NOT NULL DEFAULT 0,
-          daily_date date NOT NULL DEFAULT (now() AT TIME ZONE 'UTC')::date,
-          monthly_count int NOT NULL DEFAULT 0,
-          monthly_year_month text NOT NULL DEFAULT to_char((now() AT TIME ZONE 'UTC')::date, 'YYYY-MM'),
-          updated_at timestamptz NOT NULL DEFAULT now()
-        )
-      `
-
-      await sql`CREATE INDEX IF NOT EXISTS workflow_user_created_at_idx ON workflow (user_id, created_at DESC)`
-      await sql`CREATE INDEX IF NOT EXISTS workflow_step_workflow_step_index_idx ON workflow_step (workflow_id, step_index)`
-      await sql`CREATE INDEX IF NOT EXISTS usage_counter_daily_date_idx ON usage_counter (daily_date)`
-
-      // Self-healing health check: returns one row per expected table with
-      // a boolean indicating whether it currently exists in `public`.
-      // Idempotent — safe to (re)create on every schema init.
-      await sql`
-        CREATE OR REPLACE FUNCTION pdf_tools_health_check()
-        RETURNS TABLE(table_name text, table_exists boolean) AS $func$
-          SELECT
-            t.expected_name::text AS table_name,
-            EXISTS(
-              SELECT 1
-              FROM pg_tables
-              WHERE schemaname = 'public'
-                AND tablename = t.expected_name
-            )::boolean AS table_exists
-          FROM (VALUES
-            ('app_user'),
-            ('workflow'),
-            ('workflow_step'),
-            ('usage_counter')
-          ) AS t(expected_name)
-          ORDER BY t.expected_name;
-        $func$ LANGUAGE sql STABLE
-      `
+      // Schema is created via the `create_pdf_tools_schema` Supabase
+      // migration. No DDL is run from the app.
     })()
   }
-
   await globalForSchema.__pdfToolsSchemaInitPromise
 }
 
-/**
- * Clears the cached schema-init promise. Call this when an operation fails
- * with a missing-relation error so the next caller re-runs the DDL and
- * recreates tables that were dropped externally (e.g. via the Neon console).
- */
 export function resetSchemaInit(): void {
   globalForSchema.__pdfToolsSchemaInitPromise = undefined
 }
 
 /**
  * Returns true if the error indicates a missing Postgres relation
- * (e.g. `relation "usage_counter" does not exist`). The driver's error has
- * a `.code` property of `42P01` for `undefined_table`.
+ * (e.g. `relation "usage_counter" does not exist`). The Supabase /
+ * PostgREST driver surfaces the SQLSTATE on `code` / `sqlState` as
+ * `42P01` for `undefined_table`.
  */
 export function isMissingRelationError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false
   const code = (err as { code?: unknown }).code
   if (code === "42P01") return true
-  // Some drivers surface the SQLSTATE on a nested field
   const sqlState = (err as { sqlState?: unknown }).sqlState
-  return sqlState === "42P01"
+  if (sqlState === "42P01") return true
+  return false
 }
 
 const globalForHealthCheck = globalThis as unknown as {
@@ -122,24 +57,13 @@ const globalForHealthCheck = globalThis as unknown as {
   __pdfToolsHealthCheckPromise?: Promise<void>
 }
 
-// How often the proactive health check runs per server instance. Cached on
-// globalThis so warm Vercel instances don't pay the roundtrip on every call.
 const HEALTH_CHECK_INTERVAL_MS = 60 * 60 * 1000 // 1 hour
 
 /**
- * Proactive self-healing for all expected tables (`app_user`, `workflow`,
- * `workflow_step`, `usage_counter`). Once per hour per server instance,
- * calls the `pdf_tools_health_check()` stored function; if any expected
- * table is missing, clears the schema-init cache and re-runs the DDL.
- *
- * Coverage: covers ALL tables — not just the one a particular write
- * happened to touch. If someone drops `workflow` from the Neon console
- * while only `usage_counter` writes are happening, the next call to
- * `recordProcessingEvent` (or any other helper) will detect it and heal.
- *
- * Safety: never throws, never blocks the caller, never retries on
- * transient errors (the reactive catch-42P01 path in callers is the
- * safety net for that).
+ * Proactive self-heal. Once per hour per server instance, calls the
+ * `pdf_tools_health_check()` RPC and logs a warning if any expected
+ * table is missing. The schema is owned by Supabase migrations now, so
+ * this function only logs — it cannot recreate the tables on its own.
  */
 export function ensureDbSchemaIfStale(): void {
   const now = Date.now()
@@ -149,19 +73,16 @@ export function ensureDbSchemaIfStale(): void {
   ) {
     return
   }
-  if (globalForHealthCheck.__pdfToolsHealthCheckPromise) {
-    return
-  }
+  if (globalForHealthCheck.__pdfToolsHealthCheckPromise) return
   globalForHealthCheck.__pdfToolsHealthCheckPromise = (async () => {
     try {
       const allExist = await runHealthCheck()
       globalForHealthCheck.__pdfToolsHealthLastCheckAt = now
       if (!allExist) {
         console.warn(
-          "[db] self-heal: missing tables detected, re-initialising schema"
+          "[db] self-heal: missing tables detected; re-run the create_pdf_tools_schema migration in Supabase"
         )
         resetSchemaInit()
-        await ensureDbSchema()
       }
     } catch (err) {
       console.error("[db] self-heal health check failed:", err)
@@ -171,60 +92,237 @@ export function ensureDbSchemaIfStale(): void {
   })()
 }
 
-/**
- * Calls the `pdf_tools_health_check()` stored function and returns true
- * only if every expected table exists. Returns true (no-op) on any error
- * to avoid triggering re-init storms on transient DB issues.
- */
 async function runHealthCheck(): Promise<boolean> {
   try {
-    // ensureDbSchema guarantees the function exists (idempotent CREATE
-    // OR REPLACE). Cheap after first run.
     await ensureDbSchema()
-    const rows = (await sql`
-      SELECT table_name, table_exists
-      FROM pdf_tools_health_check()
-    `) as Array<{ table_name: string; table_exists: boolean }>
+    const supabase = getSupabaseServer()
+    const { data, error } = await supabase.rpc("pdf_tools_health_check")
+    if (error) {
+      console.error("[db] runHealthCheck failed:", error)
+      return true
+    }
+    const rows = (data ?? []) as Array<{ table_exists: boolean }>
     if (rows.length === 0) return true
-    return rows.every((r) => r.table_exists)
+    return rows.every((r) => r.table_exists === true)
   } catch (err) {
     console.error("[db] runHealthCheck failed:", err)
     return true
   }
 }
 
+// ---------------------------------------------------------------------------
+// User / plan helpers
+// ---------------------------------------------------------------------------
+
 export async function upsertUser(clerkUserId: string): Promise<void> {
-  await ensureDbSchema()
-  await sql`
-    INSERT INTO app_user (clerk_user_id)
-    VALUES (${clerkUserId})
-    ON CONFLICT (clerk_user_id) DO NOTHING
-  `
+  const supabase = getSupabaseServer()
+  const { error } = await supabase
+    .from("app_user")
+    .upsert(
+      { clerk_user_id: clerkUserId },
+      { onConflict: "clerk_user_id", ignoreDuplicates: true }
+    )
+  if (error) throw error
 }
 
 export async function setUserPlan(
   clerkUserId: string,
   plan: "free" | "premium"
 ): Promise<void> {
-  await ensureDbSchema()
-  // UPSERT: create the app_user row if it doesn't exist, otherwise update
-  // the plan. This ensures the DB always reflects the latest plan even when
-  // the user has never triggered an INSERT (e.g. they upgraded before ever
-  // processing a file or creating a workflow).
-  await sql`
-    INSERT INTO app_user (clerk_user_id, plan)
-    VALUES (${clerkUserId}, ${plan})
-    ON CONFLICT (clerk_user_id) DO UPDATE
-    SET plan = EXCLUDED.plan
-  `
+  const supabase = getSupabaseServer()
+  const { error } = await supabase
+    .from("app_user")
+    .upsert(
+      { clerk_user_id: clerkUserId, plan },
+      { onConflict: "clerk_user_id" }
+    )
+  if (error) throw error
 }
 
 export async function getUserPlanFromDb(
   clerkUserId: string
 ): Promise<"free" | "premium" | null> {
-  await ensureDbSchema()
-  const rows = (await sql`
-    SELECT plan FROM app_user WHERE clerk_user_id = ${clerkUserId} LIMIT 1
-  `) as Array<{ plan: "free" | "premium" }>
-  return rows[0]?.plan ?? null
+  const supabase = getSupabaseServer()
+  const { data, error } = await supabase
+    .from("app_user")
+    .select("plan")
+    .eq("clerk_user_id", clerkUserId)
+    .limit(1)
+    .maybeSingle()
+  if (error) throw error
+  if (!data) return null
+  const plan = (data as { plan: string | null }).plan
+  return plan === "free" || plan === "premium" ? plan : null
+}
+
+// ---------------------------------------------------------------------------
+// Usage counter helpers
+// ---------------------------------------------------------------------------
+
+export interface CounterCounts {
+  daily: number
+  monthly: number
+}
+
+/**
+ * Fast O(1) read from the denormalized usage_counter table.
+ * Returns 0s if no row exists (new user) — the counter is created on the
+ * first successful processing event. All date math uses explicit UTC.
+ */
+export async function readUsageCounter(userId: string): Promise<CounterCounts> {
+  try {
+    await ensureDbSchema()
+    const supabase = getSupabaseServer()
+    const { data, error } = await supabase.rpc("pdf_tools_read_counter", {
+      p_user_id: userId,
+    })
+    if (error) throw error
+    const rows = (data ?? []) as Array<{ daily: number; monthly: number }>
+    if (rows.length === 0) return { daily: 0, monthly: 0 }
+    const row = rows[0]
+    return {
+      daily: Number(row.daily) || 0,
+      monthly: Number(row.monthly) || 0,
+    }
+  } catch (err) {
+    console.error("[db] readUsageCounter failed:", err)
+    return { daily: 0, monthly: 0 }
+  }
+}
+
+/**
+ * Atomically upserts the denormalized usage_counter. Only `success`
+ * events count; `error` events still ensure the `app_user` row exists
+ * (so the FK on `usage_counter.user_id` doesn't fail on a later insert)
+ * but do not bump the counter. The counter resets automatically when
+ * `daily_date` / `monthly_year_month` change. All date math uses UTC.
+ */
+export async function recordUsageEvent(
+  userId: string,
+  status: "success" | "error"
+): Promise<void> {
+  const supabase = getSupabaseServer()
+  const { error } = await supabase.rpc("pdf_tools_record_usage_event", {
+    p_user_id: userId,
+    p_status: status,
+  })
+  if (error) throw error
+}
+
+// ---------------------------------------------------------------------------
+// Workflow helpers
+// ---------------------------------------------------------------------------
+
+export interface WorkflowStepInput {
+  index: number
+  tool: string
+  label: string
+}
+
+export interface WorkflowListItem {
+  id: string
+  name: string
+  last_run: string | null
+  run_count: number | string
+  created_at_ms: string | number
+  steps: Array<{ tool: string; label: string }>
+}
+
+/**
+ * Lists all workflows for the given user (newest first) with their
+ * ordered steps. Returns an empty array when the user has none.
+ */
+export async function listWorkflows(userId: string): Promise<WorkflowListItem[]> {
+  const supabase = getSupabaseServer()
+  const { data, error } = await supabase.rpc("pdf_tools_list_workflows", {
+    p_user_id: userId,
+  })
+  if (error) throw error
+  if (!data) return []
+  // PostgREST unwraps a jsonb scalar return — handle both shapes.
+  const value = Array.isArray(data) && data.length === 1 && Array.isArray(data[0])
+    ? data[0]
+    : data
+  if (!Array.isArray(value)) return []
+  return value as WorkflowListItem[]
+}
+
+/**
+ * Returns a single workflow owned by the given user, or null when not
+ * found. Steps are returned in `step_index` order.
+ */
+export async function getWorkflow(
+  userId: string,
+  id: string
+): Promise<WorkflowListItem | null> {
+  const supabase = getSupabaseServer()
+  const { data, error } = await supabase.rpc("pdf_tools_get_workflow", {
+    p_user_id: userId,
+    p_id: id,
+  })
+  if (error) throw error
+  if (!data) return null
+  const value = Array.isArray(data) ? data[0] : data
+  if (!value || typeof value !== "object") return null
+  return value as WorkflowListItem
+}
+
+/**
+ * Creates a workflow + its ordered steps in a single RPC. Returns the
+ * created workflow row (without steps — the caller already has them).
+ */
+export async function createWorkflow(
+  userId: string,
+  name: string,
+  steps: WorkflowStepInput[]
+): Promise<WorkflowListItem | null> {
+  const supabase = getSupabaseServer()
+  const { data, error } = await supabase.rpc("pdf_tools_create_workflow", {
+    p_user_id: userId,
+    p_name: name,
+    p_steps: steps as unknown as never,
+  })
+  if (error) throw error
+  if (!data) return null
+  const value = Array.isArray(data) ? data[0] : data
+  if (!value || typeof value !== "object") return null
+  return value as WorkflowListItem
+}
+
+/**
+ * Updates a workflow's name and/or replaces its steps. Pass `undefined`
+ * for either parameter to leave that field untouched.
+ */
+export async function updateWorkflow(
+  userId: string,
+  id: string,
+  name: string | undefined,
+  steps: WorkflowStepInput[] | undefined
+): Promise<void> {
+  const supabase = getSupabaseServer()
+  const { error } = await supabase.rpc("pdf_tools_update_workflow", {
+    p_user_id: userId,
+    p_id: id,
+    p_name: name ?? null,
+    p_steps: (steps ?? null) as unknown as never,
+  })
+  if (error) throw error
+}
+
+export async function deleteWorkflow(userId: string, id: string): Promise<void> {
+  const supabase = getSupabaseServer()
+  const { error } = await supabase.rpc("pdf_tools_delete_workflow", {
+    p_user_id: userId,
+    p_id: id,
+  })
+  if (error) throw error
+}
+
+export async function runWorkflow(userId: string, id: string): Promise<void> {
+  const supabase = getSupabaseServer()
+  const { error } = await supabase.rpc("pdf_tools_run_workflow", {
+    p_user_id: userId,
+    p_id: id,
+  })
+  if (error) throw error
 }

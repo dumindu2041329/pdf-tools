@@ -64,7 +64,7 @@ Chain multiple tools into reusable multi-step pipelines, stored in Neon PostgreS
 | 🤖 AI | OpenRouter (via the `openai` SDK, model `openai/gpt-oss-120b:free`) | ^6.33.0 |
 | 💳 Payments | Stripe (Premium subscription) | ^16.12.0 |
 | 💾 Object Storage | Supabase Storage (client-upload for files > 4 MB) | ^2.45.0 |
-| 🗄️ Database | Neon PostgreSQL (`@neondatabase/serverless`) | ^1.1.0 |
+| 🗄️ Database | Supabase PostgreSQL (PostgREST, same project as Storage) | ^2.108.2 |
 | 📄 PDF Parsing (client) | pdfjs-dist | ^4.10.38 |
 | 🧩 Utilities | jszip + jsonwebtoken | ^3.10.1 / ^9.0.3 |
 | 🎞️ Animation | Framer Motion | ^12.38.0 |
@@ -162,7 +162,7 @@ Create a `.env.local` file in the root directory (see [Environment Variables](#�
 
 ### 3. 🗄️ Set Up the Database
 
-The app uses **Neon PostgreSQL**. Create a free database at [neon.com](https://neon.com), then add the connection string to `DATABASE_URL`. The schema is **auto-created on first request** — no migrations needed.
+The app uses the **same Supabase project** as Storage for the database (PostgREST via `@supabase/supabase-js`). The schema (4 tables + 9 stored procedures) is created via the `create_pdf_tools_schema` and `create_pdf_tools_rpcs` Supabase migrations — no DDL runs from the app. Re-apply them from the Supabase MCP (`apply_migration`) or dashboard if the tables go missing.
 
 ### 4. 🔐 Set Up Clerk Auth
 
@@ -188,7 +188,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ```env
 # ── Required ───────────────────────────────────────────────────────────
-DATABASE_URL=                        # Neon PostgreSQL
+DATABASE_URL=                        # (legacy Neon) — no longer required
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=   # Clerk public key
 CLERK_SECRET_KEY=                    # Clerk secret key
 ILOVEAPI_PUBLIC_KEY=                 # iLoveAPI public key

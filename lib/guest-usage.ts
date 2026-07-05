@@ -7,7 +7,7 @@ import type { UsageLimits } from "@/lib/usageLimits"
  *
  * The free plan in `usageLimits.ts` already defines a 5-files/day and
  * 30-files/month cap. Logged-in users get those limits enforced via
- * the `usage_counter` table in Neon (see `lib/usage.ts`). Guests have
+ * the `usage_counter` table in Supabase (see `lib/usage.ts`). Guests have
  * no userId, so there's no row to update — we instead persist the
  * counter in an HTTP-only cookie keyed by browser.
  *

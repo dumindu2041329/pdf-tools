@@ -8,7 +8,7 @@ export type UserPlan = "free" | "premium"
 
 export async function getUserPlan(userId: string): Promise<UserPlan> {
   // Clerk metadata is the primary source of truth, but we also consult the
-  // Neon app_user table so the DB stays in sync and is used as a fallback
+  // Supabase app_user table so the DB stays in sync and is used as a fallback
   // when Clerk is unavailable or the metadata hasn't been written yet.
   let clerkPlan: UserPlan = "free"
   let clerkOk = false

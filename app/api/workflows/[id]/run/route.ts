@@ -1,6 +1,6 @@
 import { auth } from "@clerk/nextjs/server"
 import { NextResponse } from "next/server"
-import { ensureDbSchema, sql, upsertUser } from "@/lib/db"
+import { runWorkflow, upsertUser } from "@/lib/db"
 
 export async function POST(
   _req: Request,
@@ -13,18 +13,8 @@ export async function POST(
 
   const { id } = await params
 
-  await ensureDbSchema()
   await upsertUser(userId)
-
-  await sql`
-    UPDATE workflow
-    SET run_count = run_count + 1,
-        last_run = now(),
-        updated_at = now()
-    WHERE user_id = ${userId}
-      AND id = (${id})::uuid
-  `
+  await runWorkflow(userId, id)
 
   return NextResponse.json({ ok: true })
 }
-

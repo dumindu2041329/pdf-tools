@@ -1,14 +1,15 @@
 import { auth } from "@clerk/nextjs/server"
 import { NextResponse } from "next/server"
-import { ensureDbSchema, sql, upsertUser } from "@/lib/db"
+import {
+  createWorkflow,
+  listWorkflows,
+  upsertUser,
+  type WorkflowListItem,
+  type WorkflowStepInput,
+} from "@/lib/db"
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
-}
-
-function asRowArray(value: unknown): Array<Record<string, unknown>> {
-  if (!Array.isArray(value)) return []
-  return value.filter(isRecord)
 }
 
 function toNumber(value: unknown, fallback = 0): number {
@@ -33,40 +34,24 @@ function parseSteps(value: unknown): Array<{ tool: string; label: string }> | nu
   return steps
 }
 
-export async function GET() {
-  const { userId } = await auth()
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  }
+function serializeSteps(
+  steps: Array<{ tool: string; label: string }>
+): WorkflowStepInput[] {
+  return steps.map((s, index) => ({ index, tool: s.tool, label: s.label }))
+}
 
-  await ensureDbSchema()
-  await upsertUser(userId)
+function normalizeLastRun(value: unknown): string | null {
+  if (value === null || value === undefined) return null
+  if (typeof value === "string") return value
+  return null
+}
 
-  const rawRows = (await sql`
-    SELECT
-      w.id::text AS id,
-      w.name,
-      w.last_run::text AS last_run,
-      w.run_count,
-      (extract(epoch from w.created_at) * 1000)::bigint::text AS created_at_ms,
-      COALESCE(
-        json_agg(
-          json_build_object('tool', s.tool_slug, 'label', s.label)
-          ORDER BY s.step_index
-        ) FILTER (WHERE s.id IS NOT NULL),
-        '[]'::json
-      ) AS steps
-    FROM workflow w
-    LEFT JOIN workflow_step s ON s.workflow_id = w.id
-    WHERE w.user_id = ${userId}
-    GROUP BY w.id
-    ORDER BY w.created_at DESC
-  `) as unknown
-
-  const rows = asRowArray(rawRows)
-  const workflows = rows.map((r) => {
-    const steps = Array.isArray(r.steps)
-      ? r.steps
+function normalizeWorkflow(item: WorkflowListItem) {
+  return {
+    id: typeof item.id === "string" ? item.id : "",
+    name: typeof item.name === "string" ? item.name : "",
+    steps: Array.isArray(item.steps)
+      ? item.steps
           .map((s) => {
             if (!isRecord(s)) return null
             const tool = typeof s.tool === "string" ? s.tool : ""
@@ -75,16 +60,26 @@ export async function GET() {
             return { tool, label }
           })
           .filter((s): s is { tool: string; label: string } => s !== null)
-      : []
-    return {
-      id: typeof r.id === "string" ? r.id : "",
-      name: typeof r.name === "string" ? r.name : "",
-      steps,
-      lastRun: r.last_run === null ? null : typeof r.last_run === "string" ? r.last_run : null,
-      runCount: typeof r.run_count === "number" ? r.run_count : toNumber(r.run_count, 0),
-      createdAt: toNumber(r.created_at_ms, Date.now()),
-    }
-  })
+      : [],
+    lastRun: normalizeLastRun(item.last_run),
+    runCount:
+      typeof item.run_count === "number"
+        ? item.run_count
+        : toNumber(item.run_count, 0),
+    createdAt: toNumber(item.created_at_ms, Date.now()),
+  }
+}
+
+export async function GET() {
+  const { userId } = await auth()
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
+  await upsertUser(userId)
+
+  const rows = await listWorkflows(userId)
+  const workflows = rows.map(normalizeWorkflow)
 
   return NextResponse.json({ workflows })
 }
@@ -113,48 +108,24 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "name and steps are required" }, { status: 400 })
   }
 
-  await ensureDbSchema()
   await upsertUser(userId)
 
-  const stepsJson = JSON.stringify(
-    steps.map((s, index) => ({ index, tool: s.tool, label: s.label }))
-  )
-
-  const rawRows = (await sql`
-    WITH inserted AS (
-      INSERT INTO workflow (user_id, name)
-      VALUES (${userId}, ${name})
-      RETURNING id, name, last_run, run_count, created_at
-    ), inserted_steps AS (
-      INSERT INTO workflow_step (workflow_id, step_index, tool_slug, label)
-      SELECT
-        inserted.id,
-        (step->>'index')::int,
-        step->>'tool',
-        step->>'label'
-      FROM inserted, jsonb_array_elements(${stepsJson}::jsonb) AS step
-      RETURNING 1
-    )
-    SELECT
-      inserted.id::text AS id,
-      inserted.name,
-      inserted.last_run::text AS last_run,
-      inserted.run_count,
-      (extract(epoch from inserted.created_at) * 1000)::bigint::text AS created_at_ms
-    FROM inserted
-  `) as unknown
-
-  const row = asRowArray(rawRows)[0]
-  const createdAt = toNumber(row?.created_at_ms, Date.now())
+  const created = await createWorkflow(userId, name, serializeSteps(steps))
 
   return NextResponse.json({
     workflow: {
-      id: typeof row?.id === "string" ? row.id : "",
-      name: typeof row?.name === "string" ? row.name : name,
+      id: created && typeof created.id === "string" ? created.id : "",
+      name: created && typeof created.name === "string" ? created.name : name,
       steps,
-      lastRun: row?.last_run === null ? null : typeof row?.last_run === "string" ? row.last_run : null,
-      runCount: typeof row?.run_count === "number" ? row.run_count : toNumber(row?.run_count, 0),
-      createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
+      lastRun: created ? normalizeLastRun(created.last_run) : null,
+      runCount: created
+        ? typeof created.run_count === "number"
+          ? created.run_count
+          : toNumber(created.run_count, 0)
+        : 0,
+      createdAt: created
+        ? toNumber(created.created_at_ms, Date.now())
+        : Date.now(),
     },
   })
 }
