@@ -248,9 +248,9 @@ export function useTool(toolSlug: string) {
           (sum, f) => sum + (shouldUseDirectUpload(f) ? f.size : 0),
           0
         )
-        const loadedByFile = new Map<string, number>()
+        const loadedByFile = new Map<File, number>()
         const onFileProgress = (file: File, loaded: number) => {
-          loadedByFile.set(file.name + ":" + file.size, loaded)
+          loadedByFile.set(file, loaded)
           const combinedLoaded = Array.from(loadedByFile.values()).reduce(
             (a, b) => a + b,
             0
