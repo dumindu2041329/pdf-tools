@@ -33,6 +33,7 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib"
+import { deleteFromStorageBrowser } from "@/lib/supabase-upload"
 
 let pdfjsLib: typeof import("pdfjs-dist") | null = null
 
@@ -283,7 +284,8 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     []
   )
 
-  // 1. Download the source PDF from Supabase Storage.
+  // 1. Download the source PDF from Supabase Storage, then delete the
+  //    remote copy — we only need the in-memory buffer from here on.
   useEffect(() => {
     if (!fileUrl) return
     let cancelled = false
@@ -296,6 +298,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
         const buf = await res.arrayBuffer()
         if (cancelled) return
         setFileBuffer(buf)
+        deleteFromStorageBrowser(fileUrl)
       } catch (err) {
         console.error("Failed to load source PDF:", err)
         toast.error(err instanceof Error ? err.message : "Failed to load PDF.")

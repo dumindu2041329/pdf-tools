@@ -4,7 +4,7 @@ import { useState, useCallback } from "react"
 import { toast } from "sonner"
 import type { ProcessingStep } from "@/components/tools/ProcessingModal"
 import { recordActivity } from "@/lib/activityStore"
-import { shouldUseDirectUpload, uploadFileDirect } from "@/lib/supabase-upload"
+import { shouldUseDirectUpload, uploadFileDirect, deleteFromStorageBrowser } from "@/lib/supabase-upload"
 
 function postActivity(toolSlug: string, fileName: string, outputSize: number): void {
   fetch("/api/activity", {
@@ -122,6 +122,11 @@ interface BuildUploadPayloadArgs {
  * Uploads any file that exceeds the direct-body limit to Supabase Storage
  * via the client SDK. Files under the limit are returned untouched so
  * the caller can keep the cheap multipart path for small PDFs.
+ *
+ * If any individual upload throws, every file that already made it to
+ * Storage is deleted before the error re-throws — otherwise a partially
+ * uploaded batch would leak storage objects (the server only cleans up
+ * URLs it sees in the eventual `/api/tools/[tool]` request).
  */
 async function uploadLargeFilesToStorage(
   files: File[],
@@ -132,23 +137,54 @@ async function uploadLargeFilesToStorage(
   watermarkBlobUpload: { url: string; filename: string } | undefined
 }> {
   const blobUploads: Array<{ file: File; url: string; pathname: string }> = []
-  for (const file of files) {
-    if (!shouldUseDirectUpload(file)) continue
-    const result = await uploadFileDirect(file, {
-      onProgress: (loaded, total) => onFileProgress(file, loaded, total),
-    })
-    blobUploads.push({ file, url: result.url, pathname: result.pathname })
-  }
-
   let watermarkBlobUpload: { url: string; filename: string } | undefined
-  if (watermarkImage && shouldUseDirectUpload(watermarkImage)) {
-    const result = await uploadFileDirect(watermarkImage, {
-      onProgress: (loaded, total) => onFileProgress(watermarkImage, loaded, total),
-    })
-    watermarkBlobUpload = { url: result.url, filename: watermarkImage.name }
-  }
+  try {
+    for (const file of files) {
+      if (!shouldUseDirectUpload(file)) continue
+      const result = await uploadFileDirect(file, {
+        onProgress: (loaded, total) => onFileProgress(file, loaded, total),
+      })
+      blobUploads.push({ file, url: result.url, pathname: result.pathname })
+    }
 
-  return { blobUploads, watermarkBlobUpload }
+    if (watermarkImage && shouldUseDirectUpload(watermarkImage)) {
+      const result = await uploadFileDirect(watermarkImage, {
+        onProgress: (loaded, total) => onFileProgress(watermarkImage, loaded, total),
+      })
+      watermarkBlobUpload = { url: result.url, filename: watermarkImage.name }
+    }
+
+    return { blobUploads, watermarkBlobUpload }
+  } catch (err) {
+    // Best-effort cleanup of anything that already landed in Storage
+    // before the failure. `deleteFromStorageBrowser` swallows errors so
+    // a single bad URL can't block the rest.
+    const urlsToCleanup = [
+      ...blobUploads.map((u) => u.url),
+      ...(watermarkBlobUpload ? [watermarkBlobUpload.url] : []),
+    ]
+    await Promise.allSettled(
+      urlsToCleanup.map((url) => deleteFromStorageBrowser(url))
+    )
+    throw err
+  }
+}
+
+/**
+ * Helper used by the catch blocks below to release any direct-uploaded
+ * Storage objects after a tool request fails. Safe to call when nothing
+ * was uploaded (the arrays are empty) — every call short-circuits.
+ */
+async function cleanupDirectUploads(
+  directUploads: Array<{ file: File; url: string; pathname: string }>,
+  watermarkDirectUpload: { url: string; filename: string } | undefined
+): Promise<void> {
+  const urls = [
+    ...directUploads.map((u) => u.url),
+    ...(watermarkDirectUpload ? [watermarkDirectUpload.url] : []),
+  ]
+  if (urls.length === 0) return
+  await Promise.allSettled(urls.map((url) => deleteFromStorageBrowser(url)))
 }
 
 /**
@@ -353,11 +389,16 @@ export function useTool(toolSlug: string) {
             processingTime: ((end - start) / 1000).toFixed(2),
             outputSize: blob.size,
           });
+          // Local tools never reach `/api/tools/[tool]`, so the server's
+          // `finally` cleanup doesn't run — release the Supabase objects
+          // here, on the success path, instead.
+          await cleanupDirectUploads(directUploads, watermarkDirectUpload)
           recordActivity(toolSlug, result.downloadFilename, blob.size)
           postActivity(toolSlug, result.downloadFilename, blob.size)
           return;
         } catch (err) {
           console.error("Local split error:", err);
+          await cleanupDirectUploads(directUploads, watermarkDirectUpload)
           setState({ status: "error", message: "Failed to process PDF locally. Error: " + (err as Error).message, retryable: true });
           return;
         }
@@ -399,11 +440,16 @@ export function useTool(toolSlug: string) {
             processingTime: ((end - start) / 1000).toFixed(2),
             outputSize: blob.size,
           });
+          // Local tools never reach `/api/tools/[tool]`, so the server's
+          // `finally` cleanup doesn't run — release the Supabase objects
+          // here, on the success path, instead.
+          await cleanupDirectUploads(directUploads, watermarkDirectUpload)
           recordActivity(toolSlug, result.downloadFilename, blob.size)
           postActivity(toolSlug, result.downloadFilename, blob.size)
           return;
         } catch (err) {
           console.error("Local merge error:", err);
+          await cleanupDirectUploads(directUploads, watermarkDirectUpload)
           setState({ status: "error", message: "Failed to merge PDFs locally. Error: " + (err as Error).message, retryable: true });
           return;
         }
@@ -512,7 +558,12 @@ export function useTool(toolSlug: string) {
         // Server tools: /api/tools/[tool] already records the event server-side.
         // We only update the local activity feed here.
         recordActivity(toolSlug, data.filename || "output.pdf", Number(data.outputSize || 0))
-      } catch {
+      } catch (err) {
+        // Release any direct-uploaded Storage objects before surfacing
+        // the error — on a network blip the server never saw the URLs
+        // and so its own cleanup (in the /api/tools/[tool] `finally`)
+        // never ran. A second delete from the client is harmless.
+        await cleanupDirectUploads(directUploads, watermarkDirectUpload)
         setState({ status: "error", message: "A network error occurred. Please try again.", retryable: true })
       }
     },

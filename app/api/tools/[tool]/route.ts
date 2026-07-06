@@ -86,10 +86,10 @@ async function processToolRequest(
   params: Promise<{ tool: string }>
 ) {
   // Track every blob URL we hydrate (or attempt to hydrate) so we can
-  // clean them up after processing — success or failure (e.g. iLoveAPI /
-  // Adobe credit exhaustion, 4xx from the engine, network blip, guest
-  // cap hit, etc.). `deleteFromStorage` is safe to call on unknown URLs
-  // and swallows errors, so this is fire-and-forget.
+  // clean them up regardless of how the request ends. `deleteFromStorage`
+  // is safe to call on unknown URLs and swallows errors, so this is
+  // fire-and-forget — a failed tool run (iLoveAPI/Adobe error, guest
+  // cap, etc.) still releases the storage objects.
   const downloadedBlobUrls: string[] = []
 
   try {
@@ -264,7 +264,6 @@ async function processToolRequest(
           processingTimeMs: Date.now() - start,
         })
         const fileDataBase64 = Buffer.from(fileData).toString("base64")
-
         return NextResponse.json({
           fileData: fileDataBase64,
           filename: result.downloadFilename,
@@ -360,7 +359,6 @@ async function processToolRequest(
         processingTimeMs: Date.now() - start,
       })
       const zipBase64 = Buffer.from(zipBuffer).toString("base64")
-
       return NextResponse.json({
         fileData: zipBase64,
         filename: "converted-pdfs.zip",
@@ -415,13 +413,12 @@ async function processToolRequest(
           processingTimeMs: Date.now() - start,
         })
         const zipBase64 = Buffer.from(zipBuffer).toString("base64")
-
-        return NextResponse.json({
-          fileData: zipBase64,
-          filename: "ocr-pdfs.zip",
-          processingTime: elapsed,
-          outputSize: zipBuffer.byteLength,
-        })
+      return NextResponse.json({
+        fileData: zipBase64,
+        filename: "ocr-pdfs.zip",
+        processingTime: elapsed,
+        outputSize: zipBuffer.byteLength,
+      })
       }
 
       const ocrLanguages = (options.ocr_languages as string[]) || ["en-US"]
@@ -445,7 +442,6 @@ async function processToolRequest(
         processingTimeMs: Date.now() - start,
       })
       const ocrBase64 = Buffer.from(result.buffer).toString("base64")
-
       return NextResponse.json({
         fileData: ocrBase64,
         filename: result.filename,
@@ -496,13 +492,12 @@ async function processToolRequest(
           processingTimeMs: Date.now() - start,
         })
         const zipBase64 = Buffer.from(zipBuffer).toString("base64")
-
-        return NextResponse.json({
-          fileData: zipBase64,
-          filename: "converted-excels.zip",
-          processingTime: elapsed,
-          outputSize: zipBuffer.byteLength,
-        })
+      return NextResponse.json({
+        fileData: zipBase64,
+        filename: "converted-excels.zip",
+        processingTime: elapsed,
+        outputSize: zipBuffer.byteLength,
+      })
       }
 
       const result = await convertPdfToExcel(
@@ -522,7 +517,6 @@ async function processToolRequest(
         processingTimeMs: Date.now() - start,
       })
       const excelBase64 = Buffer.from(result.buffer).toString("base64")
-
       return NextResponse.json({
         fileData: excelBase64,
         filename: result.filename,
@@ -573,7 +567,6 @@ async function processToolRequest(
           processingTimeMs: Date.now() - start,
         })
         const zipBase64 = Buffer.from(zipBuffer).toString("base64")
-
         return NextResponse.json({
           fileData: zipBase64,
           filename: "converted-words.zip",
@@ -599,7 +592,6 @@ async function processToolRequest(
         processingTimeMs: Date.now() - start,
       })
       const wordBase64 = Buffer.from(result.buffer).toString("base64")
-
       return NextResponse.json({
         fileData: wordBase64,
         filename: result.filename,
@@ -650,13 +642,12 @@ async function processToolRequest(
           processingTimeMs: Date.now() - start,
         })
         const zipBase64 = Buffer.from(zipBuffer).toString("base64")
-
-        return NextResponse.json({
-          fileData: zipBase64,
-          filename: "converted-powerpoints.zip",
-          processingTime: elapsed,
-          outputSize: zipBuffer.byteLength,
-        })
+      return NextResponse.json({
+        fileData: zipBase64,
+        filename: "converted-powerpoints.zip",
+        processingTime: elapsed,
+        outputSize: zipBuffer.byteLength,
+      })
       }
 
       const result = await convertPdfToPowerpointAdobe(
@@ -676,7 +667,6 @@ async function processToolRequest(
         processingTimeMs: Date.now() - start,
       })
       const pptxBase64 = Buffer.from(result.buffer).toString("base64")
-
       return NextResponse.json({
         fileData: pptxBase64,
         filename: result.filename,
@@ -711,7 +701,6 @@ async function processToolRequest(
         outputSizeBytes: resultText.length,
         processingTimeMs: Date.now() - start,
       })
-
       return NextResponse.json({
         validationSuccess: true,
         message: "PDF validation is success",
@@ -750,7 +739,6 @@ async function processToolRequest(
         processingTimeMs: Date.now() - start,
       })
       const rotateBase64 = Buffer.from(result.buffer).toString("base64")
-
       return NextResponse.json({
         fileData: rotateBase64,
         filename: result.downloadFilename,
@@ -796,7 +784,6 @@ async function processToolRequest(
         processingTimeMs: Date.now() - start,
       })
       const compressBase64 = Buffer.from(zipBuffer).toString("base64")
-
       return NextResponse.json({
         fileData: compressBase64,
         filename: "compressed-pdfs.zip",
@@ -842,7 +829,6 @@ async function processToolRequest(
         processingTimeMs: Date.now() - start,
       })
       const zipBase64 = Buffer.from(zipBuffer).toString("base64")
-
       return NextResponse.json({
         fileData: zipBase64,
         filename: "repaired-pdfs.zip",
@@ -914,7 +900,6 @@ async function processToolRequest(
         processingTimeMs: Date.now() - start,
       })
       const zipBase64 = Buffer.from(zipBuffer).toString("base64")
-
       return NextResponse.json({
         fileData: zipBase64,
         filename: "scanned-pdfs.zip",
@@ -960,7 +945,6 @@ async function processToolRequest(
         processingTimeMs: Date.now() - start,
       })
       const zipBase64 = Buffer.from(zipBuffer).toString("base64")
-
       return NextResponse.json({
         fileData: zipBase64,
         filename: "converted-pdfs.zip",
@@ -1011,7 +995,6 @@ async function processToolRequest(
         processingTimeMs: Date.now() - start,
       })
       const zipBase64 = Buffer.from(zipBuffer).toString("base64")
-
       return NextResponse.json({
         fileData: zipBase64,
         filename: "converted-pdfas.zip",
@@ -1079,7 +1062,6 @@ async function processToolRequest(
         processingTimeMs: Date.now() - start,
       })
       const zipBase64 = Buffer.from(zipBuffer).toString("base64")
-
       return NextResponse.json({
         fileData: zipBase64,
         filename: "watermarked-pdfs.zip",
@@ -1130,7 +1112,6 @@ async function processToolRequest(
         processingTimeMs: Date.now() - start,
       })
       const zipBase64 = Buffer.from(zipBuffer).toString("base64")
-
       return NextResponse.json({
         fileData: zipBase64,
         filename: "protected-pdfs.zip",
@@ -1193,7 +1174,6 @@ async function processToolRequest(
         processingTimeMs: Date.now() - start,
       })
       const zipBase64 = Buffer.from(zipBuffer).toString("base64")
-
       return NextResponse.json({
         fileData: zipBase64,
         filename: "paged-pdfs.zip",
@@ -1284,7 +1264,6 @@ async function processToolRequest(
       processingTimeMs,
     })
     const fileDataBase64 = Buffer.from(fileData).toString("base64")
-
     return NextResponse.json({
       fileData: fileDataBase64,
       filename: downloadFilename,
@@ -1346,11 +1325,10 @@ async function processToolRequest(
     return NextResponse.json({ error: errMessage }, { status: 500 })
   }
   } finally {
-    // Always clean up the uploaded source blobs once the request
-    // finishes — whether the tool succeeded, an iLoveAPI/Adobe call
-    // failed (e.g. credits exhausted), or we short-circuited on a
-    // usage cap. Deleting in parallel keeps it fast; `deleteFromStorage`
-    // swallows per-URL errors so one bad URL can't block the others.
+    // Clean up the uploaded source blobs regardless of whether the
+    // request produced a usable result. Deleting in parallel keeps it
+    // fast; `deleteFromStorage` swallows per-URL errors so one bad URL
+    // can't block the others.
     await Promise.allSettled(
       downloadedBlobUrls.map((url) => deleteFromStorage(url))
     )

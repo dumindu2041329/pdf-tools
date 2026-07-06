@@ -146,9 +146,10 @@ async function uploadToSignedUrlWithProgress(
   // We read the project URL from the public env var since the SDK's
   // internal `supabaseUrl` field is protected.
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-  if (!supabaseUrl) {
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  if (!supabaseUrl || !anonKey) {
     throw new Error(
-      "Missing NEXT_PUBLIC_SUPABASE_URL on the client. Add it to .env.local."
+      "Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY on the client. Add them to .env.local."
     )
   }
   const encodedPath = path
@@ -162,6 +163,8 @@ async function uploadToSignedUrlWithProgress(
     xhr.open("PUT", url)
     xhr.setRequestHeader("Content-Type", contentType)
     xhr.setRequestHeader("x-upsert", "false")
+    xhr.setRequestHeader("Authorization", `Bearer ${anonKey}`)
+    xhr.setRequestHeader("apikey", anonKey)
     xhr.upload.addEventListener("progress", (e) => {
       if (e.lengthComputable && e.total > 0) {
         onProgress(e.loaded, e.total)
@@ -190,4 +193,35 @@ function parseXhrError(xhr: XMLHttpRequest): string | null {
     // not JSON
   }
   return null
+}
+
+/**
+ * Browser-side delete: removes a file from Supabase Storage given its
+ * public URL. Mirrors the server-side `deleteFromStorage` — swallows
+ * errors so callers can fire-and-forget.
+ */
+export async function deleteFromStorageBrowser(url: string): Promise<void> {
+  try {
+    const parsed = parsePublicUrlClient(url)
+    if (!parsed) return
+    const supabase = getSupabaseBrowser()
+    await supabase.storage.from(parsed.bucket).remove([parsed.pathname])
+  } catch {
+    // fire-and-forget
+  }
+}
+
+function parsePublicUrlClient(url: string): { bucket: string; pathname: string } | null {
+  try {
+    const parsed = new URL(url)
+    const marker = "/storage/v1/object/public/"
+    const idx = parsed.pathname.indexOf(marker)
+    if (idx === -1) return null
+    const rest = parsed.pathname.slice(idx + marker.length)
+    const slash = rest.indexOf("/")
+    if (slash === -1) return null
+    return { bucket: rest.slice(0, slash), pathname: rest.slice(slash + 1) }
+  } catch {
+    return null
+  }
 }
