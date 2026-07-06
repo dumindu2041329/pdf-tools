@@ -94,7 +94,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
   const [dailyLimitOpen, setDailyLimitOpen] = useState(false)
   const [upgradeLoading, setUpgradeLoading] = useState(false)
   const [isUploadingForEditor, setIsUploadingForEditor] = useState(false)
-  const { state, process, reset } = useTool(tool.slug)
+  const { state, process, reset, cancel } = useTool(tool.slug)
   const isProcessingRef = useRef(false)
 
   // Reset loaded state when stepIndex changes to allow loading new step files
@@ -262,6 +262,13 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
     isProcessingRef.current = false
     setIsSavingAndRedirecting(false)
     reset()
+  }
+
+  const handleCancel = () => {
+    cancel()
+    setFiles([])
+    setOptions({})
+    isProcessingRef.current = false
   }
 
   const handleEditPdfNext = async () => {
@@ -856,11 +863,18 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
       )}
 
       <ProcessingModal
-        currentStep={isSavingAndRedirecting ? "done" : (isProcessing ? state.step : "start")}
-        uploadProgress={isProcessing ? state.uploadProgress : undefined}
-        uploadBytes={isProcessing ? state.uploadBytes : undefined}
-        serverProcessing={isProcessing ? state.serverProcessing : undefined}
-        isOpen={isProcessing || isSavingAndRedirecting}
+        open={isProcessing || isSavingAndRedirecting}
+        onClose={() => {
+          // The modal's auto-close timer and the backdrop click both
+          // land here. Cancellation goes through the modal's own
+          // cancel button (which calls `cancel()` directly), so this
+          // handler is only ever invoked when the work is already
+          // done — nothing to do.
+        }}
+        toolSlug={tool.slug}
+        toolName={tool.title}
+        state={isSavingAndRedirecting ? { status: "success" } as typeof state : state}
+        cancel={handleCancel}
       />
 
       <ConfirmDialog

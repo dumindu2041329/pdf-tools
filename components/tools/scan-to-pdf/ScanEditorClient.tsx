@@ -161,7 +161,23 @@ export function ScanEditorClient({ sessionId }: { sessionId: string }) {
   const [pendingDelete, setPendingDelete] = useState<EditorImage | null>(null)
   const [building, setBuilding] = useState(false)
 
-  const { state, process } = useTool("jpg-to-pdf")
+  const { state, process, cancel } = useTool("jpg-to-pdf")
+
+  const handleCancel = useCallback(async () => {
+    cancel()
+    if (validSession && sessionId) {
+      try {
+        await fetch(`/api/scan-session/${sessionId}`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ destroy: true }),
+        })
+      } catch {
+        // Best-effort — navigate regardless
+      }
+    }
+    router.push("/tools/scan-to-pdf")
+  }, [cancel, validSession, sessionId, router])
 
   const refresh = useCallback(async () => {
     if (!validSession) return
@@ -636,19 +652,16 @@ export function ScanEditorClient({ sessionId }: { sessionId: string }) {
       </div>
 
       <ProcessingModal
-        isOpen={state.status === "processing"}
-        currentStep={
-          state.status === "processing" ? state.step : "start"
-        }
-        uploadProgress={
-          state.status === "processing" ? state.uploadProgress : undefined
-        }
-        uploadBytes={
-          state.status === "processing" ? state.uploadBytes : undefined
-        }
-        serverProcessing={
-          state.status === "processing" ? state.serverProcessing : undefined
-        }
+        open={state.status === "processing"}
+        onClose={() => {
+          // Backdrop / auto-close — nothing to do here. Cancellation
+          // goes through the cancel button rendered inside the modal,
+          // which calls `cancel()` directly.
+        }}
+        toolSlug="scan-to-pdf"
+        toolName="Scan to PDF"
+        state={state}
+        cancel={handleCancel}
       />
 
       <ConfirmDialog

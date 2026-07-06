@@ -44,6 +44,18 @@ export interface DirectUploadOptions {
    * Override the content type. Defaults to `file.type`.
    */
   contentType?: string
+  /**
+   * Optional AbortSignal. When triggered, the in-flight XHR is
+   * cancelled and the upload resolves silently (no rejection) — the
+   * caller is expected to check `signal.aborted` afterwards and
+   * throw a regular `Error` if it wants to surface the cancellation.
+   *
+   * We deliberately avoid throwing a `DOMException` / `AbortError`
+   * here because Next.js's dev overlay flags those in the runtime
+   * error panel even when they're caught by the calling code, which
+   * makes a routine "user clicked cancel" look like a crash.
+   */
+  signal?: AbortSignal
 }
 
 export interface DirectUploadResult {
@@ -101,7 +113,17 @@ export async function uploadFileDirect(
   }
 
   const supabase = getSupabaseBrowser()
-  await uploadToSignedUrlWithProgress(supabase, bucket, path, token, file, contentType, options.onProgress)
+  await uploadToSignedUrlWithProgress(supabase, bucket, path, token, file, contentType, options.onProgress, options.signal)
+
+  // If the caller aborted during the upload we never want to hand back
+  // a public URL — the PUT may not have completed and the caller is
+  // about to issue a follow-up delete via `deleteFromStorageBrowser`
+  // for anything that did land. Throw a plain `Error` (not a
+  // DOMException) so Next.js's dev overlay doesn't flag it as a
+  // runtime exception.
+  if (options.signal?.aborted) {
+    throw new Error("Upload aborted")
+  }
 
   const { data: pub } = supabase.storage.from(bucket).getPublicUrl(path)
 
@@ -116,7 +138,16 @@ export async function uploadFileDirect(
 /**
  * Wraps `supabase.storage.from(bucket).uploadToSignedUrl(...)` with an
  * XMLHttpRequest so we can emit real byte progress (the SDK's helper
- * doesn't expose upload progress events).
+ * doesn't expose upload progress events). `signal` aborts the in-flight
+ * XHR (or the SDK's underlying fetch on the fast path) when triggered.
+ *
+ * Cancellation behaviour: this function does NOT throw on abort. The
+ * XHR's `abort` event resolves the promise silently, and the SDK
+ * race uses a non-rejecting sentinel. Callers must check
+ * `signal.aborted` after the call returns to know whether the upload
+ * actually completed. This keeps `DOMException`/`AbortError` out of
+ * the call path so Next.js's dev overlay doesn't surface it as a
+ * runtime exception.
  */
 async function uploadToSignedUrlWithProgress(
   supabase: ReturnType<typeof getSupabaseBrowser>,
@@ -125,15 +156,47 @@ async function uploadToSignedUrlWithProgress(
   token: string,
   file: File,
   contentType: string,
-  onProgress?: (loaded: number, total: number) => void
+  onProgress?: (loaded: number, total: number) => void,
+  signal?: AbortSignal
 ): Promise<void> {
+  if (signal?.aborted) {
+    return
+  }
   if (!onProgress) {
     // Fast path: SDK helper handles the PUT for us. The signature is
     // `(path, token, body, options)` — `token` is a separate positional
-    // arg, not part of the options object.
-    const { error } = await supabase.storage
+    // arg, not part of the options object. The SDK's `uploadToSignedUrl`
+    // doesn't accept an AbortSignal directly, so we race it against the
+    // signal. We resolve the race on abort (rather than rejecting) so
+    // the cancel path doesn't surface a `DOMException`.
+    const uploadPromise = supabase.storage
       .from(bucket)
       .uploadToSignedUrl(path, token, file, { contentType })
+    if (signal) {
+      type RaceResult =
+        | { kind: "aborted" }
+        | { kind: "upload"; result: Awaited<typeof uploadPromise> }
+      const aborted = new Promise<RaceResult>((resolve) => {
+        signal.addEventListener(
+          "abort",
+          () => resolve({ kind: "aborted" }),
+          { once: true }
+        )
+      })
+      const result = await Promise.race<RaceResult>([
+        uploadPromise.then((r) => ({ kind: "upload" as const, result: r })),
+        aborted,
+      ])
+      if (result.kind === "aborted") {
+        return
+      }
+      if (result.result.error) {
+        if (signal.aborted) return
+        throw new Error(result.result.error.message)
+      }
+      return
+    }
+    const { error } = await uploadPromise
     if (error) throw new Error(error.message)
     return
   }
@@ -159,6 +222,10 @@ async function uploadToSignedUrlWithProgress(
   const url = `${supabaseUrl}/storage/v1/object/upload/sign/${bucket}/${encodedPath}?token=${encodeURIComponent(token)}`
 
   await new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      resolve()
+      return
+    }
     const xhr = new XMLHttpRequest()
     xhr.open("PUT", url)
     xhr.setRequestHeader("Content-Type", contentType)
@@ -179,7 +246,17 @@ async function uploadToSignedUrlWithProgress(
       }
     })
     xhr.addEventListener("error", () => reject(new Error("Network error during upload")))
-    xhr.addEventListener("abort", () => reject(new Error("Upload aborted")))
+    // On abort, resolve silently rather than reject with a DOMException
+    // — see the comment on `DirectUploadOptions.signal` for why we
+    // avoid surfacing AbortError to the dev overlay.
+    xhr.addEventListener("abort", () => resolve())
+    signal?.addEventListener(
+      "abort",
+      () => {
+        xhr.abort()
+      },
+      { once: true }
+    )
     xhr.send(file)
   })
 }

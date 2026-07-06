@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, useRef } from "react"
 import { toast } from "sonner"
 import type { ProcessingStep } from "@/components/tools/ProcessingModal"
 import { recordActivity } from "@/lib/activityStore"
@@ -46,13 +46,6 @@ export type ToolState =
       step: ProcessingStep
       uploadProgress?: number
       uploadBytes?: UploadProgress
-      /**
-       * True when the browser-to-server upload (XHR) is finished but the
-       * server has not yet responded. During this window the server is
-       * forwarding the file to iLoveAPI/Adobe, so the progress bar should
-       * show an indeterminate animation rather than a static 100%.
-       */
-      serverProcessing?: boolean
     }
   | { status: "success"; downloadUrl: string; filename: string; processingTime: string; outputSize: number }
   | { status: "validation-success"; message: string; result?: string; processingTime: string }
@@ -78,13 +71,27 @@ interface UploadResult {
  * events (the `fetch` API does not expose upload progress). Returns an
  * object with the same surface as `Response.ok` / `Response.json()` so
  * the rest of the flow is unchanged.
+ *
+ * When `signal` is provided, triggering it aborts the in-flight XHR
+ * and this resolves with a synthetic `{ ok: false, status: 0 }` so
+ * callers can detect the cancellation without us throwing a
+ * `DOMException`/`AbortError` (which Next.js's dev overlay surfaces
+ * in the runtime-error panel even when it's caught). Callers that
+ * need a hard "this was cancelled" signal should also check
+ * `signal.aborted` after the call returns.
  */
 function uploadWithProgress(
   url: string,
   formData: FormData,
-  onProgress: (percent: number, loaded: number, total: number) => void
+  onProgress: (percent: number, loaded: number, total: number) => void,
+  signal?: AbortSignal,
+  onUploadBodySent?: () => void
 ): Promise<UploadResult> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      resolve({ ok: false, status: 0, json: () => ({}) })
+      return
+    }
     const xhr = new XMLHttpRequest()
     xhr.open("POST", url)
     xhr.upload.addEventListener("progress", (e) => {
@@ -93,6 +100,14 @@ function uploadWithProgress(
         onProgress(percent, e.loaded, e.total)
       }
     })
+    // Fires when the request body is fully sent — the server is now
+    // processing but hasn't responded yet. This is the right moment to
+    // transition the UI from "uploading" to "processing".
+    if (onUploadBodySent) {
+      xhr.upload.addEventListener("load", () => {
+        if (!signal?.aborted) onUploadBodySent()
+      })
+    }
     xhr.addEventListener("load", () => {
       resolve({
         ok: xhr.status >= 200 && xhr.status < 300,
@@ -107,7 +122,16 @@ function uploadWithProgress(
       })
     })
     xhr.addEventListener("error", () => reject(new Error("Network error")))
-    xhr.addEventListener("abort", () => reject(new Error("Aborted")))
+    xhr.addEventListener("abort", () => {
+      resolve({ ok: false, status: 0, json: () => ({}) })
+    })
+    signal?.addEventListener(
+      "abort",
+      () => {
+        xhr.abort()
+      },
+      { once: true }
+    )
     xhr.send(formData)
   })
 }
@@ -127,11 +151,19 @@ interface BuildUploadPayloadArgs {
  * Storage is deleted before the error re-throws — otherwise a partially
  * uploaded batch would leak storage objects (the server only cleans up
  * URLs it sees in the eventual `/api/tools/[tool]` request).
+ *
+ * `signal` aborts each in-flight upload as soon as it's triggered.
+ * On abort the function stops uploading further files, runs the
+ * same cleanup it runs on a genuine failure, and re-throws a plain
+ * `Error("Upload aborted")` — we deliberately do NOT throw a
+ * `DOMException` here, because Next.js's dev overlay surfaces those
+ * in the runtime-error panel even when the calling code catches them.
  */
 async function uploadLargeFilesToStorage(
   files: File[],
   watermarkImage: File | undefined,
-  onFileProgress: (file: File, loaded: number, total: number) => void
+  onFileProgress: (file: File, loaded: number, total: number) => void,
+  signal?: AbortSignal
 ): Promise<{
   blobUploads: Array<{ file: File; url: string; pathname: string }>
   watermarkBlobUpload: { url: string; filename: string } | undefined
@@ -140,20 +172,33 @@ async function uploadLargeFilesToStorage(
   let watermarkBlobUpload: { url: string; filename: string } | undefined
   try {
     for (const file of files) {
+      if (signal?.aborted) break
       if (!shouldUseDirectUpload(file)) continue
       const result = await uploadFileDirect(file, {
         onProgress: (loaded, total) => onFileProgress(file, loaded, total),
+        signal,
       })
+      if (signal?.aborted) break
       blobUploads.push({ file, url: result.url, pathname: result.pathname })
     }
 
     if (watermarkImage && shouldUseDirectUpload(watermarkImage)) {
+      if (signal?.aborted) {
+        throw new Error("Upload aborted")
+      }
       const result = await uploadFileDirect(watermarkImage, {
         onProgress: (loaded, total) => onFileProgress(watermarkImage, loaded, total),
+        signal,
       })
+      if (signal?.aborted) {
+        throw new Error("Upload aborted")
+      }
       watermarkBlobUpload = { url: result.url, filename: watermarkImage.name }
     }
 
+    if (signal?.aborted) {
+      throw new Error("Upload aborted")
+    }
     return { blobUploads, watermarkBlobUpload }
   } catch (err) {
     // Best-effort cleanup of anything that already landed in Storage
@@ -185,6 +230,25 @@ async function cleanupDirectUploads(
   ]
   if (urls.length === 0) return
   await Promise.allSettled(urls.map((url) => deleteFromStorageBrowser(url)))
+}
+
+/**
+ * Detects whether a caught error came from the user clicking Cancel.
+ * We check `signal?.aborted` first because it's the most reliable
+ * signal — the upload helpers deliberately throw plain `Error`s (not
+ * `DOMException`s) to avoid the Next.js dev overlay surfacing them,
+ * so we can't rely on `err.name === "AbortError"`.
+ *
+ * The `err` fallback exists for paths where we don't have a signal
+ * in scope (e.g. a race that didn't have one wired up) — it matches
+ * the messages we throw from the upload helpers.
+ */
+function isAbortError(err: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true
+  if (typeof err !== "object" || err === null) return false
+  if ((err as { name?: string }).name === "AbortError") return true
+  const msg = (err as { message?: string }).message
+  return msg === "Aborted" || msg === "Upload aborted"
 }
 
 /**
@@ -243,6 +307,10 @@ function buildUploadPayload({
 
 export function useTool(toolSlug: string) {
   const [state, setState] = useState<ToolState>({ status: "idle" })
+  // Tracks the AbortController for the in-flight run so the cancel button
+  // (rendered by ProcessingModal) can abort it. We keep this in a ref so
+  // the cancel handler is stable across renders.
+  const abortRef = useRef<AbortController | null>(null)
 
   const process = useCallback(
     async (files: File[], options: Record<string, unknown> = {}) => {
@@ -254,6 +322,15 @@ export function useTool(toolSlug: string) {
       // Step 1: "Connecting to server..."
       setState({ status: "processing", step: "start" })
       await delay(STEP_DELAY_START_MS)
+
+      // Create the abort controller for this run and stash it on the ref
+      // so the cancel handler can abort the in-flight XHR(s) and Supabase
+      // SDK calls. We always install a fresh controller — a previous
+      // run's controller (if any) was either already settled or is now
+      // stale.
+      const abortController = new AbortController()
+      abortRef.current = abortController
+      const { signal } = abortController
 
       // Handle watermark image separately since File objects can't be JSON stringified
       let watermarkImage: File | undefined
@@ -300,13 +377,26 @@ export function useTool(toolSlug: string) {
             uploadBytes: { loaded: combinedLoaded, total: totalBytes },
           })
         }
-        const result = await uploadLargeFilesToStorage(
-          files,
-          watermarkImage,
-          onFileProgress
-        )
-        directUploads = result.blobUploads
-        watermarkDirectUpload = result.watermarkBlobUpload
+        try {
+          const result = await uploadLargeFilesToStorage(
+            files,
+            watermarkImage,
+            onFileProgress,
+            signal
+          )
+          directUploads = result.blobUploads
+          watermarkDirectUpload = result.watermarkBlobUpload
+        } catch (err) {
+          if (isAbortError(err, signal)) {
+            return
+          }
+          setState({
+            status: "error",
+            message: err instanceof Error ? err.message : "Failed to upload files. Please try again.",
+            retryable: true,
+          })
+          return
+        }
       }
 
       // Build the multipart payload. Files that took the Storage path are
@@ -314,15 +404,11 @@ export function useTool(toolSlug: string) {
       // instead. The server route re-hydrates them with `downloadFromStorage`.
       const onUploadProgress = (percent: number, loaded: number, total: number) => {
         const safeTotal = total > 0 ? total : loaded
-        // Once we've sent every byte we own, mark serverProcessing so the UI
-        // shows the indeterminate pulse while the server forwards to iLoveAPI.
-        const serverProcessing = total > 0 && loaded >= total
         setState({
           status: "processing",
           step: "upload",
           uploadProgress: percent,
           uploadBytes: { loaded, total: safeTotal },
-          serverProcessing,
         })
       }
 
@@ -397,6 +483,11 @@ export function useTool(toolSlug: string) {
           postActivity(toolSlug, result.downloadFilename, blob.size)
           return;
         } catch (err) {
+          if (isAbortError(err, signal)) {
+            // Cancelled by the user — the catch in the outer try/catch
+            // already ran the cleanup, so just bail.
+            return
+          }
           console.error("Local split error:", err);
           await cleanupDirectUploads(directUploads, watermarkDirectUpload)
           setState({ status: "error", message: "Failed to process PDF locally. Error: " + (err as Error).message, retryable: true });
@@ -448,6 +539,9 @@ export function useTool(toolSlug: string) {
           postActivity(toolSlug, result.downloadFilename, blob.size)
           return;
         } catch (err) {
+          if (isAbortError(err, signal)) {
+            return
+          }
           console.error("Local merge error:", err);
           await cleanupDirectUploads(directUploads, watermarkDirectUpload)
           setState({ status: "error", message: "Failed to merge PDFs locally. Error: " + (err as Error).message, retryable: true });
@@ -467,8 +561,22 @@ export function useTool(toolSlug: string) {
         const response = await uploadWithProgress(
           `/api/tools/${toolSlug}`,
           form,
-          onUploadProgress
+          onUploadProgress,
+          signal,
+          () => setState({ status: "processing", step: "process" })
         )
+
+        // `uploadWithProgress` resolves with `{ ok: false, status: 0 }`
+        // when the XHR was aborted (rather than rejecting, so the
+        // dev overlay doesn't flag it as a runtime exception). Detect
+        // that here so the error-toast path below doesn't fire.
+        if (signal.aborted || response.status === 0) {
+          // The server never saw the request, so its `finally`
+          // cleanup never ran. Release the direct-uploaded objects
+          // before bailing.
+          await cleanupDirectUploads(directUploads, watermarkDirectUpload)
+          return
+        }
 
         // Step 3: "Processing with iLoveAPI..." — server has acknowledged the
         // upload, so the file is actually on the server now. Move instantly.
@@ -559,6 +667,14 @@ export function useTool(toolSlug: string) {
         // We only update the local activity feed here.
         recordActivity(toolSlug, data.filename || "output.pdf", Number(data.outputSize || 0))
       } catch (err) {
+        if (isAbortError(err, signal)) {
+          // Cancellation: cleanup already happened in the inner try
+          // (the upload was either aborted mid-flight or any partial
+          // Supabase objects were deleted in the catch). Just reset
+          // to idle silently — the cancel button gave the user the
+          // feedback they needed.
+          return
+        }
         // Release any direct-uploaded Storage objects before surfacing
         // the error — on a network blip the server never saw the URLs
         // and so its own cleanup (in the /api/tools/[tool] `finally`)
@@ -571,6 +687,26 @@ export function useTool(toolSlug: string) {
   )
 
   const reset = useCallback(() => setState({ status: "idle" }), [])
+
+  /**
+   * Aborts the in-flight run (if any). Triggered by the cancel button
+   * in `ProcessingModal`. The AbortController rejects the XHR(s) with
+   * an `AbortError`, the `isAbortError` checks in the catch blocks
+   * swallow it silently, and any direct-uploaded Supabase objects
+   * are released by the surrounding `try/catch`'s cleanup path.
+   *
+   * Safe to call when nothing is in flight (no-op).
+   */
+  const cancel = useCallback(() => {
+    if (abortRef.current) {
+      abortRef.current.abort()
+      abortRef.current = null
+    }
+    // Reset to idle immediately so the modal closes; the rejected
+    // promises that propagate up will see `isAbortError` and bail
+    // without re-setting state.
+    setState({ status: "idle" })
+  }, [])
 
   const forceSuccess = useCallback((file: File) => {
     const downloadUrl = URL.createObjectURL(file)
@@ -585,5 +721,5 @@ export function useTool(toolSlug: string) {
     postActivity(toolSlug, file.name, file.size)
   }, [toolSlug])
 
-  return { state, process, reset, forceSuccess }
+  return { state, process, reset, forceSuccess, cancel }
 }
