@@ -366,14 +366,14 @@ Vercel's serverless functions (and many similar hosts) truncate request bodies a
 
 #### Buckets & RLS
 
-Both buckets are **public** (the `public` flag is set on `storage.buckets`), so reads via the public object URL work without any RLS policy — there is no SELECT policy on `storage.objects` for the `anon` or `authenticated` roles. This avoids the Supabase advisor's "clients can list all files in this bucket" warning: the only way to enumerate filenames is to call `list()` from a server context, which the server does with the service role key.
+Both buckets are **public** (the `public` flag is set on `storage.buckets`), so reads via the public object URL work without any RLS policy. The `anon` and `authenticated` roles also have **SELECT** policies on `storage.objects` (scoped to each bucket via `bucket_id = 'pdf-uploads' | 'scan-sessions'`) so that server-side `list()` calls work even when the service role key isn't configured — this is required for the scan-session poll and cleanup endpoints. The Supabase advisor may flag a "clients can list all files in this bucket" warning, but object paths include unguessable random suffixes so enumeration is not a practical concern.
 
-The `anon` and `authenticated` roles do have **INSERT / UPDATE / DELETE** policies on `storage.objects`, each scoped to a specific bucket via `bucket_id = 'pdf-uploads' | 'scan-sessions'`. These are needed for:
+The `anon` and `authenticated` roles have **SELECT / INSERT / UPDATE / DELETE** policies on `storage.objects`, each scoped to a specific bucket via `bucket_id = 'pdf-uploads' | 'scan-sessions'`. These are needed for:
 
 - The browser's direct PUT to a signed upload URL (`uploadToSignedUrl`) — uses the anon key.
 - The browser's cleanup path (`deleteFromStorageBrowser` in `lib/supabase-upload.ts`) — also anon key, only fires for objects the client itself just uploaded.
 
-Object paths are unguessable (random suffixes appended to every leaf by `withRandomSuffix` in `app/api/upload/route.ts`). The server side always uses the service role key, so it can still `list()` and `remove()` for the scan-session poll and the post-processing cleanup even though anon can't.
+Object paths are unguessable (random suffixes appended to every leaf by `withRandomSuffix` in `app/api/upload/route.ts`). The server side always uses the service role key when available, so it can still `list()` and `remove()` for the scan-session poll and the post-processing cleanup bypassing RLS entirely. Even without the service role key (e.g. local dev), the anon key now works thanks to the SELECT/INSERT/UPDATE/DELETE policies on both buckets.
 
 ### Tool Pipeline
 1. `FileUploader` component accepts user files (drag-and-drop, sortable list, per-tool color coding)
@@ -637,7 +637,7 @@ type ToolState =
 - `STRIPE_PREMIUM_PRICE_ID` — Stripe price ID for the Premium plan ($20/month)
 - `STRIPE_WEBHOOK_SECRET` — Stripe webhook signing secret (for subscription lifecycle events)
 - `NEXT_PUBLIC_APP_URL` — Public app URL used to build Stripe `success_url` / `cancel_url` and the sitemap base (defaults to `http://localhost:3000` in dev, `https://pdftools.app` for the sitemap)
-- `SUPABASE_SERVICE_ROLE_KEY` — Supabase service role key (required in production). Used by `getSupabaseServer()` to bypass RLS for `list()` / `remove()` calls in the scan-session flow and the `/api/tools/[tool]` cleanup. Locally you can run without it (the anon key works for INSERT/UPDATE/DELETE) but the scan-session poll endpoint will fail because there is no SELECT policy for anon.
+- `SUPABASE_SERVICE_ROLE_KEY` — Supabase service role key (required in production). Used by `getSupabaseServer()` to bypass RLS for `list()` / `remove()` calls in the scan-session flow and the `/api/tools/[tool]` cleanup. Locally you can run without it (the anon key now works for SELECT/INSERT/UPDATE/DELETE thanks to RLS policies on both buckets).
 - `PDF_TO_WORD_PYTHON_BIN` / `PYTHON_BIN` — Optional Python interpreter override (legacy; the active `pdf-to-word` path uses Adobe, but the variable is still honored by `getPythonCandidates()` for any future python-backed converter).
 
 ## Agent Rules

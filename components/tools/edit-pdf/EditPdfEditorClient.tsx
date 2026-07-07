@@ -14,6 +14,7 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  Droplet,
   Hand,
   Highlighter,
   Image as ImageIcon,
@@ -70,6 +71,7 @@ interface TextStyle {
   color: string
   highlightColor: string
   textAlign: "left" | "center" | "right"
+  opacity: number
 }
 
 const DEFAULT_TEXT_STYLE: TextStyle = {
@@ -81,6 +83,7 @@ const DEFAULT_TEXT_STYLE: TextStyle = {
   color: "#000000",
   highlightColor: "transparent",
   textAlign: "left",
+  opacity: 1,
 }
 
 function hexToRgbValues(hex: string): [number, number, number] {
@@ -140,6 +143,7 @@ interface TextAnnotation {
   color: string
   highlightColor: string
   textAlign: "left" | "center" | "right"
+  opacity: number
 }
 
 interface RenderedPage {
@@ -268,6 +272,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
         color: ann.color,
         highlightColor: ann.highlightColor,
         textAlign: ann.textAlign,
+        opacity: ann.opacity,
       }
     }
     return textStyle
@@ -494,7 +499,6 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     const text = draftText.trim()
     if (text.length === 0) {
       setDraftPosition(null)
-      setActiveTool("hand")
       return
     }
     setAnnotations((prev) => [
@@ -515,11 +519,11 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
         color: textStyle.color,
         highlightColor: textStyle.highlightColor,
         textAlign: textStyle.textAlign,
+        opacity: textStyle.opacity,
       },
     ])
     setDraftPosition(null)
     setDraftText("")
-    setActiveTool("hand")
   }, [draftPosition, draftText, textStyle])
 
   const removeAnnotation = useCallback((id: string) => {
@@ -552,6 +556,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
         color: textStyle.color,
         highlightColor: textStyle.highlightColor,
         textAlign: textStyle.textAlign,
+        opacity: textStyle.opacity,
       },
     ])
   }, [activeRenderedPage, currentPage, textStyle])
@@ -933,6 +938,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
           color: rgb(cr, cg, cb),
           maxWidth: pdfWidth,
           lineHeight: annotation.fontSize * 1.2,
+          opacity: annotation.opacity,
         })
 
         if (annotation.underline) {
@@ -943,6 +949,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
             end: { x: pdfX + effectiveWidth, y: pdfY - 2 },
             thickness: 0.5,
             color: rgb(cr, cg, cb),
+            opacity: annotation.opacity,
           })
         }
       }
@@ -1374,45 +1381,47 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
 
           <div className="mx-1 h-6 w-px shrink-0 bg-border" />
 
-          {/* Fit to width */}
-          <button
-            type="button"
-            onClick={fitToWidth}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            title="Fit to width"
-          >
-            <Maximize2 className="h-4 w-4" />
-          </button>
-
-          {/* Zoom dropdown */}
-          <div className="relative">
-            <button
-              type="button"
-              data-dropdown-toggle="subZoom"
-              onClick={() => setOpenDropdown(openDropdown === "subZoom" ? null : "subZoom")}
-              className="flex h-8 items-center gap-1 rounded border border-border bg-background px-2 text-sm tabular-nums text-foreground hover:bg-accent"
-              style={{ minWidth: 64 }}
-            >
-              <span>{zoom}%</span>
-              <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
-            </button>
-            {openDropdown === "subZoom" && (
-              <div data-dropdown="subZoom" className="absolute right-0 top-full z-50 mt-1 min-w-[80px] rounded-md border border-border bg-popover p-1 shadow-lg">
-                {[25, 50, 75, 100, 125, 150, 200, 300].map((z) => (
-                  <button
-                    key={z}
-                    type="button"
-                    onClick={() => { setZoom(z); setZoomInitialized(true); setOpenDropdown(null) }}
-                    className={cn(
-                      "flex w-full items-center rounded px-2 py-1 text-sm tabular-nums hover:bg-accent",
-                      zoom === z && "bg-accent font-medium"
-                    )}
-                  >
-                    {z}%
-                  </button>
-                ))}
-              </div>
-            )}
+          {/* Opacity */}
+          <div className="flex items-center gap-1.5">
+            <Droplet
+              className="h-4 w-4 shrink-0 text-muted-foreground"
+              style={{ opacity: activeStyle.opacity }}
+              aria-hidden
+            />
+            <div className="relative">
+              <button
+                type="button"
+                data-dropdown-toggle="subOpacity"
+                onClick={() => setOpenDropdown(openDropdown === "subOpacity" ? null : "subOpacity")}
+                className="flex h-8 items-center gap-1 rounded border border-border bg-background px-2 text-sm tabular-nums text-foreground hover:bg-accent"
+                style={{ minWidth: 60 }}
+                title="Opacity"
+              >
+                <span>{Math.round(activeStyle.opacity * 100)}%</span>
+                <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+              </button>
+              {openDropdown === "subOpacity" && (
+                <div data-dropdown="subOpacity" className="absolute left-0 top-full z-50 mt-1 min-w-[80px] rounded-md border border-border bg-popover p-1 shadow-lg">
+                  {[1, 0.75, 0.5, 0.25, 0].map((o) => {
+                    const pct = Math.round(o * 100)
+                    const isActive = Math.abs(activeStyle.opacity - o) < 0.001
+                    return (
+                      <button
+                        key={pct}
+                        type="button"
+                        onClick={() => { updateStyle({ opacity: o }); setOpenDropdown(null) }}
+                        className={cn(
+                          "flex w-full items-center rounded px-2 py-1 text-sm tabular-nums hover:bg-accent",
+                          isActive && "bg-accent font-medium"
+                        )}
+                      >
+                        {pct}%
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="mx-1 h-6 w-px shrink-0 bg-border" />
@@ -1620,6 +1629,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                                   fontStyle: annotation.italic ? "italic" : "normal",
                                   color: annotation.color,
                                   textAlign: annotation.textAlign,
+                                  opacity: annotation.opacity,
                                 }}
                               >
                                 {annotation.text}
