@@ -48,8 +48,11 @@ let browserClient: SupabaseClient | null = null
  * server-side list/delete operations bypass RLS, but falls back to the
  * anon key when the service role key isn't configured (e.g. local dev
  * before the secret is wired up). RLS policies on the public buckets
- * grant the anon role read/write/delete access, so the fallback still
- * works for the workflows we have today.
+ * grant the anon role write access (INSERT/UPDATE/DELETE on
+ * `storage.objects` scoped to the two buckets), but there is no SELECT
+ * policy for anon — public reads are served directly by the bucket's
+ * public flag via the object URL, and any server-side `list()` call
+ * therefore requires the service role key.
  */
 export function getSupabaseServer(): SupabaseClient {
   if (serverClient) return serverClient

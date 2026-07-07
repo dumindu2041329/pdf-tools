@@ -10,9 +10,10 @@ import {
   ALargeSmall,
   ArrowLeft,
   ArrowRightCircle,
+  Ban,
+  Check,
   ChevronDown,
   ChevronUp,
-  Crown,
   Hand,
   Highlighter,
   Image as ImageIcon,
@@ -44,11 +45,14 @@ const RENDER_SCALE = 1.4
 
 const FONT_FAMILIES = [
   { label: "Arial", value: "Arial", css: "Arial, Helvetica, sans-serif" },
+  { label: "Arial Unicode MS", value: "Arial Unicode MS", css: "'Arial Unicode MS', Arial, Helvetica, sans-serif" },
+  { label: "Verdana", value: "Verdana", css: "Verdana, Geneva, sans-serif" },
+  { label: "Courier", value: "Courier", css: "Courier, 'Courier New', monospace" },
+  { label: "Comic Sans MS", value: "Comic Sans MS", css: "'Comic Sans MS', 'Comic Sans', cursive" },
   { label: "Times New Roman", value: "Times New Roman", css: "'Times New Roman', Times, serif" },
-  { label: "Courier New", value: "Courier New", css: "'Courier New', Courier, monospace" },
 ]
 
-const FONT_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 64, 72, 96]
+const FONT_SIZES = [4, 6, 8, 10, 12, 14, 18, 24, 36, 48, 64, 72, 96, 144, 192, 200]
 
 const COLOR_PALETTE = [
   "#000000", "#434343", "#666666", "#999999", "#b7b7b7",
@@ -96,7 +100,7 @@ function getPdfFontName(fontFamily: string, bold: boolean, italic: boolean): str
     if (italic) return StandardFonts.TimesRomanItalic
     return StandardFonts.TimesRoman
   }
-  if (fontFamily === "Courier New") {
+  if (fontFamily === "Courier") {
     if (bold && italic) return StandardFonts.CourierBoldOblique
     if (bold) return StandardFonts.CourierBold
     if (italic) return StandardFonts.CourierOblique
@@ -209,6 +213,10 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null)
   const [textStyle, setTextStyle] = useState<TextStyle>(DEFAULT_TEXT_STYLE)
   const [openDropdown, setOpenDropdown] = useState<string | null>(null)
+  const [hexTextColor, setHexTextColor] = useState(textStyle.color.replace("#", ""))
+  const [hexHighlightColor, setHexHighlightColor] = useState(
+    textStyle.highlightColor === "transparent" ? "" : textStyle.highlightColor.replace("#", "")
+  )
   const subToolbarRef = useRef<HTMLDivElement | null>(null)
   const resizeStateRef = useRef<{
     annotationId: string
@@ -313,17 +321,28 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     }
   }, [fileUrl])
 
-  // Close sub-toolbar dropdowns when clicking outside.
+  // Close sub-toolbar dropdowns when clicking outside the open dropdown panel.
   useEffect(() => {
     if (!openDropdown) return
     const handleClick = (e: MouseEvent) => {
-      if (subToolbarRef.current && !subToolbarRef.current.contains(e.target as Node)) {
-        setOpenDropdown(null)
-      }
+      const target = e.target as Node
+      const panel = subToolbarRef.current?.querySelector(`[data-dropdown="${openDropdown}"]`)
+      if (panel && panel.contains(target)) return
+      const toggle = subToolbarRef.current?.querySelector(`[data-dropdown-toggle="${openDropdown}"]`)
+      if (toggle && toggle.contains(target)) return
+      setOpenDropdown(null)
     }
     document.addEventListener("mousedown", handleClick)
     return () => document.removeEventListener("mousedown", handleClick)
   }, [openDropdown])
+
+  useEffect(() => {
+    setHexTextColor(activeStyle.color.replace("#", ""))
+  }, [activeStyle.color])
+
+  useEffect(() => {
+    setHexHighlightColor(activeStyle.highlightColor === "transparent" ? "" : activeStyle.highlightColor.replace("#", ""))
+  }, [activeStyle.highlightColor])
 
   // 2. Render every page to a JPEG dataURL for the in-browser preview.
   useEffect(() => {
@@ -620,16 +639,16 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     setZoomInitialized(true)
   }, [])
 
-  // Ctrl + mouse wheel zooming on the canvas. The handler must live on
-  // `document` so it fires before the browser's native page-zoom kicks in.
-  // We only act when the pointer is inside the canvas scroll container.
+  // Ctrl + mouse wheel zooming on the canvas. The listener is attached to
+  // `document` so it fires before the browser's native page-zoom kicks in,
+  // and we read the current scroller at event time (not at registration
+  // time) because the canvas can be unmounted/remounted by the loading
+  // state during the component's lifetime.
   useEffect(() => {
-    const scroller = canvasScrollRef.current
-    if (!scroller) return
-
     const onWheel = (e: WheelEvent) => {
       if (!e.ctrlKey) return
-      if (!scroller.contains(e.target as Node)) return
+      const scroller = canvasScrollRef.current
+      if (!scroller || !scroller.contains(e.target as Node)) return
       e.preventDefault()
       e.stopPropagation()
       const delta = e.deltaY > 0 ? -10 : 10
@@ -1007,7 +1026,6 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
             >
               <ListFilter className="h-4 w-4" />
               Edit
-              <Crown className="h-3.5 w-3.5 text-amber-500" />
             </button>
           </div>
 
@@ -1056,6 +1074,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
           <div className="relative">
             <button
               type="button"
+              data-dropdown-toggle="font"
               onClick={() => setOpenDropdown(openDropdown === "font" ? null : "font")}
               className="flex h-8 items-center gap-1 rounded border border-border bg-background px-2 text-sm text-foreground hover:bg-accent"
               style={{ minWidth: 130 }}
@@ -1066,7 +1085,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
               <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
             </button>
             {openDropdown === "font" && (
-              <div className="absolute left-0 top-full z-50 mt-1 min-w-[170px] rounded-md border border-border bg-popover p-1 shadow-lg">
+              <div data-dropdown="font" className="absolute left-0 top-full z-50 mt-1 min-w-[170px] rounded-md border border-border bg-popover p-1 shadow-lg">
                 {FONT_FAMILIES.map((f) => (
                   <button
                     key={f.value}
@@ -1090,6 +1109,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
           <div className="relative">
             <button
               type="button"
+              data-dropdown-toggle="size"
               onClick={() => setOpenDropdown(openDropdown === "size" ? null : "size")}
               className="flex h-8 items-center gap-1 rounded border border-border bg-background px-2 text-sm tabular-nums text-foreground hover:bg-accent"
               style={{ minWidth: 56 }}
@@ -1098,7 +1118,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
               <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
             </button>
             {openDropdown === "size" && (
-              <div className="absolute left-0 top-full z-50 mt-1 max-h-52 min-w-[68px] overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-lg">
+              <div data-dropdown="size" className="absolute left-0 top-full z-50 mt-1 max-h-52 min-w-[68px] overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-lg">
                 {FONT_SIZES.map((s) => (
                   <button
                     key={s}
@@ -1167,32 +1187,58 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
           <div className="relative">
             <button
               type="button"
+              data-dropdown-toggle="textColor"
               onClick={() => setOpenDropdown(openDropdown === "textColor" ? null : "textColor")}
-              className="inline-flex h-8 shrink-0 items-center gap-0.5 rounded px-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              className="inline-flex h-8 shrink-0 cursor-pointer items-center gap-0.5 rounded px-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               title="Text color"
             >
               <div className="flex flex-col items-center">
-                <span className="text-sm font-bold leading-tight" style={{ color: activeStyle.color }}>A</span>
+                <span className="text-sm font-bold leading-tight">A</span>
                 <span className="-mt-0.5 block h-[3px] w-4 rounded-sm" style={{ backgroundColor: activeStyle.color }} />
               </div>
-              <ChevronDown className="h-3 w-3" />
             </button>
             {openDropdown === "textColor" && (
-              <div className="absolute left-0 top-full z-50 mt-1 rounded-md border border-border bg-popover p-2 shadow-lg">
-                <div className="grid grid-cols-10 gap-1">
+              <div data-dropdown="textColor" className="absolute left-0 top-full z-50 mt-1 w-[178px] rounded-md border border-border bg-popover p-2 shadow-lg">
+                <div className="grid grid-cols-5 gap-1.5">
                   {COLOR_PALETTE.map((c) => (
                     <button
                       key={c}
                       type="button"
                       onClick={() => { updateStyle({ color: c }); setOpenDropdown(null) }}
                       className={cn(
-                        "h-5 w-5 rounded-sm border transition-transform hover:scale-125",
-                        activeStyle.color === c ? "border-primary ring-1 ring-primary" : "border-border/60"
+                        "flex h-7 w-7 items-center justify-center rounded-full border transition-transform hover:scale-110",
+                        activeStyle.color.toLowerCase() === c.toLowerCase()
+                          ? "border-primary ring-2 ring-primary/30"
+                          : c === "#ffffff" ? "border-border" : "border-transparent"
                       )}
                       style={{ backgroundColor: c }}
                       title={c}
-                    />
+                    >
+                      {activeStyle.color.toLowerCase() === c.toLowerCase() && (
+                        <Check className={cn("h-3.5 w-3.5", c === "#ffffff" || c === "#f3f3f3" || c === "#efefef" || c === "#ffff00" || c === "#00ff00" || c === "#00ffff" ? "text-gray-800" : "text-white")} />
+                      )}
+                    </button>
                   ))}
+                </div>
+                <div className="mt-2 flex items-center gap-1.5 border-t border-border pt-2">
+                  <span className="text-xs text-muted-foreground">#</span>
+                  <input
+                    type="text"
+                    value={hexTextColor}
+                    onChange={(e) => {
+                      const v = e.target.value.replace(/[^0-9a-fA-F]/g, "").slice(0, 6)
+                      setHexTextColor(v)
+                      if (v.length === 6) updateStyle({ color: `#${v}` })
+                    }}
+                    onBlur={() => {
+                      if (hexTextColor.length === 6) updateStyle({ color: `#${hexTextColor}` })
+                      else setHexTextColor(activeStyle.color.replace("#", ""))
+                    }}
+                    className="h-7 w-full rounded border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none focus:ring-1 focus:ring-primary"
+                    maxLength={6}
+                    spellCheck={false}
+                  />
+                  <div className="h-6 w-6 shrink-0 rounded border border-border" style={{ backgroundColor: hexTextColor.length >= 3 ? `#${hexTextColor}` : activeStyle.color }} />
                 </div>
               </div>
             )}
@@ -1202,8 +1248,9 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
           <div className="relative">
             <button
               type="button"
-              onClick={() => setOpenDropdown(openDropdown === "highlight" ? null : "highlight")}
-              className="inline-flex h-8 shrink-0 items-center gap-0.5 rounded px-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              data-dropdown-toggle="highlightColor"
+              onClick={() => setOpenDropdown(openDropdown === "highlightColor" ? null : "highlightColor")}
+              className="inline-flex h-8 shrink-0 cursor-pointer items-center gap-0.5 rounded px-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               title="Highlight color"
             >
               <div className="flex flex-col items-center">
@@ -1215,34 +1262,64 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                   }}
                 />
               </div>
-              <ChevronDown className="h-3 w-3" />
             </button>
-            {openDropdown === "highlight" && (
-              <div className="absolute left-0 top-full z-50 mt-1 rounded-md border border-border bg-popover p-2 shadow-lg">
+            {openDropdown === "highlightColor" && (
+              <div data-dropdown="highlightColor" className="absolute left-0 top-full z-50 mt-1 w-[178px] rounded-md border border-border bg-popover p-2 shadow-lg">
                 <button
                   type="button"
                   onClick={() => { updateStyle({ highlightColor: "transparent" }); setOpenDropdown(null) }}
                   className={cn(
-                    "mb-1.5 flex w-full items-center rounded px-2 py-1 text-sm hover:bg-accent",
+                    "mb-1.5 flex w-full items-center gap-2 rounded px-2 py-1 text-xs transition-colors hover:bg-accent",
                     activeStyle.highlightColor === "transparent" && "bg-accent font-medium"
                   )}
                 >
+                  <Ban className="h-3.5 w-3.5 text-muted-foreground" />
                   No highlight
                 </button>
-                <div className="grid grid-cols-10 gap-1">
+                <div className="grid grid-cols-5 gap-1.5">
                   {COLOR_PALETTE.map((c) => (
                     <button
                       key={c}
                       type="button"
                       onClick={() => { updateStyle({ highlightColor: c }); setOpenDropdown(null) }}
                       className={cn(
-                        "h-5 w-5 rounded-sm border transition-transform hover:scale-125",
-                        activeStyle.highlightColor === c ? "border-primary ring-1 ring-primary" : "border-border/60"
+                        "flex h-7 w-7 items-center justify-center rounded-full border transition-transform hover:scale-110",
+                        activeStyle.highlightColor.toLowerCase() === c.toLowerCase()
+                          ? "border-primary ring-2 ring-primary/30"
+                          : c === "#ffffff" ? "border-border" : "border-transparent"
                       )}
                       style={{ backgroundColor: c }}
                       title={c}
-                    />
+                    >
+                      {activeStyle.highlightColor.toLowerCase() === c.toLowerCase() && (
+                        <Check className={cn("h-3.5 w-3.5", c === "#ffffff" || c === "#f3f3f3" || c === "#efefef" || c === "#ffff00" || c === "#00ff00" || c === "#00ffff" ? "text-gray-800" : "text-white")} />
+                      )}
+                    </button>
                   ))}
+                </div>
+                <div className="mt-2 flex items-center gap-1.5 border-t border-border pt-2">
+                  <span className="text-xs text-muted-foreground">#</span>
+                  <input
+                    type="text"
+                    value={hexHighlightColor}
+                    placeholder="custom"
+                    onChange={(e) => {
+                      const v = e.target.value.replace(/[^0-9a-fA-F]/g, "").slice(0, 6)
+                      setHexHighlightColor(v)
+                      if (v.length === 6) updateStyle({ highlightColor: `#${v}` })
+                    }}
+                    onBlur={() => {
+                      if (hexHighlightColor.length === 6) updateStyle({ highlightColor: `#${hexHighlightColor}` })
+                      else setHexHighlightColor(activeStyle.highlightColor === "transparent" ? "" : activeStyle.highlightColor.replace("#", ""))
+                    }}
+                    className="h-7 w-full rounded border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none focus:ring-1 focus:ring-primary"
+                    maxLength={6}
+                    spellCheck={false}
+                  />
+                  <div
+                    className="h-6 w-6 shrink-0 rounded border border-border"
+                    style={{ backgroundColor: hexHighlightColor.length >= 3 ? `#${hexHighlightColor}` : activeStyle.highlightColor === "transparent" ? "transparent" : activeStyle.highlightColor }}
+                  />
                 </div>
               </div>
             )}
@@ -1254,6 +1331,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
           <div className="relative">
             <button
               type="button"
+              data-dropdown-toggle="align"
               onClick={() => setOpenDropdown(openDropdown === "align" ? null : "align")}
               className="inline-flex h-8 shrink-0 items-center gap-0.5 rounded px-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               title="Text alignment"
@@ -1268,7 +1346,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
               <ChevronDown className="h-3 w-3" />
             </button>
             {openDropdown === "align" && (
-              <div className="absolute left-0 top-full z-50 mt-1 rounded-md border border-border bg-popover p-1 shadow-lg">
+              <div data-dropdown="align" className="absolute left-0 top-full z-50 mt-1 rounded-md border border-border bg-popover p-1 shadow-lg">
                 {([
                   { value: "left" as const, icon: AlignLeft, label: "Left" },
                   { value: "center" as const, icon: AlignCenter, label: "Center" },
@@ -1310,6 +1388,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
           <div className="relative">
             <button
               type="button"
+              data-dropdown-toggle="subZoom"
               onClick={() => setOpenDropdown(openDropdown === "subZoom" ? null : "subZoom")}
               className="flex h-8 items-center gap-1 rounded border border-border bg-background px-2 text-sm tabular-nums text-foreground hover:bg-accent"
               style={{ minWidth: 64 }}
@@ -1318,7 +1397,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
               <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
             </button>
             {openDropdown === "subZoom" && (
-              <div className="absolute right-0 top-full z-50 mt-1 min-w-[80px] rounded-md border border-border bg-popover p-1 shadow-lg">
+              <div data-dropdown="subZoom" className="absolute right-0 top-full z-50 mt-1 min-w-[80px] rounded-md border border-border bg-popover p-1 shadow-lg">
                 {[25, 50, 75, 100, 125, 150, 200, 300].map((z) => (
                   <button
                     key={z}

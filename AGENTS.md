@@ -366,7 +366,14 @@ Vercel's serverless functions (and many similar hosts) truncate request bodies a
 
 #### Buckets & RLS
 
-Both public buckets are created on first setup with permissive RLS policies for the `anon` and `authenticated` roles (SELECT / INSERT / UPDATE / DELETE on `storage.objects`). Object paths are unguessable (random suffixes appended to every leaf) so the broad policies are safe in practice. To tighten later, swap the policies for narrower ones (e.g. allow only INSERT under a specific prefix) and require a server-issued signed download URL for reads.
+Both buckets are **public** (the `public` flag is set on `storage.buckets`), so reads via the public object URL work without any RLS policy — there is no SELECT policy on `storage.objects` for the `anon` or `authenticated` roles. This avoids the Supabase advisor's "clients can list all files in this bucket" warning: the only way to enumerate filenames is to call `list()` from a server context, which the server does with the service role key.
+
+The `anon` and `authenticated` roles do have **INSERT / UPDATE / DELETE** policies on `storage.objects`, each scoped to a specific bucket via `bucket_id = 'pdf-uploads' | 'scan-sessions'`. These are needed for:
+
+- The browser's direct PUT to a signed upload URL (`uploadToSignedUrl`) — uses the anon key.
+- The browser's cleanup path (`deleteFromStorageBrowser` in `lib/supabase-upload.ts`) — also anon key, only fires for objects the client itself just uploaded.
+
+Object paths are unguessable (random suffixes appended to every leaf by `withRandomSuffix` in `app/api/upload/route.ts`). The server side always uses the service role key, so it can still `list()` and `remove()` for the scan-session poll and the post-processing cleanup even though anon can't.
 
 ### Tool Pipeline
 1. `FileUploader` component accepts user files (drag-and-drop, sortable list, per-tool color coding)
@@ -630,7 +637,7 @@ type ToolState =
 - `STRIPE_PREMIUM_PRICE_ID` — Stripe price ID for the Premium plan ($20/month)
 - `STRIPE_WEBHOOK_SECRET` — Stripe webhook signing secret (for subscription lifecycle events)
 - `NEXT_PUBLIC_APP_URL` — Public app URL used to build Stripe `success_url` / `cancel_url` and the sitemap base (defaults to `http://localhost:3000` in dev, `https://pdftools.app` for the sitemap)
-- `SUPABASE_SERVICE_ROLE_KEY` — Optional Supabase service role key. When unset, `lib/supabase.ts` falls back to the anon key for server-side operations (relying on RLS policies on the public buckets). Locally populate `.env.local` from the Supabase dashboard if you need to bypass RLS (e.g. to list objects across all sessions).
+- `SUPABASE_SERVICE_ROLE_KEY` — Supabase service role key (required in production). Used by `getSupabaseServer()` to bypass RLS for `list()` / `remove()` calls in the scan-session flow and the `/api/tools/[tool]` cleanup. Locally you can run without it (the anon key works for INSERT/UPDATE/DELETE) but the scan-session poll endpoint will fail because there is no SELECT policy for anon.
 - `PDF_TO_WORD_PYTHON_BIN` / `PYTHON_BIN` — Optional Python interpreter override (legacy; the active `pdf-to-word` path uses Adobe, but the variable is still honored by `getPythonCandidates()` for any future python-backed converter).
 
 ## Agent Rules

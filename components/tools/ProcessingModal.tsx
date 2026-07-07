@@ -70,6 +70,7 @@ export function ProcessingModal({ open, onClose, toolSlug, toolName, state, canc
   // subsequent successful run shows the normal copy.
   useEffect(() => {
     if (state.status === "processing" && state.step === "start") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setWasCancelled(false)
     }
   }, [state.status, state])
