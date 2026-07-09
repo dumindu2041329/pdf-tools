@@ -181,7 +181,10 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
   const [renderedPages, setRenderedPages] = useState<RenderedPage[]>([])
   const [isRendering, setIsRendering] = useState(false)
   const [annotations, setAnnotations] = useState<TextAnnotation[]>([])
-  const [activeTool, setActiveTool] = useState<ToolId>("hand")
+  // No tool is selected by default — the user has to click a tool icon
+  // (hand, text, …) to activate it. The icon only highlights after it's
+  // explicitly clicked.
+  const [activeTool, setActiveTool] = useState<ToolId | null>(null)
   const [draftText, setDraftText] = useState("")
   const [draftPosition, setDraftPosition] = useState<{ pageIndex: number; x: number; y: number } | null>(null)
   const [isSaving, setIsSaving] = useState(false)
@@ -215,6 +218,11 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
   // annotation is selected removes it (the document-level keydown
   // listener below does the actual removal).
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null)
+  // The annotation that's currently in inline-edit mode (contentEditable).
+  // When set, the visible text span becomes a contentEditable element so
+  // the user can type directly inside the textbox instead of a separate
+  // draft textarea.
+  const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null)
   const [textStyle, setTextStyle] = useState<TextStyle>(DEFAULT_TEXT_STYLE)
   const [openDropdown, setOpenDropdown] = useState<string | null>(null)
   const [hexTextColor, setHexTextColor] = useState(textStyle.color.replace("#", ""))
@@ -288,6 +296,23 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
       )
     }
   }, [selectedAnnotationId])
+
+  // Apply the current value in the hex text-color input to the active style.
+  // Guarded by length so partial input (e.g. "ab") doesn't break the colour.
+  const applyTextColor = useCallback(() => {
+    if (hexTextColor.length === 6) {
+      updateStyle({ color: `#${hexTextColor}` })
+    }
+  }, [hexTextColor, updateStyle])
+
+  // Same idea for the highlight colour input. The input may be empty
+  // (representing "no highlight") — when it's empty we don't touch the
+  // active style so the previous selection is preserved.
+  const applyHighlightColor = useCallback(() => {
+    if (hexHighlightColor.length === 6) {
+      updateStyle({ highlightColor: `#${hexHighlightColor}` })
+    }
+  }, [hexHighlightColor, updateStyle])
 
   const setPageRef = useCallback(
     (pageIndex: number) => (el: HTMLDivElement | null) => {
@@ -413,12 +438,37 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     setZoomInitialized(true)
   }, [activeRenderedPage, zoomInitialized])
 
-  // Focus the draft input as soon as it appears.
+  // Focus the draft input as soon as it appears and select its text so
+  // the user can immediately type to replace the placeholder value.
   useEffect(() => {
     if (draftPosition && draftInputRef.current) {
       draftInputRef.current.focus()
+      draftInputRef.current.select()
     }
   }, [draftPosition])
+
+  // When an annotation enters inline-edit mode, focus its visible text
+  // span and select all of its text so the user can immediately type to
+  // replace the placeholder. The element is looked up via the
+  // visibleTextRefs map populated by the span's ref callback.
+  useEffect(() => {
+    if (!editingAnnotationId) return
+    // Defer to the next frame so the contentEditable element has been
+    // mounted by the time we try to focus / select.
+    const raf = requestAnimationFrame(() => {
+      const el = visibleTextRefs.current.get(editingAnnotationId)
+      if (!el) return
+      el.focus()
+      const range = document.createRange()
+      range.selectNodeContents(el)
+      const sel = window.getSelection()
+      if (sel) {
+        sel.removeAllRanges()
+        sel.addRange(range)
+      }
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [editingAnnotationId])
 
   // Track which page is most visible in the scroll viewport and reflect it in
   // the page indicator. Uses the page whose center is closest to the viewport
@@ -472,26 +522,14 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     return () => scroller.removeEventListener("scroll", onScroll)
   }, [renderedPages, displayScale])
 
-  const handlePageClick = useCallback(
-    (event: React.MouseEvent<HTMLDivElement>, pageIndex: number) => {
-      if (activeTool !== "text") return
-      if (justCommittedRef.current) {
-        justCommittedRef.current = false
-        return
-      }
-      // Clicking the page background deselects any annotation so the next
-      // Delete press doesn't remove a box the user has moved away from.
-      setSelectedAnnotationId(null)
-      const rect = event.currentTarget.getBoundingClientRect()
-      // The container is displayed at `displayScale`; divide back out to
-      // recover coordinates in the RENDER_SCALE canvas space.
-      const x = (event.clientX - rect.left) / displayScale
-      const y = (event.clientY - rect.top) / displayScale
-      setDraftPosition({ pageIndex, x, y })
-      setDraftText("")
-    },
-    [activeTool, displayScale]
-  )
+  // Clicking on a page (or the canvas background) deselects the active
+  // annotation and clears any browser text selection so selected text
+  // inside a contentEditable textbox doesn't stay highlighted.
+  const handleCanvasDeselect = useCallback(() => {
+    setSelectedAnnotationId(null)
+    setEditingAnnotationId(null)
+    window.getSelection()?.removeAllRanges()
+  }, [])
 
   const commitDraft = useCallback(() => {
     if (!draftPosition) return
@@ -533,15 +571,18 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
 
   // Drop a placeholder text box at the center of the current page. Called
   // when the user activates the text tool so they always have something to
-  // drag or edit right away.
+  // drag, edit, or type into right away. The new annotation is auto-selected
+  // and put into inline-edit mode so the placeholder text is pre-selected
+  // and the user can immediately type to replace it.
   const insertPlaceholderAtCenter = useCallback(() => {
     if (!activeRenderedPage) return
     const pageWidth = activeRenderedPage.width
     const pageHeight = activeRenderedPage.height
+    const newId = crypto.randomUUID()
     setAnnotations((prev) => [
       ...prev,
       {
-        id: crypto.randomUUID(),
+        id: newId,
         pageIndex: currentPage - 1,
         x: pageWidth / 2,
         y: pageHeight / 2,
@@ -559,6 +600,8 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
         opacity: textStyle.opacity,
       },
     ])
+    setSelectedAnnotationId(newId)
+    setEditingAnnotationId(newId)
   }, [activeRenderedPage, currentPage, textStyle])
 
   // Mousedown on an annotation starts a drag. The document-level listeners
@@ -599,24 +642,28 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     []
   )
 
-  // Double-clicking an existing annotation moves it into the draft slot so
-  // the user can edit its text in place. On commit the draft becomes a new
-  // annotation at the same coordinates.
+  // Double-clicking an existing annotation puts it into inline-edit mode
+  // so the user can type directly inside the textbox to change its text.
   const startEditingAnnotation = useCallback(
     (id: string) => {
-      const annotation = annotations.find((a) => a.id === id)
-      if (!annotation) return
-      setActiveTool("text")
-      setAnnotations((prev) => prev.filter((a) => a.id !== id))
-      setDraftPosition({ pageIndex: annotation.pageIndex, x: annotation.x, y: annotation.y })
-      setDraftText(annotation.text)
+      setSelectedAnnotationId(id)
+      setEditingAnnotationId(id)
     },
-    [annotations]
+    []
   )
 
   const selectTool = useCallback((tool: (typeof TOOLBAR_TOOLS)[number]) => {
     if (!tool.ready) {
       toast.info(`${tool.label} is coming soon.`)
+      return
+    }
+    // Toggle behaviour: clicking the tool that's already active deactivates
+    // it (sets the active tool back to none). Otherwise we activate the
+    // freshly-clicked tool as before.
+    if (activeTool === tool.id) {
+      setActiveTool(null)
+      setDraftPosition(null)
+      wantPlaceholderRef.current = false
       return
     }
     setActiveTool(tool.id)
@@ -863,6 +910,10 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     annotations.forEach((annotation) => {
       if (autoFitDoneRef.current.has(annotation.id)) return
       if (resizingAnnotationId === annotation.id) return
+      // Skip empty annotations — fitting to a single space would shrink
+      // the box to almost nothing. The blur handler re-runs the auto-fit
+      // (by clearing `autoFitDoneRef`) once the user has typed something.
+      if (annotation.text === "") return
       autoFitDoneRef.current.add(annotation.id)
       const el = measureRefs.current.get(annotation.id)
       if (!el) return
@@ -1232,19 +1283,36 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                   <input
                     type="text"
                     value={hexTextColor}
+                    placeholder="000000"
                     onChange={(e) => {
                       const v = e.target.value.replace(/[^0-9a-fA-F]/g, "").slice(0, 6)
                       setHexTextColor(v)
-                      if (v.length === 6) updateStyle({ color: `#${v}` })
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault()
+                        applyTextColor()
+                      }
                     }}
                     onBlur={() => {
-                      if (hexTextColor.length === 6) updateStyle({ color: `#${hexTextColor}` })
-                      else setHexTextColor(activeStyle.color.replace("#", ""))
+                      if (hexTextColor.length !== 6) {
+                        setHexTextColor(activeStyle.color.replace("#", ""))
+                      }
                     }}
                     className="h-7 w-full rounded border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none focus:ring-1 focus:ring-primary"
                     maxLength={6}
                     spellCheck={false}
                   />
+                  <button
+                    type="button"
+                    onClick={applyTextColor}
+                    disabled={hexTextColor.length !== 6}
+                    className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-border bg-accent text-foreground transition-colors hover:bg-accent/80 disabled:cursor-not-allowed disabled:opacity-40"
+                    title="Apply color"
+                    aria-label="Apply color"
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                  </button>
                   <div className="h-6 w-6 shrink-0 rounded border border-border" style={{ backgroundColor: hexTextColor.length >= 3 ? `#${hexTextColor}` : activeStyle.color }} />
                 </div>
               </div>
@@ -1313,16 +1381,32 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                     onChange={(e) => {
                       const v = e.target.value.replace(/[^0-9a-fA-F]/g, "").slice(0, 6)
                       setHexHighlightColor(v)
-                      if (v.length === 6) updateStyle({ highlightColor: `#${v}` })
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault()
+                        applyHighlightColor()
+                      }
                     }}
                     onBlur={() => {
-                      if (hexHighlightColor.length === 6) updateStyle({ highlightColor: `#${hexHighlightColor}` })
-                      else setHexHighlightColor(activeStyle.highlightColor === "transparent" ? "" : activeStyle.highlightColor.replace("#", ""))
+                      if (hexHighlightColor.length !== 6) {
+                        setHexHighlightColor(activeStyle.highlightColor === "transparent" ? "" : activeStyle.highlightColor.replace("#", ""))
+                      }
                     }}
                     className="h-7 w-full rounded border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none focus:ring-1 focus:ring-primary"
                     maxLength={6}
                     spellCheck={false}
                   />
+                  <button
+                    type="button"
+                    onClick={applyHighlightColor}
+                    disabled={hexHighlightColor.length !== 6}
+                    className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-border bg-accent text-foreground transition-colors hover:bg-accent/80 disabled:cursor-not-allowed disabled:opacity-40"
+                    title="Apply color"
+                    aria-label="Apply color"
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                  </button>
                   <div
                     className="h-6 w-6 shrink-0 rounded border border-border"
                     style={{ backgroundColor: hexHighlightColor.length >= 3 ? `#${hexHighlightColor}` : activeStyle.highlightColor === "transparent" ? "transparent" : activeStyle.highlightColor }}
@@ -1493,6 +1577,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
         <div
           ref={canvasScrollRef}
           onMouseDown={handlePanStart}
+          onClick={handleCanvasDeselect}
           className={cn(
             "relative flex min-w-0 flex-1 overflow-auto bg-neutral-100 dark:bg-neutral-900",
             activeTool === "hand" && !isPanning && "cursor-grab",
@@ -1515,7 +1600,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                     <div
                       ref={setPageRef(page.pageIndex)}
                       data-page-index={page.pageIndex}
-                      onClick={(e) => handlePageClick(e, page.pageIndex)}
+                      onClick={handleCanvasDeselect}
                       className={cn(
                         "relative shrink-0 bg-white shadow-lg ring-1 ring-black/5",
                         activeTool === "text" && "cursor-crosshair",
@@ -1541,6 +1626,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                       {pageAnnotations.map((annotation) => {
                         const isDragging = draggingAnnotationId === annotation.id
                         const isSelected = selectedAnnotationId === annotation.id
+                        const isEditing = editingAnnotationId === annotation.id
                         const hs = 8
                         const hh = hs / 2
                         const handle = (dir: ResizeDirection, cursor: string, pos: React.CSSProperties) => (
@@ -1566,7 +1652,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                               cursor: isDragging ? "grabbing" : "move",
                             }}
                             className={cn(
-                              "group",
+                              "group hover:ring-2 hover:ring-primary hover:ring-offset-1",
                               isSelected && "ring-2 ring-primary ring-offset-1"
                             )}
                             onMouseDown={(e) => {
@@ -1608,18 +1694,58 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                             </span>
 
                             <div
-                              className="relative h-full w-full overflow-hidden border border-[#2563eb] px-1.5 py-0.5"
-                              style={{
-                                backgroundColor: annotation.highlightColor !== "transparent" ? annotation.highlightColor : undefined,
-                              }}
+                              className={cn(
+                                "relative h-full w-full px-1.5 py-0.5",
+                                isEditing ? "overflow-visible border-2 border-primary" : "overflow-hidden"
+                              )}
+                              style={{ textAlign: annotation.textAlign }}
                             >
                               <span
                                 ref={(el) => {
                                   if (el) visibleTextRefs.current.set(annotation.id, el)
                                   else visibleTextRefs.current.delete(annotation.id)
                                 }}
+                                contentEditable={isEditing}
+                                suppressContentEditableWarning
+                                spellCheck={false}
+                                onMouseDown={(e) => {
+                                  // While editing, clicks inside the text
+                                  // should position the caret — don't let
+                                  // them bubble up and start a drag.
+                                  if (isEditing) e.stopPropagation()
+                                }}
+                                onBlur={(e) => {
+                                  if (!isEditing) return
+                                  const newText = e.currentTarget.textContent ?? ""
+                                  // If the user dismissed the textbox without
+                                  // typing anything, drop it instead of
+                                  // leaving an empty annotation behind.
+                                  if (newText.trim().length === 0 && annotation.text === "") {
+                                    setAnnotations((prev) => prev.filter((a) => a.id !== annotation.id))
+                                    setSelectedAnnotationId((current) => (current === annotation.id ? null : current))
+                                    setEditingAnnotationId(null)
+                                    return
+                                  }
+                                  // Drop the auto-fit marker so the one-time
+                                  // useLayoutEffect re-fits the textbox to the
+                                  // new text on the next render.
+                                  autoFitDoneRef.current.delete(annotation.id)
+                                  setAnnotations((prev) =>
+                                    prev.map((a) =>
+                                      a.id === annotation.id ? { ...a, text: newText } : a
+                                    )
+                                  )
+                                  setEditingAnnotationId(null)
+                                }}
+                                onKeyDown={(e) => {
+                                  if (!isEditing) return
+                                  if (e.key === "Escape") {
+                                    e.preventDefault()
+                                    ;(e.currentTarget as HTMLElement).blur()
+                                  }
+                                }}
                                 className={cn(
-                                  "block w-full whitespace-pre-wrap break-words",
+                                  "whitespace-pre-wrap break-words outline-none",
                                   annotation.underline && "underline"
                                 )}
                                 style={{
@@ -1628,23 +1754,40 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                                   fontWeight: annotation.bold ? 700 : 400,
                                   fontStyle: annotation.italic ? "italic" : "normal",
                                   color: annotation.color,
-                                  textAlign: annotation.textAlign,
+                                  backgroundColor: annotation.highlightColor !== "transparent" ? annotation.highlightColor : undefined,
                                   opacity: annotation.opacity,
+                                  // `inline` + `box-decoration-break: clone`
+                                  // makes the highlight background wrap onto
+                                  // each line of text instead of stretching
+                                  // across the whole textbox width. The
+                                  // outer block-level wrapper above carries
+                                  // the `textAlign` style since alignment
+                                  // doesn't apply to inline elements.
+                                  display: "inline",
+                                  WebkitBoxDecorationBreak: "clone",
+                                  boxDecorationBreak: "clone",
                                 }}
                               >
                                 {annotation.text}
                               </span>
                             </div>
 
-                            {/* 8 resize handles */}
-                            {handle("top-left", "nwse-resize", { left: -hh, top: -hh })}
-                            {handle("top", "ns-resize", { left: "50%", top: -hh, transform: "translateX(-50%)" })}
-                            {handle("top-right", "nesw-resize", { right: -hh, top: -hh })}
-                            {handle("left", "ew-resize", { left: -hh, top: "50%", transform: "translateY(-50%)" })}
-                            {handle("right", "ew-resize", { right: -hh, top: "50%", transform: "translateY(-50%)" })}
-                            {handle("bottom-left", "nesw-resize", { left: -hh, bottom: -hh })}
-                            {handle("bottom", "ns-resize", { left: "50%", bottom: -hh, transform: "translateX(-50%)" })}
-                            {handle("bottom-right", "nwse-resize", { right: -hh, bottom: -hh })}
+                            {/* 8 resize handles — only shown when the
+                                annotation is the active selection so the
+                                canvas doesn't get cluttered with control
+                                dots for every textbox on the page. */}
+                            {isSelected && (
+                              <>
+                                {handle("top-left", "nwse-resize", { left: -hh, top: -hh })}
+                                {handle("top", "ns-resize", { left: "50%", top: -hh, transform: "translateX(-50%)" })}
+                                {handle("top-right", "nesw-resize", { right: -hh, top: -hh })}
+                                {handle("left", "ew-resize", { left: -hh, top: "50%", transform: "translateY(-50%)" })}
+                                {handle("right", "ew-resize", { right: -hh, top: "50%", transform: "translateY(-50%)" })}
+                                {handle("bottom-left", "nesw-resize", { left: -hh, bottom: -hh })}
+                                {handle("bottom", "ns-resize", { left: "50%", bottom: -hh, transform: "translateX(-50%)" })}
+                                {handle("bottom-right", "nwse-resize", { right: -hh, bottom: -hh })}
+                              </>
+                            )}
                           </div>
                         )
                       })}
