@@ -25,6 +25,8 @@ import {
   Minus,
   Pencil,
   Plus,
+  RotateCcw,
+  RotateCw,
   Settings,
   Shapes,
   SquarePen,
@@ -34,7 +36,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib"
+import { PDFDocument, StandardFonts, popGraphicsState, pushGraphicsState, rgb, rotateDegrees, translate } from "pdf-lib"
 import { deleteFromStorageBrowser } from "@/lib/supabase-upload"
 
 let pdfjsLib: typeof import("pdfjs-dist") | null = null
@@ -178,10 +180,10 @@ interface ImageAnnotation {
   y: number
   width: number
   height: number
-  // Base64 data URL of the uploaded image. Stored as-is in component
-  // state; on save we decode and pass the bytes to pdf-lib.
   src: string
   opacity: number
+  // Clockwise rotation applied visually via CSS and on save via pdf-lib graphics state
+  rotation: number
 }
 
 interface RenderedPage {
@@ -196,8 +198,7 @@ interface Props {
   filename: string
 }
 
-// The top-toolbar tools. Only "select" (hand) and "text" are wired to real
-// behaviour; the rest are visual placeholders that hint at what's coming.
+// Only "hand" and "text" are wired to real behaviour; the rest are placeholders
 type ToolId = "hand" | "text" | "image" | "draw" | "shape"
 
 type ResizeDirection = "top-left" | "top" | "top-right" | "left" | "right" | "bottom-left" | "bottom" | "bottom-right"
@@ -219,15 +220,8 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
   const [renderedPages, setRenderedPages] = useState<RenderedPage[]>([])
   const [isRendering, setIsRendering] = useState(false)
   const [annotations, setAnnotations] = useState<TextAnnotation[]>([])
-  // Image annotations live in a separate state from text annotations so
-  // that re-rendering the (potentially many) text boxes doesn't churn the
-  // image list. The two arrays are independent but share the same
-  // page / canvas coordinate system.
-  const [imageAnnotations, setImageAnnotations] = useState<ImageAnnotation[]>([])
-  // No tool is selected by default — the user has to click a tool icon
-  // (hand, text, …) to activate it. The icon only highlights after it's
-  // explicitly clicked.
-  const [activeTool, setActiveTool] = useState<ToolId | null>(null)
+const [imageAnnotations, setImageAnnotations] = useState<ImageAnnotation[]>([])
+const [activeTool, setActiveTool] = useState<ToolId | null>(null)
   const [draftText, setDraftText] = useState("")
   const [draftPosition, setDraftPosition] = useState<{ pageIndex: number; x: number; y: number } | null>(null)
   const [isSaving, setIsSaving] = useState(false)
@@ -237,17 +231,12 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
   const draftInputRef = useRef<HTMLTextAreaElement | null>(null)
   const justCommittedRef = useRef(false)
   const canvasScrollRef = useRef<HTMLDivElement | null>(null)
-  // Pan bookkeeping for the hand tool. Stored in a ref so mousemove updates
-  // don't re-render the editor on every frame.
   const panStateRef = useRef<{
     startX: number
     startY: number
     startScrollLeft: number
     startScrollTop: number
   } | null>(null)
-  // Drag bookkeeping for text annotation boxes. Same rationale as
-  // panStateRef — a ref keeps the mousemove handler from re-rendering the
-  // canvas on every pointer move.
   const [draggingAnnotationId, setDraggingAnnotationId] = useState<string | null>(null)
   const dragStateRef = useRef<{
     annotationId: string
@@ -257,9 +246,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     startAnnotationY: number
   } | null>(null)
   const [resizingAnnotationId, setResizingAnnotationId] = useState<string | null>(null)
-  // The annotation the user has clicked. Pressing the Delete key while an
-  // annotation is selected removes it (the document-level keydown
-  // listener below does the actual removal).
+  // Pressing Delete while an annotation is selected removes it
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null)
   // The annotation that's currently in inline-edit mode (contentEditable).
   // When set, the visible text span becomes a contentEditable element so
@@ -283,16 +270,10 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     startX: number
     startY: number
   } | null>(null)
-  // Image annotation state. selectedImageId is the currently focused image
-  // (drives the ring + resize handles); the dragging/resizing ids mirror
-  // the text annotation equivalents and are read by document-level
-  // mousemove handlers.
+  // selectedImageId drives the ring + resize handles for image annotations
   const [selectedImageId, setSelectedImageId] = useState<string | null>(null)
   const [draggingImageId, setDraggingImageId] = useState<string | null>(null)
   const [resizingImageId, setResizingImageId] = useState<string | null>(null)
-  // Hidden <input type="file"> used to open the native file picker when
-  // the user activates the image tool. Kept in the DOM (display:none)
-  // so we can trigger .click() programmatically.
   const imageInputRef = useRef<HTMLInputElement | null>(null)
   const imageDragStateRef = useRef<{
     annotationId: string
@@ -310,35 +291,19 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     startHeight: number
     startX: number
     startY: number
-    // Locked aspect ratio captured at mousedown so the image keeps its
-    // proportions while the user drags a corner handle.
     aspectRatio: number
   } | null>(null)
-  // Set when the user activates the text tool. The placeholder is dropped
-  // in a useEffect below so we still insert it if the page wasn't rendered
-  // yet at the moment the user clicked the tool.
+  // Queued by the text tool; the placeholder is dropped once the page renders
   const wantPlaceholderRef = useRef(false)
-  // Same idea for the image tool: set only when the user explicitly
-  // clicks the image tool button. Selecting an existing image on the
-  // page also sets activeTool to "image" (so the icon highlights) but
-  // must NOT pop the file picker over what the user is doing — only an
-  // explicit tool activation should do that.
+  // Guards the file picker: only an explicit tool-button click pops it,
+  // not selecting an existing image (which also sets activeTool="image")
   const wantImagePickerRef = useRef(false)
-  // Hidden measurement spans — one per annotation. The auto-fit helpers
-  // read offsetWidth/offsetHeight to size the wrapper to the text's
-  // natural rendered size.
+  // Measurement spans used by auto-fit to read natural text size
   const measureRefs = useRef<Map<string, HTMLSpanElement>>(new Map())
-  // Refs to the visible text spans. Used by the resize onUp handler to
-  // measure the wrapped text height at the current width and snap the
-  // annotation's height back to fit the content.
+  // Used by resize onUp to snap height to wrapped text content
   const visibleTextRefs = useRef<Map<string, HTMLSpanElement>>(new Map())
-  // Tracks annotation IDs that have already been auto-fit by the initial
-  // useLayoutEffect below. After the first auto-fit, the annotation keeps
-  // its current size until the user "leaves" it (mouseleave) or finishes
-  // resizing (mouseup → fitAnnotationToContent).
+  // Tracks annotation IDs already auto-fit, so it only runs once per annotation
   const autoFitDoneRef = useRef<Set<string>>(new Set())
-  // pageIndex → the rendered page element, used for scroll-to-page and the
-  // visibility observer that drives the current-page indicator.
   const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   // Tracks how far the current page's center is from the viewport center.
   // The scroll listener uses this to add hysteresis when deciding which
@@ -376,6 +341,53 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
       )
     }
   }, [selectedAnnotationId])
+
+  // Mirror of `activeStyle` for the image sub-toolbar. Reads from the
+  // currently-selected image (or falls back to sensible defaults while
+  // the image tool is active but nothing is selected yet).
+  const activeImageStyle = useMemo(() => {
+    if (selectedImageId) {
+      const img = imageAnnotations.find((a) => a.id === selectedImageId)
+      if (img) return { opacity: img.opacity, rotation: img.rotation }
+    }
+    return { opacity: 1, rotation: 0 }
+  }, [selectedImageId, imageAnnotations])
+
+  // Apply a partial style update to the currently selected image.
+  // Opacity and rotation are the only fields the sub-toolbar exposes;
+  // the position / size / src are mutated by their own handlers.
+  const updateImageStyle = useCallback(
+    (updates: Partial<{ opacity: number; rotation: number }>) => {
+      if (!selectedImageId) return
+      setImageAnnotations((prev) =>
+        prev.map((a) =>
+          a.id === selectedImageId ? { ...a, ...updates } : a
+        )
+      )
+    },
+    [selectedImageId]
+  )
+
+  // Rotate the selected image by `delta` degrees around its centre.
+  // The sub-toolbar calls this with ±45° per click. Because we keep
+  // the bounding box anchored to the original (unrotated) image, the
+  // visual position only changes for 90° / 270° rotations — other
+  // angles keep the bounding box in place and rotate the content
+  // within it. The aspect ratio is already captured in the locked
+  // width/height so no recomputation is needed.
+  const rotateSelectedImage = useCallback(
+    (delta: number) => {
+      if (!selectedImageId) return
+      setImageAnnotations((prev) =>
+        prev.map((a) => {
+          if (a.id !== selectedImageId) return a
+          const next = ((a.rotation + delta) % 360 + 360) % 360
+          return { ...a, rotation: next }
+        })
+      )
+    },
+    [selectedImageId]
+  )
 
   // Apply the current value in the hex text-color input to the active style.
   // Accepts both 3-character shorthand (e.g. "abc") and full 6-character
@@ -437,7 +449,6 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     }
   }, [fileUrl])
 
-  // Close sub-toolbar dropdowns when clicking outside the open dropdown panel.
   useEffect(() => {
     if (!openDropdown) return
     const handleClick = (e: MouseEvent) => {
@@ -460,7 +471,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     setHexHighlightColor(activeStyle.highlightColor === "transparent" ? "" : activeStyle.highlightColor.replace("#", ""))
   }, [activeStyle.highlightColor])
 
-  // 2. Render every page to a JPEG dataURL for the in-browser preview.
+  // Render every page to a JPEG dataURL for the in-browser preview
   useEffect(() => {
     if (!fileBuffer) return
     const sourceBuffer = fileBuffer
@@ -470,8 +481,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
       setIsRendering(true)
       try {
         const pdfjs = await getPdfJs()
-        // pdfjs mutates the underlying buffer (it transfers it to a
-        // worker) so we hand it a fresh copy each time.
+        // pdfjs transfers the buffer to a worker, so slice to keep a copy
         const copy = sourceBuffer.slice(0)
         const pdf = await pdfjs.getDocument({ data: copy }).promise
         if (cancelled) return
@@ -513,7 +523,6 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
 
   const activeRenderedPage = renderedPages.find((p) => p.pageIndex === currentPage - 1)
 
-  // Fit the first rendered page to the available canvas width once.
   useEffect(() => {
     if (zoomInitialized) return
     if (!activeRenderedPage || !canvasScrollRef.current) return
@@ -524,8 +533,6 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     setZoomInitialized(true)
   }, [activeRenderedPage, zoomInitialized])
 
-  // Focus the draft input as soon as it appears and select its text so
-  // the user can immediately type to replace the placeholder value.
   useEffect(() => {
     if (draftPosition && draftInputRef.current) {
       draftInputRef.current.focus()
@@ -533,14 +540,9 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     }
   }, [draftPosition])
 
-  // When an annotation enters inline-edit mode, focus its visible text
-  // span and select all of its text so the user can immediately type to
-  // replace the placeholder. The element is looked up via the
-  // visibleTextRefs map populated by the span's ref callback.
   useEffect(() => {
     if (!editingAnnotationId) return
-    // Defer to the next frame so the contentEditable element has been
-    // mounted by the time we try to focus / select.
+    // Defer to next frame so the contentEditable element is mounted
     const raf = requestAnimationFrame(() => {
       const el = visibleTextRefs.current.get(editingAnnotationId)
       if (!el) return
@@ -556,9 +558,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     return () => cancelAnimationFrame(raf)
   }, [editingAnnotationId])
 
-  // Track which page is most visible in the scroll viewport and reflect it in
-  // the page indicator. Uses the page whose center is closest to the viewport
-  // center.
+  // Track which page is closest to the viewport center for the page indicator
   useEffect(() => {
     const scroller = canvasScrollRef.current
     if (!scroller || renderedPages.length === 0) return
@@ -608,16 +608,8 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     return () => scroller.removeEventListener("scroll", onScroll)
   }, [renderedPages, displayScale])
 
-  // Clicking on a page (or the canvas background) deselects the active
-  // annotation and clears any browser text selection so selected text
-  // inside a contentEditable textbox doesn't stay highlighted.
-  //
-  // When a textbox or image was actually selected, we also deactivate the
-  // active toolbar tool so the toolbar and cursor return to their idle
-  // state — the user has just "let go" of the selection. Without a
-  // selection we leave the active tool alone so a user panning with the
-  // hand tool, or about to drop a new textbox with the text tool, can
-  // keep their tool active between canvas clicks.
+  // Deselects the active annotation. Deactivates the active tool only
+  // when something was actually selected (so pan/text tools stay active).
   const handleCanvasDeselect = useCallback(() => {
     setSelectedAnnotationId(null)
     setSelectedImageId(null)
@@ -664,32 +656,20 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
   const removeAnnotation = useCallback((id: string) => {
     setAnnotations((prev) => prev.filter((a) => a.id !== id))
     setSelectedAnnotationId((current) => (current === id ? null : current))
-    // Deleting a textbox returns the toolbar to its idle state. The
-    // active tool was likely "text" (either set by the user or
-    // auto-activated when the box was selected); after the box is gone
-    // there's no reason to keep that tool highlighted.
     setActiveTool(null)
   }, [])
 
-  // Mirror of removeAnnotation for image annotations. Kept separate so
-  // the two state slices stay independent.
   const removeImageAnnotation = useCallback((id: string) => {
     setImageAnnotations((prev) => prev.filter((a) => a.id !== id))
     setSelectedImageId((current) => (current === id ? null : current))
-    // Same reasoning as removeAnnotation: dropping an image is a clear
-    // signal the user is done with whatever tool was active.
     setActiveTool(null)
   }, [])
 
-  // Read a chosen image file, decode it, and drop it at the center of the
-  // current page. The new image is auto-selected so the user can drag
-  // or resize it immediately. Width is clamped to half the page width to
-  // avoid images larger than the page arriving at full natural size.
+  // Drop a chosen image at the center of the current page, width clamped to half the page
   const handleImageFileChange = useCallback(
     (event: React.ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0]
-      // Always reset the input value so picking the same file twice in
-      // a row still triggers the onChange event.
+      // Reset so picking the same file still triggers onChange
       event.target.value = ""
       if (!file) return
       if (!file.type.startsWith("image/")) {
@@ -725,6 +705,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
               height,
               src,
               opacity: 1,
+              rotation: 0,
             },
           ])
           setSelectedImageId(newId)
@@ -736,8 +717,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     [activeRenderedPage, currentPage]
   )
 
-  // Mousedown on an image annotation starts a drag. Same pattern as the
-  // text annotation drag handler.
+  // Start image annotation drag
   const handleImageMouseDown = useCallback(
     (event: React.MouseEvent, annotation: ImageAnnotation) => {
       event.preventDefault()
@@ -754,9 +734,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     []
   )
 
-  // Mousedown on an image's resize handle. We lock the aspect ratio at
-  // mousedown so corner handles scale the image proportionally; the
-  // move handler enforces this.
+  // Image resize — aspect ratio locked at mousedown
   const handleImageResizeMouseDown = useCallback(
     (
       event: React.MouseEvent,
@@ -782,11 +760,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     []
   )
 
-  // Drop a placeholder text box at the center of the current page. Called
-  // when the user activates the text tool so they always have something to
-  // drag, edit, or type into right away. The new annotation is auto-selected
-  // and put into inline-edit mode so the placeholder text is pre-selected
-  // and the user can immediately type to replace it.
+  // Drop a text placeholder — auto-selected and in inline-edit mode
   const insertPlaceholderAtCenter = useCallback(() => {
     if (!activeRenderedPage) return
     const pageWidth = activeRenderedPage.width
@@ -817,9 +791,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     setEditingAnnotationId(newId)
   }, [activeRenderedPage, currentPage, textStyle])
 
-  // Mousedown on an annotation starts a drag. The document-level listeners
-  // in the effect below keep the drag alive even if the pointer leaves the
-  // page element.
+  // Start text annotation drag
   const handleAnnotationMouseDown = useCallback(
     (event: React.MouseEvent<HTMLSpanElement>, annotation: TextAnnotation) => {
       event.preventDefault()
@@ -855,8 +827,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     []
   )
 
-  // Double-clicking an existing annotation puts it into inline-edit mode
-  // so the user can type directly inside the textbox to change its text.
+  // Double-click enters inline-edit mode
   const startEditingAnnotation = useCallback(
     (id: string) => {
       setSelectedAnnotationId(id)
@@ -870,9 +841,6 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
       toast.info(`${tool.label} is coming soon.`)
       return
     }
-    // Toggle behaviour: clicking the tool that's already active deactivates
-    // it (sets the active tool back to none). Otherwise we activate the
-    // freshly-clicked tool as before.
     if (activeTool === tool.id) {
       setActiveTool(null)
       setDraftPosition(null)
@@ -882,10 +850,6 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     }
     setActiveTool(tool.id)
     if (tool.id === "image") {
-      // Only an explicit click on the image tool button should open the
-      // file picker — selecting an existing image also sets
-      // activeTool to "image" but must not interrupt the user with a
-      // picker dialog.
       wantImagePickerRef.current = true
       setDraftPosition(null)
       wantPlaceholderRef.current = false
@@ -894,15 +858,12 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
       wantPlaceholderRef.current = false
       wantImagePickerRef.current = false
     } else if (activeTool !== "text") {
-      // Activating the text tool from another tool queues a placeholder at
-      // the center of the current page. The useEffect below drops it as
-      // soon as the page is available.
       wantPlaceholderRef.current = true
       wantImagePickerRef.current = false
     }
   }, [activeTool])
 
-  // Drop the queued placeholder as soon as the current page is rendered.
+  // Drop the queued placeholder once the current page is rendered
   useEffect(() => {
     if (wantPlaceholderRef.current && activeTool === "text" && activeRenderedPage) {
       insertPlaceholderAtCenter()
@@ -910,21 +871,10 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     }
   }, [activeTool, activeRenderedPage, insertPlaceholderAtCenter])
 
-  // When the user activates the image tool, open the native file picker
-  // so they can choose which image to place. Cancelling the picker leaves
-  // the image tool active; the user can deactivate it by clicking the
-  // image tool button again (existing toggle behaviour in selectTool).
-  //
-  // The ref guard is important: selecting an existing image on the page
-  // also sets activeTool to "image" (to highlight the icon), but only an
-  // explicit click on the tool button should pop the picker.
+  // Open the file picker only on explicit tool-button click (ref guard)
   useEffect(() => {
     if (!wantImagePickerRef.current || activeTool !== "image") return
-    // Consume the flag so subsequent activeTool changes (e.g. selecting
-    // an image) don't re-open the picker.
     wantImagePickerRef.current = false
-    // Defer to the next tick so the hidden <input> has been mounted and
-    // the user has had a chance to see the tool highlight.
     const t = setTimeout(() => imageInputRef.current?.click(), 0)
     return () => clearTimeout(t)
   }, [activeTool])
@@ -934,11 +884,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     setZoomInitialized(true)
   }, [])
 
-  // Ctrl + mouse wheel zooming on the canvas. The listener is attached to
-  // `document` so it fires before the browser's native page-zoom kicks in,
-  // and we read the current scroller at event time (not at registration
-  // time) because the canvas can be unmounted/remounted by the loading
-  // state during the component's lifetime.
+  // Ctrl + mouse wheel zoom on the canvas
   useEffect(() => {
     const onWheel = (e: WheelEvent) => {
       if (!e.ctrlKey) return
@@ -979,15 +925,12 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     [pageCount]
   )
 
-  // Hand tool: mousedown anywhere on the canvas starts a pan; we listen to
-  // mousemove/mouseup on the document so the drag survives leaving the canvas.
+  // Start pan for hand tool
   const handlePanStart = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
       if (activeTool !== "hand") return
       const scroller = canvasScrollRef.current
       if (!scroller) return
-      // Don't start a pan when the click is on an interactive control
-      // (annotations' remove button, draft text input, thumbnails, etc.).
       const target = event.target as HTMLElement | null
       if (target?.closest("button, input, textarea, select, a, [role='button']")) {
         return
@@ -1025,15 +968,13 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     }
   }, [isPanning])
 
-  // Document-level tracking for dragging a text annotation. We update React
-  // state on every move (only the dragged box's coordinates change) so the
-  // move persists after the user releases the mouse.
+  // Document-level text annotation drag
   useEffect(() => {
     if (!draggingAnnotationId) return
     const onMove = (e: MouseEvent) => {
       const start = dragStateRef.current
       if (!start) return
-      // Convert screen-space delta back into RENDER_SCALE canvas space.
+      // Convert screen-space delta to canvas space
       const dx = (e.clientX - start.startMouseX) / displayScale
       const dy = (e.clientY - start.startMouseY) / displayScale
       setAnnotations((prev) =>
@@ -1056,7 +997,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     }
   }, [draggingAnnotationId, displayScale])
 
-  // Document-level tracking for resizing a text annotation.
+  // Document-level text annotation resize
   useEffect(() => {
     if (!resizingAnnotationId) return
     const onMove = (e: MouseEvent) => {
@@ -1098,16 +1039,11 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
       const s = resizeStateRef.current
       resizeStateRef.current = null
       setResizingAnnotationId(null)
-      // Snap the height back to the text's wrapped height at the current
-      // width. The user can freely resize vertically while dragging, but
-      // on release the box always fits the text content vertically. Width
-      // is left as the user set it.
       if (s) {
         const el = visibleTextRefs.current.get(s.annotationId)
         if (el) {
           const textHeight = el.offsetHeight
-          // Inner content box padding (py-0.5 = 2px each side) + border
-          // (1px each side) = 6px vertical, all in displayed space.
+          // py-0.5 (2px each side) + border (1px) = 6px vertical padding
           const totalHeight = (textHeight + 6) / displayScale
           setAnnotations((prev) =>
             prev.map((a) =>
@@ -1125,8 +1061,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     }
   }, [resizingAnnotationId, displayScale])
 
-  // Document-level tracking for dragging an image annotation. Same shape
-  // as the text-annotation drag effect above.
+  // Document-level image annotation drag
   useEffect(() => {
     if (!draggingImageId) return
     const onMove = (e: MouseEvent) => {
@@ -1154,10 +1089,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     }
   }, [draggingImageId, displayScale])
 
-  // Document-level tracking for resizing an image annotation. We use the
-  // axis the user is dragging on to determine which dimension to scale,
-  // and lock the other dimension by the captured aspect ratio so the
-  // image doesn't stretch while resizing.
+  // Document-level image annotation resize — locked aspect ratio
   useEffect(() => {
     if (!resizingImageId) return
     const onMove = (e: MouseEvent) => {
@@ -1171,9 +1103,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
       const resizesBottom = dir === "bottom" || dir === "bottom-left" || dir === "bottom-right"
       const resizesTop = dir === "top" || dir === "top-left" || dir === "top-right"
 
-      // Pick the dominant axis to scale by, then derive the other
-      // dimension from the locked aspect ratio. Corner handles use the
-      // larger of |dx|, |dy|; edge handles use just the relevant axis.
+      // Derive the other dimension from the locked aspect ratio
       let newWidth = s.startWidth
       let newHeight = s.startHeight
       let newX = s.startX
@@ -1216,9 +1146,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     }
   }, [resizingImageId, displayScale])
 
-  // Document-level Delete key handler — removes the currently selected
-  // annotation. Skipped when the user is typing in an input or textarea
-  // (e.g. the draft editor) so Delete still edits characters.
+  // Delete key removes the selected annotation; skipped in inputs/textareas
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Delete") return
@@ -1238,25 +1166,18 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     return () => document.removeEventListener("keydown", onKeyDown)
   }, [selectedAnnotationId, selectedImageId, removeAnnotation, removeImageAnnotation])
 
-  // One-time auto-fit for each new annotation. Sets the default size so a
-  // freshly-placed box doesn't stay at the 200×28 placeholder dimensions.
-  // After this runs the user can freely resize the textbox to any width
-  // and height — there is no further auto-fit on mouseleave or resize.
+  // One-time auto-fit for new annotations so they don't stay at placeholder size
   useLayoutEffect(() => {
     annotations.forEach((annotation) => {
       if (autoFitDoneRef.current.has(annotation.id)) return
       if (resizingAnnotationId === annotation.id) return
-      // Skip empty annotations — fitting to a single space would shrink
-      // the box to almost nothing. The blur handler re-runs the auto-fit
-      // (by clearing `autoFitDoneRef`) once the user has typed something.
       if (annotation.text === "") return
       autoFitDoneRef.current.add(annotation.id)
       const el = measureRefs.current.get(annotation.id)
       if (!el) return
       const textWidth = el.offsetWidth
       const textHeight = el.offsetHeight
-      // Inner content box: px-1.5 (6px each side) + border (1px each side)
-      // → 14px horizontal, 6px vertical, all in displayed space.
+      // px-1.5 (6px each side) + border (1px) = 14px / 6px padding
       const totalWidth = (textWidth + 14) / displayScale
       const totalHeight = (textHeight + 6) / displayScale
       if (
@@ -1279,9 +1200,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     const sourceBuffer = fileBuffer
     setIsSaving(true)
     try {
-      // pdf-lib can re-parse a buffer it's been handed, but a couple
-      // of pdfjs-dist versions share the underlying ArrayBuffer with
-      // the worker, so we copy first to be safe.
+      // Copy in case pdfjs shares the underlying ArrayBuffer with a worker
       const source = sourceBuffer.slice(0)
       const pdfDoc = await PDFDocument.load(source)
 
@@ -1293,10 +1212,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
         }
       }
 
-      // Decode and embed each unique image up front. We cache the embedded
-      // image by its data URL so the same source uploaded twice doesn't
-      // re-decode and re-embed. Both embedPng and embedJpg return
-      // PDFImage, so a single map keyed by the source data URL is fine.
+      // Cache embedded images by data URL so duplicates aren't re-decoded
       const embeddedImages = new Map<
         string,
         Awaited<ReturnType<typeof pdfDoc.embedPng>>
@@ -1371,24 +1287,37 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
         if (!page) continue
         const { height: pageHeight } = page.getSize()
         const pdfX = annotation.x / RENDER_SCALE
-        // PDF coordinates are bottom-left origin; convert the top-left
-        // canvas-space y to the bottom edge of the image.
         const pdfY = pageHeight - (annotation.y + annotation.height) / RENDER_SCALE
         const pdfWidth = annotation.width / RENDER_SCALE
         const pdfHeight = annotation.height / RENDER_SCALE
-        page.drawImage(embedded, {
+
+        const drawOptions = {
           x: pdfX,
           y: pdfY,
           width: pdfWidth,
           height: pdfHeight,
           opacity: annotation.opacity,
-        })
+        }
+
+        if (annotation.rotation !== 0) {
+          // Negate for pdf-lib's CCW rotation to match the editor's CW display
+          const cx = pdfX + pdfWidth / 2
+          const cy = pdfY + pdfHeight / 2
+          page.pushOperators(
+            pushGraphicsState(),
+            translate(cx, cy),
+            rotateDegrees(-annotation.rotation),
+            translate(-cx, -cy)
+          )
+          page.drawImage(embedded, drawOptions)
+          page.pushOperators(popGraphicsState())
+        } else {
+          page.drawImage(embedded, drawOptions)
+        }
       }
 
       const bytes = await pdfDoc.save()
-      // `pdf-lib`'s `save()` returns a `Uint8Array<ArrayBufferLike>`,
-      // which TS doesn't accept as a `BlobPart` directly. Copy into a
-      // fresh `ArrayBuffer` to satisfy the DOM lib types.
+      // pdf-lib's save() returns Uint8Array<ArrayBufferLike>; copy to satisfy BlobPart types
       const ab = new ArrayBuffer(bytes.byteLength)
       new Uint8Array(ab).set(bytes)
       const blob = new Blob([ab], { type: "application/pdf" })
@@ -1409,7 +1338,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     }
   }, [annotations, imageAnnotations, fileBuffer, filename])
 
-  // ---- Empty / loading states -------------------------------------------
+  // Empty / loading states
 
   if (!fileUrl) {
     return (
@@ -1451,7 +1380,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
         </Button>
 
         <div className="mx-auto flex items-center gap-2 sm:gap-3">
-          {/* Annotate / Edit mode toggle */}
+          {/* Annotate / Edit mode */}
           <div className="inline-flex items-center rounded-full border border-border bg-muted/60 p-1">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-card px-3 py-1.5 text-sm font-medium text-foreground shadow-sm">
               <SquarePen className="h-4 w-4" />
@@ -1508,7 +1437,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
             T
           </span>
 
-          {/* Font family */}
+
           <div className="relative">
             <button
               type="button"
@@ -1542,7 +1471,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
             )}
           </div>
 
-          {/* Font size */}
+
           <ALargeSmall className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
           <div className="relative">
             <button
@@ -1576,7 +1505,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
 
           <div className="mx-1 h-6 w-px shrink-0 bg-border" />
 
-          {/* Bold */}
+
           <button
             type="button"
             onClick={() => updateStyle({ bold: !activeStyle.bold })}
@@ -1591,7 +1520,6 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
             B
           </button>
 
-          {/* Italic */}
           <button
             type="button"
             onClick={() => updateStyle({ italic: !activeStyle.italic })}
@@ -1606,7 +1534,6 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
             I
           </button>
 
-          {/* Underline */}
           <button
             type="button"
             onClick={() => updateStyle({ underline: !activeStyle.underline })}
@@ -1621,7 +1548,6 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
             U
           </button>
 
-          {/* Text color */}
           <div className="relative">
             <button
               type="button"
@@ -1699,7 +1625,6 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
             )}
           </div>
 
-          {/* Highlight color */}
           <div className="relative">
             <button
               type="button"
@@ -1798,7 +1723,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
 
           <div className="mx-1 h-6 w-px shrink-0 bg-border" />
 
-          {/* Text alignment */}
+
           <div className="relative">
             <button
               type="button"
@@ -1845,7 +1770,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
 
           <div className="mx-1 h-6 w-px shrink-0 bg-border" />
 
-          {/* Opacity */}
+
           <div className="flex items-center gap-1.5">
             <Droplet
               className="h-4 w-4 shrink-0 text-muted-foreground"
@@ -1890,7 +1815,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
 
           <div className="mx-1 h-6 w-px shrink-0 bg-border" />
 
-          {/* Delete selected */}
+
           <button
             type="button"
             onClick={() => {
@@ -1906,10 +1831,95 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
         </div>
       )}
 
-      {/* Hidden file input for the image tool. The image-tool activation
-          effect above calls .click() on this element to open the native
-          file picker. Kept outside the toolbar so it's available even
-          when the text sub-toolbar isn't rendered. */}
+      {/* ── Image sub-toolbar ──────────────────────────────────────── */}
+      {activeTool === "image" && selectedImageId && (
+        <div
+          ref={subToolbarRef}
+          className="relative z-30 flex items-center justify-center gap-1.5 border-b border-border bg-card px-3 py-1.5 sm:pl-40 sm:pr-96"
+        >
+          <div className="flex items-center gap-1.5">
+            <Droplet
+              className="h-4 w-4 shrink-0 text-muted-foreground"
+              style={{ opacity: activeImageStyle.opacity }}
+              aria-hidden
+            />
+          <div className="relative">
+            <button
+              type="button"
+              data-dropdown-toggle="imgOpacity"
+              onClick={() => setOpenDropdown(openDropdown === "imgOpacity" ? null : "imgOpacity")}
+              className="flex h-8 items-center gap-1 rounded border border-border bg-background px-2 text-sm tabular-nums text-foreground hover:bg-accent"
+              style={{ minWidth: 64 }}
+              title="Opacity"
+            >
+              <span>{Math.round(activeImageStyle.opacity * 100)}%</span>
+              <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+            </button>
+            {openDropdown === "imgOpacity" && (
+              <div data-dropdown="imgOpacity" className="absolute left-0 top-full z-50 mt-1 min-w-[80px] rounded-md border border-border bg-popover p-1 shadow-lg">
+                {[1, 0.75, 0.5, 0.25, 0].map((o) => {
+                  const pct = Math.round(o * 100)
+                  const isActive = Math.abs(activeImageStyle.opacity - o) < 0.001
+                  return (
+                    <button
+                      key={pct}
+                      type="button"
+                      onClick={() => { updateImageStyle({ opacity: o }); setOpenDropdown(null) }}
+                      className={cn(
+                        "flex w-full items-center rounded px-2 py-1 text-sm tabular-nums hover:bg-accent",
+                        isActive && "bg-accent font-medium"
+                      )}
+                    >
+                      {pct}%
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+          </div>
+
+          <div className="mx-1 h-6 w-px shrink-0 bg-border" />
+
+          <button
+            type="button"
+            onClick={() => rotateSelectedImage(-45)}
+            disabled={!selectedImageId}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            title="Rotate left 45°"
+            aria-label="Rotate left 45°"
+          >
+            <RotateCcw className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => rotateSelectedImage(45)}
+            disabled={!selectedImageId}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            title="Rotate right 45°"
+            aria-label="Rotate right 45°"
+          >
+            <RotateCw className="h-4 w-4" />
+          </button>
+
+          <div className="mx-1 h-6 w-px shrink-0 bg-border" />
+
+          <button
+            type="button"
+            onClick={() => {
+              if (selectedImageId) removeImageAnnotation(selectedImageId)
+            }}
+            disabled={!selectedImageId}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-40"
+            title="Delete image"
+            aria-label="Delete image"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Hidden file input — .click() is triggered by the image tool activation */}
       <input
         ref={imageInputRef}
         type="file"
@@ -1919,9 +1929,9 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
         aria-hidden
       />
 
-      {/* ── Body: thumbnails | canvas | panel ───────────────────────── */}
+
       <div className="flex min-h-0 flex-1">
-        {/* Left: page thumbnails */}
+
         <aside className="hidden w-40 shrink-0 flex-col overflow-y-auto border-r border-border bg-card p-3 sm:flex">
           {renderedPages.length === 0 ? (
             <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground">
@@ -1969,7 +1979,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
           )}
         </aside>
 
-        {/* Center: canvas */}
+
         <div
           ref={canvasScrollRef}
           onMouseDown={handlePanStart}
@@ -2019,7 +2029,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                         unoptimized
                       />
 
-                      {/* Saved annotations for this page */}
+  
                       {pageAnnotations.map((annotation) => {
                         const isDragging = draggingAnnotationId === annotation.id
                         const isSelected = selectedAnnotationId === annotation.id
@@ -2059,10 +2069,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                             onClick={(e) => {
                               e.stopPropagation()
                               setSelectedAnnotationId(annotation.id)
-                              // Selecting an existing textbox also activates
-                              // the text tool so the toolbar / sub-toolbar
-                              // reflect the current selection and the user
-                              // can immediately tweak font, colour, size, etc.
+                              // Activate text tool so the sub-toolbar reflects the selection
                               setActiveTool("text")
                             }}
                             onDoubleClick={(e) => {
@@ -2070,11 +2077,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                               startEditingAnnotation(annotation.id)
                             }}
                           >
-                            {/* Hidden measurement span — mirrors the visible
-                                text's font and wrap rules so offsetWidth /
-                                offsetHeight reflect the text's natural
-                                rendered size. The auto-fit useLayoutEffect
-                                reads these to size the wrapper. */}
+                            {/* Hidden measurement span for auto-fit sizing */}
                             <span
                               ref={(el) => {
                                 if (el) measureRefs.current.set(annotation.id, el)
@@ -2111,31 +2114,18 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                                 suppressContentEditableWarning
                                 spellCheck={false}
                                 onMouseDown={(e) => {
-                                  // While editing, clicks inside the text
-                                  // should position the caret — don't let
-                                  // them bubble up and start a drag.
                                   if (isEditing) e.stopPropagation()
                                 }}
                                 onBlur={(e) => {
                                   if (!isEditing) return
                                   const newText = e.currentTarget.textContent ?? ""
-                                  // If the user dismissed the textbox without
-                                  // typing anything, drop it instead of
-                                  // leaving an empty annotation behind.
                                   if (newText.trim().length === 0 && annotation.text === "") {
                                     setAnnotations((prev) => prev.filter((a) => a.id !== annotation.id))
                                     setSelectedAnnotationId((current) => (current === annotation.id ? null : current))
                                     setEditingAnnotationId(null)
-                                    // Empty placeholder removal is treated
-                                    // the same as an explicit delete: drop
-                                    // the active tool so the toolbar
-                                    // returns to its idle state.
                                     setActiveTool(null)
                                     return
                                   }
-                                  // Drop the auto-fit marker so the one-time
-                                  // useLayoutEffect re-fits the textbox to the
-                                  // new text on the next render.
                                   autoFitDoneRef.current.delete(annotation.id)
                                   setAnnotations((prev) =>
                                     prev.map((a) =>
@@ -2179,10 +2169,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                               </span>
                             </div>
 
-                            {/* 8 resize handles — only shown when the
-                                annotation is the active selection so the
-                                canvas doesn't get cluttered with control
-                                dots for every textbox on the page. */}
+
                             {isSelected && (
                               <>
                                 {handle("top-left", "nwse-resize", { left: -hh, top: -hh })}
@@ -2199,11 +2186,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                         )
                       })}
 
-                      {/* Image annotations for this page. Mirrors the text
-                          annotation drag / select / resize pattern: hover
-                          shows a primary ring, the selected image shows a
-                          persistent ring plus 8 resize handles, and
-                          mousedown starts a drag tracked at document level. */}
+
                       {pageImageAnnotations.map((annotation) => {
                         const isDragging = draggingImageId === annotation.id
                         const isSelected = selectedImageId === annotation.id
@@ -2230,6 +2213,11 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                               width: annotation.width * displayScale,
                               height: annotation.height * displayScale,
                               cursor: isDragging ? "grabbing" : "move",
+                              // Rotate the selection around the centre of the unrotated box
+                              transform: annotation.rotation
+                                ? `rotate(${annotation.rotation}deg)`
+                                : undefined,
+                              transformOrigin: "center center",
                             }}
                             className={cn(
                               "group hover:ring-2 hover:ring-primary hover:ring-offset-1",
@@ -2242,11 +2230,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                             onClick={(e) => {
                               e.stopPropagation()
                               setSelectedImageId(annotation.id)
-                              // Selecting an image also activates the image
-                              // tool so the toolbar reflects the current
-                              // selection. (The image tool itself just
-                              // opens the file picker, so the side effect
-                              // here is mainly the icon highlight.)
+                              // Selecting an image activates the image tool (icon highlight only)
                               setActiveTool("image")
                             }}
                           >
@@ -2275,7 +2259,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                         )
                       })}
 
-                      {/* Draft annotation (in-progress text box) */}
+
                       {isDrafting && draftPosition && (
                         <div
                           style={{
@@ -2319,7 +2303,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
           </div>
         </div>
 
-        {/* Right: Edit PDF panel */}
+
         <aside className="flex w-96 shrink-0 flex-col border-l border-border bg-card">
           <div className="flex-1 space-y-5 overflow-y-auto p-6">
             <h2 className="font-serif text-2xl font-bold text-foreground">Edit PDF</h2>
@@ -2353,12 +2337,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
         </aside>
       </div>
 
-      {/* Bottom page selector panel — fixed to the viewport so it stays
-          visible for every page (and is reachable while scrolling).
-          Horizontally centered on the canvas column by offsetting the
-          fixed element by the thumbnails' width (left) and the right
-          panel's width (right). On small screens the thumbnails hide
-          and the toolbar spans the full viewport width. */}
+      {/* Fixed bottom page selector */}
       <div className="pointer-events-none fixed bottom-5 left-0 right-0 z-50 flex justify-center px-4 sm:left-40 sm:right-96">
         <div className="pointer-events-auto flex items-center gap-1 rounded-xl bg-zinc-800/95 px-2 py-1.5 text-zinc-100 shadow-xl ring-1 ring-white/10 backdrop-blur">
           <ToolbarIconButton
@@ -2436,7 +2415,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
   )
 }
 
-// Small dark-toolbar icon button used by the floating zoom/nav control.
+
 function ToolbarIconButton({
   children,
   onClick,
