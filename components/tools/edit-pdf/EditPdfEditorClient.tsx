@@ -96,6 +96,31 @@ function hexToRgbValues(hex: string): [number, number, number] {
   ]
 }
 
+// Decode a base64 data URL (e.g. "data:image/png;base64,iVBOR…") into a
+// raw Uint8Array suitable for passing to pdf-lib's embedPng / embedJpg.
+// Throws if the input isn't a recognisable base64 data URL.
+function dataUrlToBytes(dataUrl: string): Uint8Array {
+  const commaIdx = dataUrl.indexOf(",")
+  if (commaIdx === -1) throw new Error("Not a data URL")
+  const base64 = dataUrl.slice(commaIdx + 1)
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i)
+  }
+  return bytes
+}
+
+// Expand a 3-character hex shorthand to its 6-character form.
+// e.g. "abc" -> "aabbcc", "0f0" -> "00ff00". Non-3-character input is
+// returned unchanged so this is safe to call on any hex string.
+function expandHexShorthand(hex: string): string {
+  if (hex.length === 3) {
+    return hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2]
+  }
+  return hex
+}
+
 function getPdfFontName(fontFamily: string, bold: boolean, italic: boolean): string {
   if (fontFamily === "Times New Roman") {
     if (bold && italic) return StandardFonts.TimesRomanBoldItalic
@@ -146,6 +171,19 @@ interface TextAnnotation {
   opacity: number
 }
 
+interface ImageAnnotation {
+  id: string
+  pageIndex: number
+  x: number
+  y: number
+  width: number
+  height: number
+  // Base64 data URL of the uploaded image. Stored as-is in component
+  // state; on save we decode and pass the bytes to pdf-lib.
+  src: string
+  opacity: number
+}
+
 interface RenderedPage {
   pageIndex: number
   dataUrl: string
@@ -167,7 +205,7 @@ type ResizeDirection = "top-left" | "top" | "top-right" | "left" | "right" | "bo
 const TOOLBAR_TOOLS: { id: ToolId; label: string; icon: typeof Hand; ready: boolean }[] = [
   { id: "hand", label: "Pan", icon: Hand, ready: true },
   { id: "text", label: "Add text", icon: Type, ready: true },
-  { id: "image", label: "Add image", icon: ImageIcon, ready: false },
+  { id: "image", label: "Add image", icon: ImageIcon, ready: true },
   { id: "draw", label: "Draw", icon: Pencil, ready: false },
   { id: "shape", label: "Shapes", icon: Shapes, ready: false },
 ]
@@ -181,6 +219,11 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
   const [renderedPages, setRenderedPages] = useState<RenderedPage[]>([])
   const [isRendering, setIsRendering] = useState(false)
   const [annotations, setAnnotations] = useState<TextAnnotation[]>([])
+  // Image annotations live in a separate state from text annotations so
+  // that re-rendering the (potentially many) text boxes doesn't churn the
+  // image list. The two arrays are independent but share the same
+  // page / canvas coordinate system.
+  const [imageAnnotations, setImageAnnotations] = useState<ImageAnnotation[]>([])
   // No tool is selected by default — the user has to click a tool icon
   // (hand, text, …) to activate it. The icon only highlights after it's
   // explicitly clicked.
@@ -240,10 +283,47 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     startX: number
     startY: number
   } | null>(null)
+  // Image annotation state. selectedImageId is the currently focused image
+  // (drives the ring + resize handles); the dragging/resizing ids mirror
+  // the text annotation equivalents and are read by document-level
+  // mousemove handlers.
+  const [selectedImageId, setSelectedImageId] = useState<string | null>(null)
+  const [draggingImageId, setDraggingImageId] = useState<string | null>(null)
+  const [resizingImageId, setResizingImageId] = useState<string | null>(null)
+  // Hidden <input type="file"> used to open the native file picker when
+  // the user activates the image tool. Kept in the DOM (display:none)
+  // so we can trigger .click() programmatically.
+  const imageInputRef = useRef<HTMLInputElement | null>(null)
+  const imageDragStateRef = useRef<{
+    annotationId: string
+    startMouseX: number
+    startMouseY: number
+    startAnnotationX: number
+    startAnnotationY: number
+  } | null>(null)
+  const imageResizeStateRef = useRef<{
+    annotationId: string
+    direction: ResizeDirection
+    startMouseX: number
+    startMouseY: number
+    startWidth: number
+    startHeight: number
+    startX: number
+    startY: number
+    // Locked aspect ratio captured at mousedown so the image keeps its
+    // proportions while the user drags a corner handle.
+    aspectRatio: number
+  } | null>(null)
   // Set when the user activates the text tool. The placeholder is dropped
   // in a useEffect below so we still insert it if the page wasn't rendered
   // yet at the moment the user clicked the tool.
   const wantPlaceholderRef = useRef(false)
+  // Same idea for the image tool: set only when the user explicitly
+  // clicks the image tool button. Selecting an existing image on the
+  // page also sets activeTool to "image" (so the icon highlights) but
+  // must NOT pop the file picker over what the user is doing — only an
+  // explicit tool activation should do that.
+  const wantImagePickerRef = useRef(false)
   // Hidden measurement spans — one per annotation. The auto-fit helpers
   // read offsetWidth/offsetHeight to size the wrapper to the text's
   // natural rendered size.
@@ -298,10 +378,14 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
   }, [selectedAnnotationId])
 
   // Apply the current value in the hex text-color input to the active style.
-  // Guarded by length so partial input (e.g. "ab") doesn't break the colour.
+  // Accepts both 3-character shorthand (e.g. "abc") and full 6-character
+  // hex codes; shorthand is expanded to its 6-character form so the rest
+  // of the pipeline always sees a canonical "#rrggbb" colour.
   const applyTextColor = useCallback(() => {
-    if (hexTextColor.length === 6) {
-      updateStyle({ color: `#${hexTextColor}` })
+    if (hexTextColor.length === 3 || hexTextColor.length === 6) {
+      const normalized = expandHexShorthand(hexTextColor)
+      if (hexTextColor.length === 3) setHexTextColor(normalized)
+      updateStyle({ color: `#${normalized}` })
     }
   }, [hexTextColor, updateStyle])
 
@@ -309,8 +393,10 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
   // (representing "no highlight") — when it's empty we don't touch the
   // active style so the previous selection is preserved.
   const applyHighlightColor = useCallback(() => {
-    if (hexHighlightColor.length === 6) {
-      updateStyle({ highlightColor: `#${hexHighlightColor}` })
+    if (hexHighlightColor.length === 3 || hexHighlightColor.length === 6) {
+      const normalized = expandHexShorthand(hexHighlightColor)
+      if (hexHighlightColor.length === 3) setHexHighlightColor(normalized)
+      updateStyle({ highlightColor: `#${normalized}` })
     }
   }, [hexHighlightColor, updateStyle])
 
@@ -525,11 +611,22 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
   // Clicking on a page (or the canvas background) deselects the active
   // annotation and clears any browser text selection so selected text
   // inside a contentEditable textbox doesn't stay highlighted.
+  //
+  // When a textbox or image was actually selected, we also deactivate the
+  // active toolbar tool so the toolbar and cursor return to their idle
+  // state — the user has just "let go" of the selection. Without a
+  // selection we leave the active tool alone so a user panning with the
+  // hand tool, or about to drop a new textbox with the text tool, can
+  // keep their tool active between canvas clicks.
   const handleCanvasDeselect = useCallback(() => {
     setSelectedAnnotationId(null)
+    setSelectedImageId(null)
     setEditingAnnotationId(null)
+    if (selectedAnnotationId || selectedImageId) {
+      setActiveTool(null)
+    }
     window.getSelection()?.removeAllRanges()
-  }, [])
+  }, [selectedAnnotationId, selectedImageId])
 
   const commitDraft = useCallback(() => {
     if (!draftPosition) return
@@ -567,7 +664,123 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
   const removeAnnotation = useCallback((id: string) => {
     setAnnotations((prev) => prev.filter((a) => a.id !== id))
     setSelectedAnnotationId((current) => (current === id ? null : current))
+    // Deleting a textbox returns the toolbar to its idle state. The
+    // active tool was likely "text" (either set by the user or
+    // auto-activated when the box was selected); after the box is gone
+    // there's no reason to keep that tool highlighted.
+    setActiveTool(null)
   }, [])
+
+  // Mirror of removeAnnotation for image annotations. Kept separate so
+  // the two state slices stay independent.
+  const removeImageAnnotation = useCallback((id: string) => {
+    setImageAnnotations((prev) => prev.filter((a) => a.id !== id))
+    setSelectedImageId((current) => (current === id ? null : current))
+    // Same reasoning as removeAnnotation: dropping an image is a clear
+    // signal the user is done with whatever tool was active.
+    setActiveTool(null)
+  }, [])
+
+  // Read a chosen image file, decode it, and drop it at the center of the
+  // current page. The new image is auto-selected so the user can drag
+  // or resize it immediately. Width is clamped to half the page width to
+  // avoid images larger than the page arriving at full natural size.
+  const handleImageFileChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0]
+      // Always reset the input value so picking the same file twice in
+      // a row still triggers the onChange event.
+      event.target.value = ""
+      if (!file) return
+      if (!file.type.startsWith("image/")) {
+        toast.error("Please select an image file (PNG or JPG).")
+        return
+      }
+      if (!activeRenderedPage) return
+      const reader = new FileReader()
+      reader.onload = () => {
+        const src = reader.result as string
+        const img = new window.Image()
+        img.onload = () => {
+          const pageWidth = activeRenderedPage.width
+          const pageHeight = activeRenderedPage.height
+          const maxWidth = pageWidth * 0.5
+          const aspectRatio =
+            img.naturalHeight === 0 ? 1 : img.naturalWidth / img.naturalHeight
+          let width = img.naturalWidth
+          let height = img.naturalHeight
+          if (width > maxWidth) {
+            width = maxWidth
+            height = width / aspectRatio
+          }
+          const newId = crypto.randomUUID()
+          setImageAnnotations((prev) => [
+            ...prev,
+            {
+              id: newId,
+              pageIndex: currentPage - 1,
+              x: pageWidth / 2 - width / 2,
+              y: pageHeight / 2 - height / 2,
+              width,
+              height,
+              src,
+              opacity: 1,
+            },
+          ])
+          setSelectedImageId(newId)
+        }
+        img.src = src
+      }
+      reader.readAsDataURL(file)
+    },
+    [activeRenderedPage, currentPage]
+  )
+
+  // Mousedown on an image annotation starts a drag. Same pattern as the
+  // text annotation drag handler.
+  const handleImageMouseDown = useCallback(
+    (event: React.MouseEvent, annotation: ImageAnnotation) => {
+      event.preventDefault()
+      event.stopPropagation()
+      imageDragStateRef.current = {
+        annotationId: annotation.id,
+        startMouseX: event.clientX,
+        startMouseY: event.clientY,
+        startAnnotationX: annotation.x,
+        startAnnotationY: annotation.y,
+      }
+      setDraggingImageId(annotation.id)
+    },
+    []
+  )
+
+  // Mousedown on an image's resize handle. We lock the aspect ratio at
+  // mousedown so corner handles scale the image proportionally; the
+  // move handler enforces this.
+  const handleImageResizeMouseDown = useCallback(
+    (
+      event: React.MouseEvent,
+      annotation: ImageAnnotation,
+      direction: ResizeDirection
+    ) => {
+      event.preventDefault()
+      event.stopPropagation()
+      imageResizeStateRef.current = {
+        annotationId: annotation.id,
+        direction,
+        startMouseX: event.clientX,
+        startMouseY: event.clientY,
+        startWidth: annotation.width,
+        startHeight: annotation.height,
+        startX: annotation.x,
+        startY: annotation.y,
+        aspectRatio:
+          annotation.height === 0 ? 1 : annotation.width / annotation.height,
+      }
+      setResizingImageId(annotation.id)
+    },
+    []
+  )
 
   // Drop a placeholder text box at the center of the current page. Called
   // when the user activates the text tool so they always have something to
@@ -664,17 +877,28 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
       setActiveTool(null)
       setDraftPosition(null)
       wantPlaceholderRef.current = false
+      wantImagePickerRef.current = false
       return
     }
     setActiveTool(tool.id)
-    if (tool.id !== "text") {
+    if (tool.id === "image") {
+      // Only an explicit click on the image tool button should open the
+      // file picker — selecting an existing image also sets
+      // activeTool to "image" but must not interrupt the user with a
+      // picker dialog.
+      wantImagePickerRef.current = true
       setDraftPosition(null)
       wantPlaceholderRef.current = false
+    } else if (tool.id !== "text") {
+      setDraftPosition(null)
+      wantPlaceholderRef.current = false
+      wantImagePickerRef.current = false
     } else if (activeTool !== "text") {
       // Activating the text tool from another tool queues a placeholder at
       // the center of the current page. The useEffect below drops it as
       // soon as the page is available.
       wantPlaceholderRef.current = true
+      wantImagePickerRef.current = false
     }
   }, [activeTool])
 
@@ -685,6 +909,25 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
       wantPlaceholderRef.current = false
     }
   }, [activeTool, activeRenderedPage, insertPlaceholderAtCenter])
+
+  // When the user activates the image tool, open the native file picker
+  // so they can choose which image to place. Cancelling the picker leaves
+  // the image tool active; the user can deactivate it by clicking the
+  // image tool button again (existing toggle behaviour in selectTool).
+  //
+  // The ref guard is important: selecting an existing image on the page
+  // also sets activeTool to "image" (to highlight the icon), but only an
+  // explicit click on the tool button should pop the picker.
+  useEffect(() => {
+    if (!wantImagePickerRef.current || activeTool !== "image") return
+    // Consume the flag so subsequent activeTool changes (e.g. selecting
+    // an image) don't re-open the picker.
+    wantImagePickerRef.current = false
+    // Defer to the next tick so the hidden <input> has been mounted and
+    // the user has had a chance to see the tool highlight.
+    const t = setTimeout(() => imageInputRef.current?.click(), 0)
+    return () => clearTimeout(t)
+  }, [activeTool])
 
   const changeZoom = useCallback((delta: number) => {
     setZoom((z) => Math.max(25, Math.min(300, z + delta)))
@@ -882,25 +1125,118 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     }
   }, [resizingAnnotationId, displayScale])
 
+  // Document-level tracking for dragging an image annotation. Same shape
+  // as the text-annotation drag effect above.
+  useEffect(() => {
+    if (!draggingImageId) return
+    const onMove = (e: MouseEvent) => {
+      const start = imageDragStateRef.current
+      if (!start) return
+      const dx = (e.clientX - start.startMouseX) / displayScale
+      const dy = (e.clientY - start.startMouseY) / displayScale
+      setImageAnnotations((prev) =>
+        prev.map((a) =>
+          a.id === start.annotationId
+            ? { ...a, x: start.startAnnotationX + dx, y: start.startAnnotationY + dy }
+            : a
+        )
+      )
+    }
+    const onUp = () => {
+      imageDragStateRef.current = null
+      setDraggingImageId(null)
+    }
+    document.addEventListener("mousemove", onMove)
+    document.addEventListener("mouseup", onUp)
+    return () => {
+      document.removeEventListener("mousemove", onMove)
+      document.removeEventListener("mouseup", onUp)
+    }
+  }, [draggingImageId, displayScale])
+
+  // Document-level tracking for resizing an image annotation. We use the
+  // axis the user is dragging on to determine which dimension to scale,
+  // and lock the other dimension by the captured aspect ratio so the
+  // image doesn't stretch while resizing.
+  useEffect(() => {
+    if (!resizingImageId) return
+    const onMove = (e: MouseEvent) => {
+      const s = imageResizeStateRef.current
+      if (!s) return
+      const dx = (e.clientX - s.startMouseX) / displayScale
+      const dy = (e.clientY - s.startMouseY) / displayScale
+      const dir = s.direction
+      const resizesRight = dir === "right" || dir === "top-right" || dir === "bottom-right"
+      const resizesLeft = dir === "left" || dir === "top-left" || dir === "bottom-left"
+      const resizesBottom = dir === "bottom" || dir === "bottom-left" || dir === "bottom-right"
+      const resizesTop = dir === "top" || dir === "top-left" || dir === "top-right"
+
+      // Pick the dominant axis to scale by, then derive the other
+      // dimension from the locked aspect ratio. Corner handles use the
+      // larger of |dx|, |dy|; edge handles use just the relevant axis.
+      let newWidth = s.startWidth
+      let newHeight = s.startHeight
+      let newX = s.startX
+      let newY = s.startY
+      const aspectRatio = s.aspectRatio
+
+      if (resizesRight) {
+        newWidth = Math.max(20, s.startWidth + dx)
+        newHeight = newWidth / aspectRatio
+      } else if (resizesLeft) {
+        newWidth = Math.max(20, s.startWidth - dx)
+        newHeight = newWidth / aspectRatio
+        newX = s.startX + (s.startWidth - newWidth)
+      } else if (resizesBottom) {
+        newHeight = Math.max(20, s.startHeight + dy)
+        newWidth = newHeight * aspectRatio
+      } else if (resizesTop) {
+        newHeight = Math.max(20, s.startHeight - dy)
+        newWidth = newHeight * aspectRatio
+        newY = s.startY + (s.startHeight - newHeight)
+      }
+
+      setImageAnnotations((prev) =>
+        prev.map((a) =>
+          a.id === s.annotationId
+            ? { ...a, width: newWidth, height: newHeight, x: newX, y: newY }
+            : a
+        )
+      )
+    }
+    const onUp = () => {
+      imageResizeStateRef.current = null
+      setResizingImageId(null)
+    }
+    document.addEventListener("mousemove", onMove)
+    document.addEventListener("mouseup", onUp)
+    return () => {
+      document.removeEventListener("mousemove", onMove)
+      document.removeEventListener("mouseup", onUp)
+    }
+  }, [resizingImageId, displayScale])
+
   // Document-level Delete key handler — removes the currently selected
   // annotation. Skipped when the user is typing in an input or textarea
   // (e.g. the draft editor) so Delete still edits characters.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Delete") return
-      const id = selectedAnnotationId
-      if (!id) return
+      const textId = selectedAnnotationId
+      const imageId = selectedImageId
+      if (!textId && !imageId) return
       const target = e.target as HTMLElement | null
       if (target) {
         const tag = target.tagName
         if (tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable) return
       }
       e.preventDefault()
-      removeAnnotation(id)
+      if (textId) removeAnnotation(textId)
+      if (imageId) removeImageAnnotation(imageId)
     }
     document.addEventListener("keydown", onKeyDown)
     return () => document.removeEventListener("keydown", onKeyDown)
-  }, [selectedAnnotationId, removeAnnotation])
+  }, [selectedAnnotationId, selectedImageId, removeAnnotation, removeImageAnnotation])
 
   // One-time auto-fit for each new annotation. Sets the default size so a
   // freshly-placed box doesn't stay at the 200×28 placeholder dimensions.
@@ -957,8 +1293,31 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
         }
       }
 
+      // Decode and embed each unique image up front. We cache the embedded
+      // image by its data URL so the same source uploaded twice doesn't
+      // re-decode and re-embed. Both embedPng and embedJpg return
+      // PDFImage, so a single map keyed by the source data URL is fine.
+      const embeddedImages = new Map<
+        string,
+        Awaited<ReturnType<typeof pdfDoc.embedPng>>
+      >()
+      for (const annotation of imageAnnotations) {
+        if (embeddedImages.has(annotation.src)) continue
+        try {
+          const bytes = dataUrlToBytes(annotation.src)
+          const image =
+            annotation.src.startsWith("data:image/png")
+              ? await pdfDoc.embedPng(bytes)
+              : await pdfDoc.embedJpg(bytes)
+          embeddedImages.set(annotation.src, image)
+        } catch (err) {
+          console.error("Failed to embed image:", err)
+        }
+      }
+
+      const pages = pdfDoc.getPages()
+
       for (const annotation of annotations) {
-        const pages = pdfDoc.getPages()
         const page = pages[annotation.pageIndex]
         if (!page) continue
         const { height: pageHeight } = page.getSize()
@@ -1005,6 +1364,27 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
         }
       }
 
+      for (const annotation of imageAnnotations) {
+        const embedded = embeddedImages.get(annotation.src)
+        if (!embedded) continue
+        const page = pages[annotation.pageIndex]
+        if (!page) continue
+        const { height: pageHeight } = page.getSize()
+        const pdfX = annotation.x / RENDER_SCALE
+        // PDF coordinates are bottom-left origin; convert the top-left
+        // canvas-space y to the bottom edge of the image.
+        const pdfY = pageHeight - (annotation.y + annotation.height) / RENDER_SCALE
+        const pdfWidth = annotation.width / RENDER_SCALE
+        const pdfHeight = annotation.height / RENDER_SCALE
+        page.drawImage(embedded, {
+          x: pdfX,
+          y: pdfY,
+          width: pdfWidth,
+          height: pdfHeight,
+          opacity: annotation.opacity,
+        })
+      }
+
       const bytes = await pdfDoc.save()
       // `pdf-lib`'s `save()` returns a `Uint8Array<ArrayBufferLike>`,
       // which TS doesn't accept as a `BlobPart` directly. Copy into a
@@ -1027,7 +1407,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
     } finally {
       setIsSaving(false)
     }
-  }, [annotations, fileBuffer, filename])
+  }, [annotations, imageAnnotations, fileBuffer, filename])
 
   // ---- Empty / loading states -------------------------------------------
 
@@ -1295,7 +1675,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                       }
                     }}
                     onBlur={() => {
-                      if (hexTextColor.length !== 6) {
+                      if (hexTextColor.length !== 3 && hexTextColor.length !== 6) {
                         setHexTextColor(activeStyle.color.replace("#", ""))
                       }
                     }}
@@ -1306,14 +1686,14 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                   <button
                     type="button"
                     onClick={applyTextColor}
-                    disabled={hexTextColor.length !== 6}
+                    disabled={hexTextColor.length !== 3 && hexTextColor.length !== 6}
                     className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-border bg-accent text-foreground transition-colors hover:bg-accent/80 disabled:cursor-not-allowed disabled:opacity-40"
                     title="Apply color"
                     aria-label="Apply color"
                   >
                     <Check className="h-3.5 w-3.5" />
                   </button>
-                  <div className="h-6 w-6 shrink-0 rounded border border-border" style={{ backgroundColor: hexTextColor.length >= 3 ? `#${hexTextColor}` : activeStyle.color }} />
+                  <div className="h-6 w-6 shrink-0 rounded border border-border" style={{ backgroundColor: hexTextColor.length === 3 || hexTextColor.length === 6 ? `#${expandHexShorthand(hexTextColor)}` : activeStyle.color }} />
                 </div>
               </div>
             )}
@@ -1389,7 +1769,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                       }
                     }}
                     onBlur={() => {
-                      if (hexHighlightColor.length !== 6) {
+                      if (hexHighlightColor.length !== 3 && hexHighlightColor.length !== 6) {
                         setHexHighlightColor(activeStyle.highlightColor === "transparent" ? "" : activeStyle.highlightColor.replace("#", ""))
                       }
                     }}
@@ -1400,7 +1780,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                   <button
                     type="button"
                     onClick={applyHighlightColor}
-                    disabled={hexHighlightColor.length !== 6}
+                    disabled={hexHighlightColor.length !== 3 && hexHighlightColor.length !== 6}
                     className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-border bg-accent text-foreground transition-colors hover:bg-accent/80 disabled:cursor-not-allowed disabled:opacity-40"
                     title="Apply color"
                     aria-label="Apply color"
@@ -1409,7 +1789,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                   </button>
                   <div
                     className="h-6 w-6 shrink-0 rounded border border-border"
-                    style={{ backgroundColor: hexHighlightColor.length >= 3 ? `#${hexHighlightColor}` : activeStyle.highlightColor === "transparent" ? "transparent" : activeStyle.highlightColor }}
+                    style={{ backgroundColor: hexHighlightColor.length === 3 || hexHighlightColor.length === 6 ? `#${expandHexShorthand(hexHighlightColor)}` : activeStyle.highlightColor === "transparent" ? "transparent" : activeStyle.highlightColor }}
                   />
                 </div>
               </div>
@@ -1513,8 +1893,11 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
           {/* Delete selected */}
           <button
             type="button"
-            onClick={() => { if (selectedAnnotationId) removeAnnotation(selectedAnnotationId) }}
-            disabled={!selectedAnnotationId}
+            onClick={() => {
+              if (selectedAnnotationId) removeAnnotation(selectedAnnotationId)
+              if (selectedImageId) removeImageAnnotation(selectedImageId)
+            }}
+            disabled={!selectedAnnotationId && !selectedImageId}
             className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-40"
             title="Delete selected"
           >
@@ -1522,6 +1905,19 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
           </button>
         </div>
       )}
+
+      {/* Hidden file input for the image tool. The image-tool activation
+          effect above calls .click() on this element to open the native
+          file picker. Kept outside the toolbar so it's available even
+          when the text sub-toolbar isn't rendered. */}
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleImageFileChange}
+        className="hidden"
+        aria-hidden
+      />
 
       {/* ── Body: thumbnails | canvas | panel ───────────────────────── */}
       <div className="flex min-h-0 flex-1">
@@ -1594,6 +1990,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
             ) : renderedPages.length > 0 ? (
               renderedPages.map((page) => {
                 const pageAnnotations = annotations.filter((a) => a.pageIndex === page.pageIndex)
+                const pageImageAnnotations = imageAnnotations.filter((a) => a.pageIndex === page.pageIndex)
                 const isDrafting = draftPosition?.pageIndex === page.pageIndex
                 return (
                   <div key={page.pageIndex} className="flex flex-col items-center gap-2">
@@ -1662,6 +2059,11 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                             onClick={(e) => {
                               e.stopPropagation()
                               setSelectedAnnotationId(annotation.id)
+                              // Selecting an existing textbox also activates
+                              // the text tool so the toolbar / sub-toolbar
+                              // reflect the current selection and the user
+                              // can immediately tweak font, colour, size, etc.
+                              setActiveTool("text")
                             }}
                             onDoubleClick={(e) => {
                               e.stopPropagation()
@@ -1724,6 +2126,11 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                                     setAnnotations((prev) => prev.filter((a) => a.id !== annotation.id))
                                     setSelectedAnnotationId((current) => (current === annotation.id ? null : current))
                                     setEditingAnnotationId(null)
+                                    // Empty placeholder removal is treated
+                                    // the same as an explicit delete: drop
+                                    // the active tool so the toolbar
+                                    // returns to its idle state.
+                                    setActiveTool(null)
                                     return
                                   }
                                   // Drop the auto-fit marker so the one-time
@@ -1786,6 +2193,82 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
                                 {handle("bottom-left", "nesw-resize", { left: -hh, bottom: -hh })}
                                 {handle("bottom", "ns-resize", { left: "50%", bottom: -hh, transform: "translateX(-50%)" })}
                                 {handle("bottom-right", "nwse-resize", { right: -hh, bottom: -hh })}
+                              </>
+                            )}
+                          </div>
+                        )
+                      })}
+
+                      {/* Image annotations for this page. Mirrors the text
+                          annotation drag / select / resize pattern: hover
+                          shows a primary ring, the selected image shows a
+                          persistent ring plus 8 resize handles, and
+                          mousedown starts a drag tracked at document level. */}
+                      {pageImageAnnotations.map((annotation) => {
+                        const isDragging = draggingImageId === annotation.id
+                        const isSelected = selectedImageId === annotation.id
+                        const hs = 8
+                        const hh = hs / 2
+                        const imgHandle = (dir: ResizeDirection, cursor: string, pos: React.CSSProperties) => (
+                          <span
+                            key={dir}
+                            className="absolute bg-[#2563eb] border border-white"
+                            style={{ width: hs, height: hs, cursor, ...pos }}
+                            onMouseDown={(e) => {
+                              e.stopPropagation()
+                              handleImageResizeMouseDown(e, annotation, dir)
+                            }}
+                          />
+                        )
+                        return (
+                          <div
+                            key={annotation.id}
+                            style={{
+                              position: "absolute",
+                              left: annotation.x * displayScale,
+                              top: annotation.y * displayScale,
+                              width: annotation.width * displayScale,
+                              height: annotation.height * displayScale,
+                              cursor: isDragging ? "grabbing" : "move",
+                            }}
+                            className={cn(
+                              "group hover:ring-2 hover:ring-primary hover:ring-offset-1",
+                              isSelected && "ring-2 ring-primary ring-offset-1"
+                            )}
+                            onMouseDown={(e) => {
+                              e.stopPropagation()
+                              handleImageMouseDown(e, annotation)
+                            }}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setSelectedImageId(annotation.id)
+                              // Selecting an image also activates the image
+                              // tool so the toolbar reflects the current
+                              // selection. (The image tool itself just
+                              // opens the file picker, so the side effect
+                              // here is mainly the icon highlight.)
+                              setActiveTool("image")
+                            }}
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={annotation.src}
+                              alt="Uploaded"
+                              className="block h-full w-full select-none object-contain"
+                              draggable={false}
+                              style={{ opacity: annotation.opacity }}
+                            />
+
+                            {isSelected && (
+                              <>
+                                {imgHandle("top-left", "nwse-resize", { left: -hh, top: -hh })}
+                                {imgHandle("top", "ns-resize", { left: "50%", top: -hh, transform: "translateX(-50%)" })}
+                                {imgHandle("top-right", "nesw-resize", { right: -hh, top: -hh })}
+                                {imgHandle("left", "ew-resize", { left: -hh, top: "50%", transform: "translateY(-50%)" })}
+                                {imgHandle("right", "ew-resize", { right: -hh, top: "50%", transform: "translateY(-50%)" })}
+                                {imgHandle("bottom-left", "nesw-resize", { left: -hh, bottom: -hh })}
+                                {imgHandle("bottom", "ns-resize", { left: "50%", bottom: -hh, transform: "translateX(-50%)" })}
+                                {imgHandle("bottom-right", "nwse-resize", { right: -hh, bottom: -hh })}
                               </>
                             )}
                           </div>
