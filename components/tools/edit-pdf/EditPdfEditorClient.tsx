@@ -298,6 +298,12 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
   // Guards the file picker: only an explicit tool-button click pops it,
   // not selecting an existing image (which also sets activeTool="image")
   const wantImagePickerRef = useRef(false)
+  // Set while the native file picker is open. We use it to detect
+  // "user dismissed the picker without choosing a file" (no onChange
+  // fires) and drop the image tool highlight back to its idle state.
+  // Cleared on every file selection (onChange) so the focus-event
+  // fallback below doesn't deactivate the tool after a successful pick.
+  const imagePickerOpenRef = useRef(false)
   // Measurement spans used by auto-fit to read natural text size
   const measureRefs = useRef<Map<string, HTMLSpanElement>>(new Map())
   // Used by resize onUp to snap height to wrapped text content
@@ -671,6 +677,10 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
       const file = event.target.files?.[0]
       // Reset so picking the same file still triggers onChange
       event.target.value = ""
+      // A file was actually chosen — clear the "picker is open" flag so
+      // the focus-event fallback below doesn't treat this as a
+      // cancellation and deactivate the image tool.
+      imagePickerOpenRef.current = false
       if (!file) return
       if (!file.type.startsWith("image/")) {
         toast.error("Please select an image file (PNG or JPG).")
@@ -871,13 +881,52 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
     }
   }, [activeTool, activeRenderedPage, insertPlaceholderAtCenter])
 
-  // Open the file picker only on explicit tool-button click (ref guard)
+  // Open the file picker only on explicit tool-button click (ref guard).
+  // We also flip `imagePickerOpenRef` so the cancel / focus listeners
+  // (set up below) can tell "picker is currently open" from "tool is
+  // just active because the user picked a file and is now tweaking it".
   useEffect(() => {
     if (!wantImagePickerRef.current || activeTool !== "image") return
     wantImagePickerRef.current = false
+    imagePickerOpenRef.current = true
     const t = setTimeout(() => imageInputRef.current?.click(), 0)
     return () => clearTimeout(t)
   }, [activeTool])
+
+  // Detect "user dismissed the file picker without picking a file" and
+  // return the toolbar to its idle state. Two paths cover the cases:
+  //
+  //   1. The `cancel` event fires natively on the file input in modern
+  //      browsers (Chrome 113+, Firefox 91+, Safari 16.4+).
+  //   2. As a fallback, the window receives `focus` again whenever the
+  //      picker closes — selected or not. We check `imagePickerOpenRef`
+  //      to see whether the close was a cancellation (still set) or a
+  //      successful pick (cleared by `handleImageFileChange`).
+  useEffect(() => {
+    const input = imageInputRef.current
+    if (!input) return
+
+    const handleCancel = () => {
+      if (!imagePickerOpenRef.current) return
+      imagePickerOpenRef.current = false
+      // Only deactivate the image tool; the user may have selected
+      // text or another tool we shouldn't touch.
+      setActiveTool((current) => (current === "image" ? null : current))
+    }
+    const handleWindowFocus = () => {
+      // Small delay: some browsers report focus before the change
+      // event when a file is selected, so we wait a tick and let
+      // handleImageFileChange clear the flag first.
+      setTimeout(handleCancel, 0)
+    }
+
+    input.addEventListener("cancel", handleCancel)
+    window.addEventListener("focus", handleWindowFocus)
+    return () => {
+      input.removeEventListener("cancel", handleCancel)
+      window.removeEventListener("focus", handleWindowFocus)
+    }
+  }, [])
 
   const changeZoom = useCallback((delta: number) => {
     setZoom((z) => Math.max(25, Math.min(300, z + delta)))
@@ -1919,7 +1968,12 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
         </div>
       )}
 
-      {/* Hidden file input — .click() is triggered by the image tool activation */}
+      {/* Hidden file input — .click() is triggered by the image tool activation. The
+          actual cancellation handling is wired up in a useEffect below via a
+          native `cancel` event listener (React's input prop types don't expose
+          `onCancel`). A focus-event fallback also runs so older browsers that
+          don't fire `cancel` still deactivate the tool when the picker closes
+          without a file being chosen. */}
       <input
         ref={imageInputRef}
         type="file"
