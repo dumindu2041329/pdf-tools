@@ -19,6 +19,7 @@ import {
   Highlighter,
   Image as ImageIcon,
   Info,
+  List,
   ListFilter,
   Loader2,
   Maximize2,
@@ -36,7 +37,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
-import { PDFDocument, StandardFonts, popGraphicsState, pushGraphicsState, rgb, rotateDegrees, translate } from "pdf-lib"
+import { PDFDocument, StandardFonts, LineCapStyle, LineJoinStyle, popGraphicsState, pushGraphicsState, rgb, rotateDegrees, setLineCap, setLineJoin, translate } from "pdf-lib"
 import { deleteFromStorageBrowser } from "@/lib/supabase-upload"
 
 let pdfjsLib: typeof import("pdfjs-dist") | null = null
@@ -186,6 +187,71 @@ interface ImageAnnotation {
   rotation: number
 }
 
+interface DrawAnnotation {
+  id: string
+  pageIndex: number
+  // Sequence of canvas-space (RENDER_SCALE-scaled) points forming the freehand path
+  points: { x: number; y: number }[]
+  color: string
+  // Stroke thickness in PDF points (matches what the user picks in the sub-toolbar)
+  thickness: number
+  opacity: number
+}
+
+// Build an SVG path "d" attribute from a list of points. Skips points that
+// are too close to the previous one to avoid bloating the path string.
+function pointsToPath(points: { x: number; y: number }[]): string {
+  if (points.length === 0) return ""
+  const MIN_DIST = 0.5
+  let path = `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1]
+    const p = points[i]
+    if (Math.hypot(p.x - prev.x, p.y - prev.y) < MIN_DIST) continue
+    path += ` L ${p.x.toFixed(2)} ${p.y.toFixed(2)}`
+  }
+  return path
+}
+
+// Convert canvas-space points to PDF-coordinate path data (origin bottom-left)
+// for use with pdf-lib's drawSvgPath.
+function pointsToPdfPath(points: { x: number; y: number }[], pageHeight: number): string {
+  if (points.length === 0) return ""
+  const MIN_DIST = 0.5
+  let path = ""
+  let started = false
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i]
+    if (i > 0) {
+      const prev = points[i - 1]
+      if (Math.hypot(p.x - prev.x, p.y - prev.y) < MIN_DIST) continue
+    }
+    const pdfX = p.x / RENDER_SCALE
+    const pdfY = pageHeight - p.y / RENDER_SCALE
+    path += started ? ` L ${pdfX.toFixed(2)} ${pdfY.toFixed(2)}` : `M ${pdfX.toFixed(2)} ${pdfY.toFixed(2)}`
+    started = true
+  }
+  return path
+}
+
+// Compute the axis-aligned bounding box of a draw's points. Returns
+// a zero-sized box for empty strokes; callers should special-case
+// that if they need real geometry for the resize handles.
+function getDrawBbox(draw: DrawAnnotation): { x: number; y: number; width: number; height: number } {
+  if (draw.points.length === 0) return { x: 0, y: 0, width: 0, height: 0 }
+  let minX = draw.points[0].x
+  let minY = draw.points[0].y
+  let maxX = draw.points[0].x
+  let maxY = draw.points[0].y
+  for (const p of draw.points) {
+    if (p.x < minX) minX = p.x
+    if (p.y < minY) minY = p.y
+    if (p.x > maxX) maxX = p.x
+    if (p.y > maxY) maxY = p.y
+  }
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+}
+
 interface RenderedPage {
   pageIndex: number
   dataUrl: string
@@ -207,7 +273,7 @@ const TOOLBAR_TOOLS: { id: ToolId; label: string; icon: typeof Hand; ready: bool
   { id: "hand", label: "Pan", icon: Hand, ready: true },
   { id: "text", label: "Add text", icon: Type, ready: true },
   { id: "image", label: "Add image", icon: ImageIcon, ready: true },
-  { id: "draw", label: "Draw", icon: Pencil, ready: false },
+  { id: "draw", label: "Draw", icon: Pencil, ready: true },
   { id: "shape", label: "Shapes", icon: Shapes, ready: false },
 ]
 
@@ -221,6 +287,7 @@ export function EditPdfEditorClient({ fileUrl, filename }: Props) {
   const [isRendering, setIsRendering] = useState(false)
   const [annotations, setAnnotations] = useState<TextAnnotation[]>([])
 const [imageAnnotations, setImageAnnotations] = useState<ImageAnnotation[]>([])
+const [drawAnnotations, setDrawAnnotations] = useState<DrawAnnotation[]>([])
 const [activeTool, setActiveTool] = useState<ToolId | null>(null)
   const [draftText, setDraftText] = useState("")
   const [draftPosition, setDraftPosition] = useState<{ pageIndex: number; x: number; y: number } | null>(null)
@@ -228,6 +295,16 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
   const [zoom, setZoom] = useState(100)
   const [zoomInitialized, setZoomInitialized] = useState(false)
   const [isPanning, setIsPanning] = useState(false)
+  // In-progress freehand drawing. Lives only on the current page until mouseup.
+  const [draftDraw, setDraftDraw] = useState<{ pageIndex: number; points: { x: number; y: number }[] } | null>(null)
+  // Default stroke settings for the next draw (used when no existing draw is selected)
+  const [drawColor, setDrawColor] = useState("#000000")
+  const [drawThickness, setDrawThickness] = useState(4)
+  // Currently selected draw annotation (drives the sub-toolbar + delete button)
+  const [selectedDrawId, setSelectedDrawId] = useState<string | null>(null)
+  const [hoveredDrawId, setHoveredDrawId] = useState<string | null>(null)
+  // Hex input mirror for the draw color picker (consistent with text/image)
+  const [hexDrawColor, setHexDrawColor] = useState("000000")
   const draftInputRef = useRef<HTMLTextAreaElement | null>(null)
   const justCommittedRef = useRef(false)
   const canvasScrollRef = useRef<HTMLDivElement | null>(null)
@@ -292,6 +369,36 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
     startX: number
     startY: number
     aspectRatio: number
+  } | null>(null)
+  // Drives the 8 resize handles for freehand drawings + the
+  // document-level mouse-move handler that scales the points.
+  const [resizingDrawId, setResizingDrawId] = useState<string | null>(null)
+  const drawResizeStateRef = useRef<{
+    annotationId: string
+    direction: ResizeDirection
+    startMouseX: number
+    startMouseY: number
+    // Original (pre-resize) bounding box. Used together with
+    // `startPoints` so every mousemove maps from the original
+    // geometry rather than the already-scaled points, which would
+    // compound the scale on each frame and decouple the draw from
+    // the bounding box.
+    startBboxX: number
+    startBboxY: number
+    startBboxWidth: number
+    startBboxHeight: number
+    // Snapshot of the original points so the draw always scales
+    // from its mousedown state — not from the partially-resized
+    // state on each mousemove.
+    startPoints: Array<{ x: number; y: number }>
+  } | null>(null)
+  // Tracks freehand drawing drag: shifts every point by the mouse delta
+  const [draggingDrawId, setDraggingDrawId] = useState<string | null>(null)
+  const drawDragStateRef = useRef<{
+    annotationId: string
+    startMouseX: number
+    startMouseY: number
+    startPoints: Array<{ x: number; y: number }>
   } | null>(null)
   // Queued by the text tool; the placeholder is dropped once the page renders
   const wantPlaceholderRef = useRef(false)
@@ -395,6 +502,76 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
     [selectedImageId]
   )
 
+  // Mirror of `activeImageStyle` for the draw sub-toolbar. When a
+  // drawing is selected the sub-toolbar shows that draw's stroke
+  // settings; otherwise it shows the defaults that the next draw
+  // will use.
+  const activeDrawStyle = useMemo(() => {
+    if (selectedDrawId) {
+      const draw = drawAnnotations.find((d) => d.id === selectedDrawId)
+      if (draw) return { color: draw.color, thickness: draw.thickness, opacity: draw.opacity }
+    }
+    return { color: drawColor, thickness: drawThickness, opacity: 1 }
+  }, [selectedDrawId, drawAnnotations, drawColor, drawThickness])
+
+  // Apply a partial style update to the currently selected draw, or
+  // to the next-draw defaults when nothing is selected. Opacity isn't
+  // exposed in the sub-toolbar but is kept here for future use.
+  const updateDrawStyle = useCallback(
+    (updates: Partial<{ color: string; thickness: number; opacity: number }>) => {
+      if (selectedDrawId) {
+        setDrawAnnotations((prev) =>
+          prev.map((d) => (d.id === selectedDrawId ? { ...d, ...updates } : d))
+        )
+      } else {
+        if (updates.color !== undefined) setDrawColor(updates.color)
+        if (updates.thickness !== undefined) setDrawThickness(updates.thickness)
+      }
+    },
+    [selectedDrawId]
+  )
+
+  // Delete the draw with the given id and clear the selection if it
+  // was selected. Deactivates the draw tool so the toolbar returns
+  // to its idle state.
+  const removeDrawAnnotation = useCallback((id: string) => {
+    setDrawAnnotations((prev) => prev.filter((d) => d.id !== id))
+    setSelectedDrawId((current) => (current === id ? null : current))
+    setActiveTool(null)
+  }, [])
+
+  // Commit a freehand draw to the annotation list. Called from both
+  // the document-level mouseup handler and the safety-net useEffect
+  // that runs when the tool is deactivated mid-draw.
+  const commitDraftDraw = useCallback(() => {
+    const prev = draftDraw
+    if (!prev || prev.points.length < 2) {
+      setDraftDraw(null)
+      return
+    }
+    const newAnnotation: DrawAnnotation = {
+      id: crypto.randomUUID(),
+      pageIndex: prev.pageIndex,
+      points: prev.points,
+      color: drawColor,
+      thickness: drawThickness,
+      opacity: 1,
+    }
+    setDraftDraw(null)
+    setDrawAnnotations((anns) => [...anns, newAnnotation])
+    setSelectedDrawId(newAnnotation.id)
+  }, [draftDraw, drawColor, drawThickness])
+
+  // Apply the current value of the hex draw-color input. Accepts
+  // 3- or 6-character hex (shorthand is expanded to 6 chars).
+  const applyDrawColor = useCallback(() => {
+    if (hexDrawColor.length === 3 || hexDrawColor.length === 6) {
+      const normalized = expandHexShorthand(hexDrawColor)
+      if (hexDrawColor.length === 3) setHexDrawColor(normalized)
+      updateDrawStyle({ color: `#${normalized}` })
+    }
+  }, [hexDrawColor, updateDrawStyle])
+
   // Apply the current value in the hex text-color input to the active style.
   // Accepts both 3-character shorthand (e.g. "abc") and full 6-character
   // hex codes; shorthand is expanded to its 6-character form so the rest
@@ -476,6 +653,10 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
   useEffect(() => {
     setHexHighlightColor(activeStyle.highlightColor === "transparent" ? "" : activeStyle.highlightColor.replace("#", ""))
   }, [activeStyle.highlightColor])
+
+  useEffect(() => {
+    setHexDrawColor(activeDrawStyle.color.replace("#", ""))
+  }, [activeDrawStyle.color])
 
   // Render every page to a JPEG dataURL for the in-browser preview
   useEffect(() => {
@@ -615,16 +796,19 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
   }, [renderedPages, displayScale])
 
   // Deselects the active annotation. Deactivates the active tool only
-  // when something was actually selected (so pan/text tools stay active).
+  // when something was actually selected (so pan/text/draw tools stay active).
   const handleCanvasDeselect = useCallback(() => {
     setSelectedAnnotationId(null)
     setSelectedImageId(null)
     setEditingAnnotationId(null)
+    if (activeTool !== "draw") {
+      setSelectedDrawId(null)
+    }
     if (selectedAnnotationId || selectedImageId) {
       setActiveTool(null)
     }
     window.getSelection()?.removeAllRanges()
-  }, [selectedAnnotationId, selectedImageId])
+  }, [selectedAnnotationId, selectedImageId, activeTool])
 
   const commitDraft = useCallback(() => {
     if (!draftPosition) return
@@ -766,6 +950,86 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
           annotation.height === 0 ? 1 : annotation.width / annotation.height,
       }
       setResizingImageId(annotation.id)
+    },
+    []
+  )
+
+  // Draw resize — free resize (no aspect lock). The original
+  // bounding box AND the original points are captured at mousedown
+  // so every mousemove scales from the original geometry. The
+  // bounding box and the draw path are kept as a single unit: the
+  // bbox tells you how big the draw should be, and the points are
+  // derived directly from that — there is no separate "resize the
+  // draw" step that can drift out of sync with the bbox.
+  const handleDrawResizeMouseDown = useCallback(
+    (event: React.MouseEvent, annotation: DrawAnnotation, direction: ResizeDirection) => {
+      event.preventDefault()
+      event.stopPropagation()
+      const bbox = getDrawBbox(annotation)
+      drawResizeStateRef.current = {
+        annotationId: annotation.id,
+        direction,
+        startMouseX: event.clientX,
+        startMouseY: event.clientY,
+        startBboxX: bbox.x,
+        startBboxY: bbox.y,
+        startBboxWidth: bbox.width,
+        startBboxHeight: bbox.height,
+        // Snapshot the points as they are right now. Every later
+        // mousemove maps from THIS snapshot — not from the
+        // already-scaled state — so the draw tracks the bbox
+        // exactly.
+        startPoints: annotation.points.map((p) => ({ x: p.x, y: p.y })),
+      }
+      setResizingDrawId(annotation.id)
+    },
+    []
+  )
+
+  // Start a freehand drawing drag — every point is offset by the
+  // mouse delta until mouseup.
+  const handleDrawMouseDown = useCallback(
+    (event: React.MouseEvent, annotation: DrawAnnotation) => {
+      event.preventDefault()
+      event.stopPropagation()
+      drawDragStateRef.current = {
+        annotationId: annotation.id,
+        startMouseX: event.clientX,
+        startMouseY: event.clientY,
+        startPoints: annotation.points.map((p) => ({ x: p.x, y: p.y })),
+      }
+      setDraggingDrawId(annotation.id)
+    },
+    []
+  )
+
+  // Page-level mousedown: when the draw tool is active, start a new
+  // freehand path at the click point. Existing drawings handle their
+  // own mousedown (they stopPropagation) so the user can select them
+  // without accidentally starting a new stroke.
+  const handlePageDrawMouseDown = useCallback(
+    (event: React.MouseEvent, pageIndex: number) => {
+      if (activeTool !== "draw") return
+      const target = event.target as Element | null
+      if (target?.closest("[data-drawing-id]")) return
+      event.stopPropagation()
+      event.preventDefault()
+      const rect = event.currentTarget.getBoundingClientRect()
+      const x = (event.clientX - rect.left) / displayScale
+      const y = (event.clientY - rect.top) / displayScale
+      setDraftDraw({ pageIndex, points: [{ x, y }] })
+      // Starting a new draw implicitly deselects any existing one
+      setSelectedDrawId(null)
+    },
+    [activeTool, displayScale]
+  )
+
+  // Select an existing draw and activate the draw tool so the
+  // sub-toolbar shows the selected draw's stroke settings.
+  const handleSelectDraw = useCallback(
+    (id: string) => {
+      setSelectedDrawId(id)
+      setActiveTool("draw")
     },
     []
   )
@@ -1195,13 +1459,161 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
     }
   }, [resizingImageId, displayScale])
 
+  // Document-level draw resize — free resize (no aspect lock). The
+  // bounding box and the draw are one unit: the user drags a
+  // handle, that tells us the new bbox dimensions, and the points
+  // are remapped from the original (mousedown) snapshot so the
+  // draw's new bbox exactly matches the handle-driven new bbox.
+  // No separate "scale the draw" step that can drift out of sync.
+  useEffect(() => {
+    if (!resizingDrawId) return
+    const onMove = (e: MouseEvent) => {
+      const s = drawResizeStateRef.current
+      if (!s) return
+      const dx = (e.clientX - s.startMouseX) / displayScale
+      const dy = (e.clientY - s.startMouseY) / displayScale
+      const dir = s.direction
+      const resizesRight = dir === "right" || dir === "top-right" || dir === "bottom-right"
+      const resizesLeft = dir === "left" || dir === "top-left" || dir === "bottom-left"
+      const resizesBottom = dir === "bottom" || dir === "bottom-left" || dir === "bottom-right"
+      const resizesTop = dir === "top" || dir === "top-left" || dir === "top-right"
+
+      // Step 1: figure out where the new bbox should be, based
+      // on the handle the user is dragging. The "left"/"top"
+      // handles shift the bbox origin so the opposite edge stays
+      // put while the user drags outward.
+      let newWidth = s.startBboxWidth
+      let newHeight = s.startBboxHeight
+      let newBboxX = s.startBboxX
+      let newBboxY = s.startBboxY
+
+      if (resizesRight) newWidth = Math.max(20, s.startBboxWidth + dx)
+      if (resizesLeft) {
+        newWidth = Math.max(20, s.startBboxWidth - dx)
+        newBboxX = s.startBboxX + (s.startBboxWidth - newWidth)
+      }
+      if (resizesBottom) newHeight = Math.max(20, s.startBboxHeight + dy)
+      if (resizesTop) {
+        newHeight = Math.max(20, s.startBboxHeight - dy)
+        newBboxY = s.startBboxY + (s.startBboxHeight - newHeight)
+      }
+
+      // Step 2: derive the per-axis scale that maps the original
+      // bbox into the new bbox, and remap the ORIGINAL points
+      // (captured at mousedown) through that scale. Mapping from
+      // the original snapshot — instead of `d.points`, which is
+      // the already-resized state — means the math is idempotent
+      // and the draw's new bbox always matches the bbox the user
+      // is dragging to.
+      const scaleX = s.startBboxWidth === 0 ? 1 : newWidth / s.startBboxWidth
+      const scaleY = s.startBboxHeight === 0 ? 1 : newHeight / s.startBboxHeight
+      const remappedPoints = s.startPoints.map((p) => ({
+        x: newBboxX + (p.x - s.startBboxX) * scaleX,
+        y: newBboxY + (p.y - s.startBboxY) * scaleY,
+      }))
+      setDrawAnnotations((prev) =>
+        prev.map((d) => {
+          if (d.id !== s.annotationId) return d
+          // Stroke thickness is left untouched: resizing the
+          // bounding box must not change the draw's stroke
+          // weight. Only the path scales with the bbox.
+          return { ...d, points: remappedPoints }
+        })
+      )
+    }
+    const onUp = () => {
+      drawResizeStateRef.current = null
+      setResizingDrawId(null)
+    }
+    document.addEventListener("mousemove", onMove)
+    document.addEventListener("mouseup", onUp)
+    return () => {
+      document.removeEventListener("mousemove", onMove)
+      document.removeEventListener("mouseup", onUp)
+    }
+  }, [resizingDrawId, displayScale])
+
+  // Document-level draw drag — offsets every point by the mouse
+  // delta. Stroke thickness and shape are preserved.
+  useEffect(() => {
+    if (!draggingDrawId) return
+    const onMove = (e: MouseEvent) => {
+      const start = drawDragStateRef.current
+      if (!start) return
+      const dx = (e.clientX - start.startMouseX) / displayScale
+      const dy = (e.clientY - start.startMouseY) / displayScale
+      setDrawAnnotations((prev) =>
+        prev.map((d) => {
+          if (d.id !== start.annotationId) return d
+          const newPoints = start.startPoints.map((p) => ({
+            x: p.x + dx,
+            y: p.y + dy,
+          }))
+          return { ...d, points: newPoints }
+        })
+      )
+    }
+    const onUp = () => {
+      drawDragStateRef.current = null
+      setDraggingDrawId(null)
+    }
+    document.addEventListener("mousemove", onMove)
+    document.addEventListener("mouseup", onUp)
+    return () => {
+      document.removeEventListener("mousemove", onMove)
+      document.removeEventListener("mouseup", onUp)
+    }
+  }, [draggingDrawId, displayScale])
+
+  // Document-level mouse move/up for freehand drawing. Active only
+  // while a draft draw is in progress (mousedown on the page set it).
+  // Coordinates are taken from the bounding rect of the page the
+  // stroke started on so the path stays attached even when the user
+  // scrolls mid-stroke.
+  useEffect(() => {
+    if (!draftDraw) return
+    const onMove = (e: MouseEvent) => {
+      const pageEl = pageRefs.current.get(draftDraw.pageIndex)
+      if (!pageEl) return
+      const rect = pageEl.getBoundingClientRect()
+      const x = (e.clientX - rect.left) / displayScale
+      const y = (e.clientY - rect.top) / displayScale
+      setDraftDraw((prev) => {
+        if (!prev) return prev
+        const last = prev.points[prev.points.length - 1]
+        // Skip points that haven't moved enough to be worth storing
+        if (last && Math.hypot(x - last.x, y - last.y) < 0.5) return prev
+        return { ...prev, points: [...prev.points, { x, y }] }
+      })
+    }
+    const onUp = () => {
+      commitDraftDraw()
+    }
+    document.addEventListener("mousemove", onMove)
+    document.addEventListener("mouseup", onUp)
+    return () => {
+      document.removeEventListener("mousemove", onMove)
+      document.removeEventListener("mouseup", onUp)
+    }
+  }, [draftDraw, displayScale, commitDraftDraw])
+
+  // Safety net: if the tool is deactivated while a draft is in
+  // progress (e.g. user clicks another tool mid-stroke) commit the
+  // partial path so the user's work isn't lost.
+  useEffect(() => {
+    if (activeTool !== "draw" && draftDraw) {
+      commitDraftDraw()
+    }
+  }, [activeTool, draftDraw, commitDraftDraw])
+
   // Delete key removes the selected annotation; skipped in inputs/textareas
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Delete") return
       const textId = selectedAnnotationId
       const imageId = selectedImageId
-      if (!textId && !imageId) return
+      const drawId = selectedDrawId
+      if (!textId && !imageId && !drawId) return
       const target = e.target as HTMLElement | null
       if (target) {
         const tag = target.tagName
@@ -1210,10 +1622,11 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
       e.preventDefault()
       if (textId) removeAnnotation(textId)
       if (imageId) removeImageAnnotation(imageId)
+      if (drawId) removeDrawAnnotation(drawId)
     }
     document.addEventListener("keydown", onKeyDown)
     return () => document.removeEventListener("keydown", onKeyDown)
-  }, [selectedAnnotationId, selectedImageId, removeAnnotation, removeImageAnnotation])
+  }, [selectedAnnotationId, selectedImageId, selectedDrawId, removeAnnotation, removeImageAnnotation, removeDrawAnnotation])
 
   // One-time auto-fit for new annotations so they don't stay at placeholder size
   useLayoutEffect(() => {
@@ -1365,6 +1778,36 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
         }
       }
 
+      // Freehand drawings: each stroke is a freeform SVG path, drawn
+      // with `page.drawSvgPath`. Coordinates are converted from the
+      // canvas (RENDER_SCALE) system to PDF points (origin
+      // bottom-left) inside `pointsToPdfPath`. `borderColor` carries
+      // the stroke colour and `borderWidth` carries the line
+      // thickness in points so the saved stroke matches the editor
+      // preview. `setLineJoin`/`setLineCap` are pushed explicitly
+      // because `drawSvgPath` only exposes `borderLineCap` (no
+      // join) — we want rounded corners for a freehand feel.
+      for (const draw of drawAnnotations) {
+        const page = pages[draw.pageIndex]
+        if (!page) continue
+        const { height: pageHeight } = page.getSize()
+        const path = pointsToPdfPath(draw.points, pageHeight)
+        if (!path) continue
+        const [dr, dg, db] = hexToRgbValues(draw.color)
+        page.pushOperators(
+          pushGraphicsState(),
+          setLineCap(LineCapStyle.Round),
+          setLineJoin(LineJoinStyle.Round)
+        )
+        page.drawSvgPath(path, {
+          borderColor: rgb(dr, dg, db),
+          borderWidth: draw.thickness,
+          opacity: draw.opacity,
+          borderLineCap: LineCapStyle.Round,
+        })
+        page.pushOperators(popGraphicsState())
+      }
+
       const bytes = await pdfDoc.save()
       // pdf-lib's save() returns Uint8Array<ArrayBufferLike>; copy to satisfy BlobPart types
       const ab = new ArrayBuffer(bytes.byteLength)
@@ -1385,7 +1828,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
     } finally {
       setIsSaving(false)
     }
-  }, [annotations, imageAnnotations, fileBuffer, filename])
+  }, [annotations, imageAnnotations, drawAnnotations, fileBuffer, filename])
 
   // Empty / loading states
 
@@ -1968,6 +2411,180 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
         </div>
       )}
 
+      {/* ── Draw sub-toolbar ───────────────────────────────────────── */}
+      {activeTool === "draw" && (
+        <div
+          ref={subToolbarRef}
+          className="relative z-30 flex items-center justify-center gap-1.5 border-b border-border bg-card px-3 py-1.5 sm:pl-40 sm:pr-96"
+        >
+          {/* Color picker: black swatch + caret matching the screenshot */}
+          <div className="relative">
+            <button
+              type="button"
+              data-dropdown-toggle="drawColor"
+              onClick={() => setOpenDropdown(openDropdown === "drawColor" ? null : "drawColor")}
+              className="inline-flex h-8 items-center gap-1 rounded border border-border bg-background pl-2 pr-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+              title="Stroke color"
+              aria-label="Stroke color"
+            >
+              <span
+                className="block h-5 w-5 rounded-sm border border-border"
+                style={{ backgroundColor: activeDrawStyle.color }}
+              />
+              <ChevronDown className="h-3 w-3 shrink-0" />
+            </button>
+            {openDropdown === "drawColor" && (
+              <div data-dropdown="drawColor" className="absolute left-0 top-full z-50 mt-1 w-[178px] rounded-md border border-border bg-popover p-2 shadow-lg">
+                <div className="grid grid-cols-5 gap-1.5">
+                  {COLOR_PALETTE.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => { updateDrawStyle({ color: c }); setOpenDropdown(null) }}
+                      className={cn(
+                        "flex h-7 w-7 items-center justify-center rounded-full border transition-transform hover:scale-110",
+                        activeDrawStyle.color.toLowerCase() === c.toLowerCase()
+                          ? "border-primary ring-2 ring-primary/30"
+                          : c === "#ffffff" ? "border-border" : "border-transparent"
+                      )}
+                      style={{ backgroundColor: c }}
+                      title={c}
+                    >
+                      {activeDrawStyle.color.toLowerCase() === c.toLowerCase() && (
+                        <Check className={cn("h-3.5 w-3.5", c === "#ffffff" || c === "#f3f3f3" || c === "#efefef" || c === "#ffff00" || c === "#00ff00" || c === "#00ffff" ? "text-gray-800" : "text-white")} />
+                      )}
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-2 flex items-center gap-1.5 border-t border-border pt-2">
+                  <span className="text-xs text-muted-foreground">#</span>
+                  <input
+                    type="text"
+                    value={hexDrawColor}
+                    placeholder="000000"
+                    onChange={(e) => {
+                      const v = e.target.value.replace(/[^0-9a-fA-F]/g, "").slice(0, 6)
+                      setHexDrawColor(v)
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault()
+                        applyDrawColor()
+                      }
+                    }}
+                    onBlur={() => {
+                      if (hexDrawColor.length !== 3 && hexDrawColor.length !== 6) {
+                        setHexDrawColor(activeDrawStyle.color.replace("#", ""))
+                      }
+                    }}
+                    className="h-7 w-full rounded border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none focus:ring-1 focus:ring-primary"
+                    maxLength={6}
+                    spellCheck={false}
+                  />
+                  <button
+                    type="button"
+                    onClick={applyDrawColor}
+                    disabled={hexDrawColor.length !== 3 && hexDrawColor.length !== 6}
+                    className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-border bg-accent text-foreground transition-colors hover:bg-accent/80 disabled:cursor-not-allowed disabled:opacity-40"
+                    title="Apply color"
+                    aria-label="Apply color"
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                  </button>
+                  <div className="h-6 w-6 shrink-0 rounded border border-border" style={{ backgroundColor: hexDrawColor.length === 3 || hexDrawColor.length === 6 ? `#${expandHexShorthand(hexDrawColor)}` : activeDrawStyle.color }} />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="mx-1 h-6 w-px shrink-0 bg-border" />
+
+          {/* Thickness: icon + numeric input with up/down arrows + "pt" suffix */}
+          <List className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+          <div className="flex h-8 items-stretch overflow-hidden rounded border border-border bg-background">
+            <input
+              type="number"
+              min={1}
+              max={72}
+              value={activeDrawStyle.thickness}
+              onChange={(e) => {
+                const v = Number(e.target.value)
+                if (!Number.isNaN(v)) {
+                  updateDrawStyle({ thickness: Math.max(1, Math.min(72, v)) })
+                }
+              }}
+              onBlur={(e) => {
+                const v = Number(e.target.value)
+                if (Number.isNaN(v) || v < 1) {
+                  updateDrawStyle({ thickness: 1 })
+                } else if (v > 72) {
+                  updateDrawStyle({ thickness: 72 })
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") e.currentTarget.blur()
+              }}
+              className="w-10 bg-transparent px-1 text-center text-sm tabular-nums text-foreground outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              title="Stroke thickness"
+              aria-label="Stroke thickness in points"
+            />
+            <span className="self-center pr-1 text-xs text-muted-foreground">pt</span>
+            <div className="flex w-5 flex-col border-l border-border">
+              <button
+                type="button"
+                onClick={() => updateDrawStyle({ thickness: Math.min(72, activeDrawStyle.thickness + 1) })}
+                className="flex h-1/2 items-center justify-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                title="Increase thickness"
+                aria-label="Increase thickness"
+              >
+                <ChevronUp className="h-3 w-3" />
+              </button>
+              <button
+                type="button"
+                onClick={() => updateDrawStyle({ thickness: Math.max(1, activeDrawStyle.thickness - 1) })}
+                className="flex h-1/2 items-center justify-center border-t border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                title="Decrease thickness"
+                aria-label="Decrease thickness"
+              >
+                <ChevronDown className="h-3 w-3" />
+              </button>
+            </div>
+          </div>
+
+          <div className="mx-1 h-6 w-px shrink-0 bg-border" />
+
+          <button
+            type="button"
+            onClick={() => {
+              if (selectedDrawId) removeDrawAnnotation(selectedDrawId)
+              setActiveTool(null)
+            }}
+            disabled={!selectedDrawId}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-40"
+            title="Delete drawing"
+            aria-label="Delete drawing"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (draftDraw && draftDraw.points.length >= 2) {
+                commitDraftDraw()
+              } else {
+                setDraftDraw(null)
+              }
+            }}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-green-600 transition-colors hover:bg-green-50 dark:hover:bg-green-950/40"
+            title="Done drawing"
+            aria-label="Done drawing"
+          >
+            <Check className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       {/* Hidden file input — .click() is triggered by the image tool activation. The
           actual cancellation handling is wired up in a useEffect below via a
           native `cancel` event listener (React's input prop types don't expose
@@ -2055,18 +2672,22 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
               renderedPages.map((page) => {
                 const pageAnnotations = annotations.filter((a) => a.pageIndex === page.pageIndex)
                 const pageImageAnnotations = imageAnnotations.filter((a) => a.pageIndex === page.pageIndex)
+                const pageDrawAnnotations = drawAnnotations.filter((d) => d.pageIndex === page.pageIndex)
                 const isDrafting = draftPosition?.pageIndex === page.pageIndex
+                const isDraftDrawHere = draftDraw?.pageIndex === page.pageIndex
                 return (
                   <div key={page.pageIndex} className="flex flex-col items-center gap-2">
                     <div
                       ref={setPageRef(page.pageIndex)}
                       data-page-index={page.pageIndex}
                       onClick={handleCanvasDeselect}
+                      onMouseDown={(e) => handlePageDrawMouseDown(e, page.pageIndex)}
                       className={cn(
                         "relative shrink-0 bg-white shadow-lg ring-1 ring-black/5",
                         activeTool === "text" && "cursor-crosshair",
                         activeTool === "hand" && !isPanning && "cursor-grab",
-                        activeTool === "hand" && isPanning && "cursor-grabbing select-none"
+                        activeTool === "hand" && isPanning && "cursor-grabbing select-none",
+                        activeTool === "draw" && "cursor-crosshair"
                       )}
                       style={{
                         width: page.width * displayScale,
@@ -2312,6 +2933,144 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
                           </div>
                         )
                       })}
+
+
+                      {/* Freehand drawing overlay. The SVG fills the page and
+                          uses the canvas (RENDER_SCALE) coordinate system via
+                          viewBox so the same path data works for both the
+                          editor and the PDF save. Existing strokes are
+                          individually clickable (pointer-events-auto on the
+                          <g>) so the user can select them; the in-progress
+                          draft passes events through to the page div so the
+                          cursor stays a crosshair and panning stays disabled. */}
+                      {(pageDrawAnnotations.length > 0 || isDraftDrawHere) && (
+                        <svg
+                          className="pointer-events-none absolute inset-0"
+                          width={page.width * displayScale}
+                          height={page.height * displayScale}
+                          viewBox={`0 0 ${page.width} ${page.height}`}
+                          aria-hidden
+                        >
+                          {pageDrawAnnotations.map((ann) => {
+                            const isSelected = selectedDrawId === ann.id
+                            const isHovered = hoveredDrawId === ann.id
+                            const bbox = getDrawBbox(ann)
+                            const strokeHalf = (ann.thickness * RENDER_SCALE) / 2
+                            const pad = strokeHalf + 6
+                            const hasBbox = bbox.width > 0 || bbox.height > 0
+                            return (
+                              <g
+                                key={ann.id}
+                                data-drawing-id={ann.id}
+                                className="pointer-events-auto"
+                                style={{ cursor: "move" }}
+                                onMouseDown={(e) => {
+                                  handleDrawMouseDown(e, ann)
+                                }}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleSelectDraw(ann.id)
+                                }}
+                                onMouseEnter={() => setHoveredDrawId(ann.id)}
+                                onMouseLeave={() => setHoveredDrawId(null)}
+                              >
+                                {hasBbox && (
+                                  <rect
+                                    x={bbox.x - pad}
+                                    y={bbox.y - pad}
+                                    width={bbox.width + pad * 2}
+                                    height={bbox.height + pad * 2}
+                                    fill="transparent"
+                                    stroke={isHovered && !isSelected ? "#2563eb" : "none"}
+                                    strokeWidth={2}
+                                    vectorEffect="non-scaling-stroke"
+                                    rx={3}
+                                  />
+                                )}
+                                <path
+                                  d={pointsToPath(ann.points)}
+                                  stroke={ann.color}
+                                  strokeWidth={ann.thickness * RENDER_SCALE}
+                                  fill="none"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  opacity={ann.opacity}
+                                />
+                              </g>
+                            )
+                          })}
+                          {isDraftDrawHere && draftDraw && (
+                            <path
+                              d={pointsToPath(draftDraw.points)}
+                              stroke={drawColor}
+                              strokeWidth={drawThickness * RENDER_SCALE}
+                              fill="none"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          )}
+                        </svg>
+                      )}
+
+                      {/* 8 resize handles around the currently selected draw,
+                          matched to the text/image tool style. The wrapping
+                          div is pointer-events-none so the user can still
+                          click the empty canvas to deselect; only the handle
+                          spans re-enable pointer events. */}
+                      {pageDrawAnnotations
+                        .filter((d) => selectedDrawId === d.id)
+                        .map((draw) => {
+                          const bbox = getDrawBbox(draw)
+                          if (bbox.width === 0 && bbox.height === 0) return null
+                          const hs = 8
+                          const hh = hs / 2
+                          const handle = (
+                            dir: ResizeDirection,
+                            cursor: string,
+                            pos: React.CSSProperties
+                          ) => (
+                            <span
+                              key={dir}
+                              className="absolute bg-[#2563eb] border border-white"
+                              style={{
+                                width: hs,
+                                height: hs,
+                                cursor,
+                                pointerEvents: "auto",
+                                ...pos,
+                              }}
+                              onMouseDown={(e) => {
+                                e.stopPropagation()
+                                handleDrawResizeMouseDown(e, draw, dir)
+                              }}
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                          )
+                          return (
+                            <div
+                              key={draw.id}
+                              data-draw-resize-id={draw.id}
+                              className="ring-2 ring-primary"
+                              style={{
+                                position: "absolute",
+                                left: bbox.x * displayScale,
+                                top: bbox.y * displayScale,
+                                width: bbox.width * displayScale,
+                                height: bbox.height * displayScale,
+                                pointerEvents: "none",
+                              }}
+                            >
+                              {handle("top-left", "nwse-resize", { left: -hh, top: -hh })}
+                              {handle("top", "ns-resize", { left: "50%", top: -hh, transform: "translateX(-50%)" })}
+                              {handle("top-right", "nesw-resize", { right: -hh, top: -hh })}
+                              {handle("left", "ew-resize", { left: -hh, top: "50%", transform: "translateY(-50%)" })}
+                              {handle("right", "ew-resize", { right: -hh, top: "50%", transform: "translateY(-50%)" })}
+                              {handle("bottom-left", "nesw-resize", { left: -hh, bottom: -hh })}
+                              {handle("bottom", "ns-resize", { left: "50%", bottom: -hh, transform: "translateX(-50%)" })}
+                              {handle("bottom-right", "nwse-resize", { right: -hh, bottom: -hh })}
+                            </div>
+                          )
+                        })}
 
 
                       {isDrafting && draftPosition && (
