@@ -1,7 +1,7 @@
 "use client"
 
-import { useUser, useClerk } from "@clerk/nextjs"
-import { useState } from "react"
+import { useUser, useClerk, useReverification } from "@clerk/nextjs"
+import { useCallback, useState } from "react"
 import {
   Lock,
   Monitor,
@@ -30,6 +30,22 @@ export default function SecurityPage() {
   const [passwordSaved, setPasswordSaved] = useState(false)
   const [passwordError, setPasswordError] = useState("")
 
+  // Wrap the sensitive updatePassword call with useReverification so Clerk
+  // handles the re-authentication flow automatically (e.g. re-prompting for
+  // the current password) instead of requiring manual session refresh hacks.
+  // If the user provides their current password, Clerk uses it directly to
+  // authorize the change; otherwise the reverification flow kicks in.
+  const updatePassword = useCallback(
+    (params: { currentPassword?: string; newPassword: string }) => {
+      if (!user) {
+        throw new Error("User is not loaded")
+      }
+      return user.updatePassword(params)
+    },
+    [user]
+  )
+  const protectedUpdatePassword = useReverification(updatePassword)
+
   if (!isLoaded || !user) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -44,8 +60,16 @@ export default function SecurityPage() {
     setPasswordError("")
     setPasswordSaved(false)
 
+    if (hasPassword && !currentPassword) {
+      setPasswordError("Please enter your current password")
+      return
+    }
     if (newPassword.length < 8) {
       setPasswordError("Password must be at least 8 characters")
+      return
+    }
+    if (hasPassword && newPassword === currentPassword) {
+      setPasswordError("New password must be different from your current password")
       return
     }
     if (newPassword !== confirmPassword) {
@@ -55,9 +79,9 @@ export default function SecurityPage() {
 
     setPasswordSaving(true)
     try {
-      await user.updatePassword({
-        newPassword,
+      await protectedUpdatePassword({
         ...(hasPassword ? { currentPassword } : {}),
+        newPassword,
       })
       setPasswordSaved(true)
       setCurrentPassword("")
