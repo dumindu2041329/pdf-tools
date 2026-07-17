@@ -49,7 +49,7 @@ export function RotatePreview({ files, rotation, className }: Props) {
 
       getPdfJs().then((pdfjs) => {
         pdfjs
-          .getDocument(objUrl)
+          .getDocument({ url: objUrl })
           .promise.then(async (pdf) => {
             for (let pageIdx = 1; pageIdx <= 1; pageIdx++) {
               const page = await pdf.getPage(pageIdx)

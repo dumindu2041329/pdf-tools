@@ -79,7 +79,7 @@ export function PageNumberOptions({ options, onChange, files }: Props) {
         const objUrl = URL.createObjectURL(file)
         getPdfJs().then((pdfjs) => {
           pdfjs
-            .getDocument(objUrl)
+            .getDocument({ url: objUrl })
             .promise.then((pdf) => {
               const newPages = `1-${pdf.numPages}`
               onChange({

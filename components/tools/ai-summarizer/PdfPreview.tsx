@@ -45,7 +45,7 @@ export function PdfPreview({ file, className }: Props) {
         setPageCount(0)
         setCurrentPage(1)
 
-        const pdf = await pdfjs.getDocument(objUrl).promise
+        const pdf = await pdfjs.getDocument({ url: objUrl }).promise
         if (cancelled) return
         setPageCount(pdf.numPages)
 

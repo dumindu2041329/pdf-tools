@@ -113,7 +113,7 @@ export function PageNumberPreview({ files, options, className, onFileSelect }: P
 
       getPdfJs().then((pdfjs) => {
         pdfjs
-          .getDocument(objUrl)
+          .getDocument({ url: objUrl })
           .promise.then(async (pdf) => {
             filePageCountsRef.current.set(fileIdx, pdf.numPages)
             for (let pageIdx = 1; pageIdx <= pdf.numPages; pageIdx++) {

@@ -177,7 +177,7 @@ export function OrganizeOptions({ files, options, onChange }: Props) {
         for (let fileIdx = 0; fileIdx < files.length; fileIdx++) {
           const file = files[fileIdx]
           const objUrl = URL.createObjectURL(file)
-          const pdf = await pdfjs.getDocument(objUrl).promise
+          const pdf = await pdfjs.getDocument({ url: objUrl }).promise
 
           for (let i = 1; i <= pdf.numPages; i++) {
             const page = await pdf.getPage(i)

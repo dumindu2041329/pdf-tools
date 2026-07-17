@@ -25,7 +25,7 @@ export async function extractPdfText(file: File): Promise<string> {
   const objUrl = URL.createObjectURL(file)
 
   try {
-    const pdf = await pdfjs.getDocument(objUrl).promise
+    const pdf = await pdfjs.getDocument({ url: objUrl }).promise
     const pages: string[] = []
 
     for (let i = 1; i <= pdf.numPages; i++) {
