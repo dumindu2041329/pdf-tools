@@ -1,11 +1,10 @@
-import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server"
+import { clerkMiddleware } from "@clerk/nextjs/server"
 
-const isProtectedRoute = createRouteMatcher([])
-
+// Resource-based auth checks are performed in the protected layouts/pages
+// (e.g. app/(dashboard)/layout.tsx) using auth.protect(), per the
+// current Clerk guidance. Middleware no longer uses path matching.
 export default clerkMiddleware(async (auth, req) => {
-  if (isProtectedRoute(req)) {
-    await auth.protect()
-  }
+  // Intentionally empty: route protection is handled in the layout.
 }, { clockSkewInMs: 60000 })
 
 export const config = {
