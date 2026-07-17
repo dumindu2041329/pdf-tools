@@ -78,6 +78,7 @@ export function PageNumberPreview({ files, options, className, onFileSelect }: P
   const prevFileIndexRef = useRef<number>(-1)
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Reset selection when file list changes
     setSelectedFileIndex(0)
     prevFileIndexRef.current = -1
   }, [files])
@@ -98,6 +99,7 @@ export function PageNumberPreview({ files, options, className, onFileSelect }: P
 
   useEffect(() => {
     if (!files || files.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Reset items when files are cleared
       setItems([])
       return
     }

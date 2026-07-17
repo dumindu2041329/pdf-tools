@@ -647,14 +647,17 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
   }, [openDropdown])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Sync hex input when color picker changes active style
     setHexTextColor(activeStyle.color.replace("#", ""))
   }, [activeStyle.color])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Sync hex input when highlight picker changes
     setHexHighlightColor(activeStyle.highlightColor === "transparent" ? "" : activeStyle.highlightColor.replace("#", ""))
   }, [activeStyle.highlightColor])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Sync hex input when draw color picker changes
     setHexDrawColor(activeDrawStyle.color.replace("#", ""))
   }, [activeDrawStyle.color])
 
@@ -1602,6 +1605,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
   // partial path so the user's work isn't lost.
   useEffect(() => {
     if (activeTool !== "draw" && draftDraw) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Commit pending draw when tool switches away
       commitDraftDraw()
     }
   }, [activeTool, draftDraw, commitDraftDraw])

@@ -95,6 +95,7 @@ export function WatermarkPreview({ files, options, className, onFileSelect }: Pr
 
   // Reset selected file index when files change
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Reset selection when file list changes
     setSelectedFileIndex(0)
     prevFileIndexRef.current = -1
   }, [files])
@@ -115,6 +116,7 @@ export function WatermarkPreview({ files, options, className, onFileSelect }: Pr
 
   useEffect(() => {
     if (!files || files.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Reset items when files are cleared
       setItems([])
       return
     }

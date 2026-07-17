@@ -34,7 +34,8 @@ export default function WorkflowsPage() {
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
-  const [currentPage, setCurrentPage] = useState(1)
+  const [page, setPage] = useState(1)
+  const currentPage = searchQuery ? 1 : page
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
   const itemsPerPage = 9
 
@@ -52,10 +53,6 @@ export default function WorkflowsPage() {
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
   )
-
-  useEffect(() => {
-    setCurrentPage(1)
-  }, [searchQuery])
 
   useEffect(() => {
     async function refresh() {
@@ -434,7 +431,7 @@ export default function WorkflowsPage() {
           <Button
             variant="outline"
             size="icon"
-            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
             disabled={currentPage === 1}
           >
             <ChevronLeft className="h-4 w-4" />
@@ -445,7 +442,7 @@ export default function WorkflowsPage() {
                 key={page}
                 variant={page === currentPage ? "default" : "ghost"}
                 size="sm"
-                onClick={() => setCurrentPage(page)}
+                onClick={() => setPage(page)}
                 className="w-10"
               >
                 {page}
@@ -455,7 +452,7 @@ export default function WorkflowsPage() {
           <Button
             variant="outline"
             size="icon"
-            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
             disabled={currentPage === totalPages}
           >
             <ChevronRight className="h-4 w-4" />

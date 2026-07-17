@@ -31,15 +31,13 @@ export function MobileScanView({ sessionId }: MobileScanViewProps) {
   // `null` means "not yet determined" so the Save handler can wait
   // for the real value before deciding whether to navigate or show
   // the confirmation overlay.
-  const [isMobileDevice, setIsMobileDevice] = useState<boolean | null>(null)
+  const [isMobileDevice] = useState<boolean | null>(() => {
+    const info = parseDeviceInfo(navigator.userAgent)
+    return info?.type === "mobile" || info?.type === "tablet"
+  })
   const inputRef = useRef<HTMLInputElement>(null)
 
   const validSession = SAFE_SESSION.test(sessionId)
-
-  useEffect(() => {
-    const info = parseDeviceInfo(navigator.userAgent)
-    setIsMobileDevice(info?.type === "mobile" || info?.type === "tablet")
-  }, [])
 
   // Tell the desktop session that this phone just joined. Sent once
   // on mount; the desktop uses the response to blur Step 1 and display

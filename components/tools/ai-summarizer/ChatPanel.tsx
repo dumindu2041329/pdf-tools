@@ -455,6 +455,7 @@ function MermaidDiagram({
     // is fully streamed. Showing a half-built diagram flashing as
     // chunks arrive is much worse UX than a stable code preview.
     if (isStreaming || !closed) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Reset diagram state when stream updates arrive
       setSvg(null)
       setError(null)
       return
@@ -556,6 +557,7 @@ function MermaidDiagram({
   // fresh (no stuck grab cursor, no half-completed drag).
   useEffect(() => {
     if (isFullscreen) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Cleanup pan state when fullscreen closes
     setIsSpacePressed(false)
     setIsDragging(false)
     dragStateRef.current = null
@@ -867,6 +869,7 @@ export function ChatPanel({
   useEffect(() => {
     let cancelled = false
     const assistantId = uid()
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Initialize streaming summary on mount
     setMessages([
       { id: assistantId, role: "assistant", content: "", isStreaming: true, createdAt: Date.now() },
     ])

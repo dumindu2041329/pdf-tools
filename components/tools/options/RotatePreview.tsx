@@ -35,6 +35,7 @@ export function RotatePreview({ files, rotation, className }: Props) {
 
   useEffect(() => {
     if (!files || files.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Reset items when files are cleared
       setItems([])
       return
     }

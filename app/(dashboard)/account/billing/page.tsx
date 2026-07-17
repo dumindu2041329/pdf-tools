@@ -143,7 +143,9 @@ export default function BillingPage() {
   // unnecessary. The URL is always cleaned up so the success params don't
   // linger and trigger the flow again on subsequent visits.
   const searchParamsRef = useRef(searchParams)
-  searchParamsRef.current = searchParams
+  useEffect(() => {
+    searchParamsRef.current = searchParams
+  })
   const handledSessionIdRef = useRef<string | null>(null)
 
   useEffect(() => {

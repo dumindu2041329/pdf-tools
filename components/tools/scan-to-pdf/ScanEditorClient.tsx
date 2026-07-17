@@ -201,9 +201,14 @@ export function ScanEditorClient({ sessionId }: { sessionId: string }) {
     }
   }, [validSession, sessionId])
 
+  const refreshRef = useRef(refresh)
   useEffect(() => {
-    refresh()
-  }, [refresh])
+    refreshRef.current = refresh
+  })
+
+  useEffect(() => {
+    refreshRef.current()
+  }, [validSession, sessionId])
 
   // Once the user's PDF is ready and the download card shows up, the
   // original scan captures in Supabase have done their job. Wipe the

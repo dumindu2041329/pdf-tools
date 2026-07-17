@@ -52,6 +52,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
 
   useEffect(() => {
     if (!isWorkflowMode || !workflowId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Reset workflow when leaving workflow mode
       setWorkflow(null)
       return
     }
@@ -69,23 +70,21 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
       .catch(() => setWorkflow(null))
   }, [isWorkflowMode, workflowId])
 
-  const [workflowSession, setWorkflowSession] = useState<WorkflowSession | null>(null)
+  const [workflowSession, setWorkflowSession] = useState<WorkflowSession | null>(
+    () => isWorkflowMode ? getWorkflowSession() : null
+  )
 
-  // Load workflow session on mount/transition
+  // Load workflow session on mount/transition (async fallback only)
   useEffect(() => {
     if (!isWorkflowMode) return
+    if (workflowSession) return
 
-    const syncSession = getWorkflowSession()
-    if (syncSession) {
-      setWorkflowSession(syncSession)
-    } else {
-      loadWorkflowSession().then((loadedSession) => {
-        if (loadedSession) {
-          setWorkflowSession(loadedSession)
-        }
-      })
-    }
-  }, [isWorkflowMode, stepIndex])
+    loadWorkflowSession().then((loadedSession) => {
+      if (loadedSession) {
+        setWorkflowSession(loadedSession)
+      }
+    })
+  }, [isWorkflowMode, workflowSession])
 
   const [files, setFiles] = useState<File[]>([])
   const [filesLoaded, setFilesLoaded] = useState(false)
@@ -99,6 +98,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
 
   // Reset loaded state when stepIndex changes to allow loading new step files
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Reset files when stepping between workflow steps
     setFilesLoaded(false)
     setFiles([])
     setIsSavingAndRedirecting(false)
@@ -155,6 +155,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
       } else {
         const blob = new Blob([buffer], { type: "application/pdf" })
         const file = new File([blob], prevResult.filename || "input.pdf", { type: "application/pdf" })
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- Sync file load from workflow session on step transition
         setFiles([file])
         setFilesLoaded(true)
       }
@@ -388,6 +389,7 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
     if (isSuccess && isWorkflowMode && state.status === "success" && "downloadUrl" in state) {
       const session = getWorkflowSession()
       if (session) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- Start workflow save flow synchronously when success detected
         setIsSavingAndRedirecting(true)
         fetch(state.downloadUrl)
           .then(res => res.arrayBuffer())
