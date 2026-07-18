@@ -13,7 +13,7 @@
 | **Auth** | Clerk (`@clerk/nextjs` ^7.0.7) |
 | **PDF Engine** | iLoveAPI (`@ilovepdf/ilovepdf-nodejs` ^0.3.1) + Adobe PDF Services (`@adobe/pdfservices-node-sdk` ^4.1.0) + `pdf-lib` ^1.17.1 / `jszip` ^3.10.1 / `jsonwebtoken` ^9.0.3 |
 | **Object Storage** | Supabase Storage (`@supabase/supabase-js` ^2.108.2) — client uploads for source PDFs > 4 MB and mobile-scan captures |
-| **AI Services** | OpenRouter (via the `openai` ^6.33.0 SDK pointed at `https://openrouter.ai/api/v1`). The `openai` SDK is used purely as a generic OpenAI-compatible client; the actual provider is OpenRouter (model `openai/gpt-oss-120b:free`) |
+| **AI Services** | OpenRouter (via the `openai` ^6.33.0 SDK pointed at `https://openrouter.ai/api/v1`). The `openai` SDK is used purely as a generic OpenAI-compatible client; the actual provider is OpenRouter (model `openrouter/free`) |
 | **Payments** | Stripe (`stripe` ^16.12.0) for Premium subscription |
 | **Telemetry** | `@vercel/analytics` ^2.0.1 + `@vercel/speed-insights` ^2.0.0 (mounted in root layout) |
 | **PDF Parsing (client)** | `pdfjs-dist` ^4.10.38 — used by the AI Summarizer + Translate-PDF for in-browser text extraction, by the Edit-PDF editor for page rasterisation, and by the AI Summarizer for the PDF preview |
@@ -411,8 +411,8 @@ Object paths are unguessable (random suffixes appended to every leaf by `withRan
 | `pdf-to-jpg`, `pdf-to-pdfa` | Server | iLoveAPI | Multi-file → server-side JSZip pack |
 | `validate-pdfa` | Server | iLoveAPI | Returns `{ validationSuccess, message, result }` |
 | `sign-pdf` | Server | iLoveAPI Signature API | Dedicated `/api/tools/sign` route; `ilovepdf.sign` task + raw `/v1/signature` call |
-| `ai-summarizer` | Client + Server | OpenRouter (via `/api/ai/summarize`) | Step 1: client-side `pdfjs-dist` extracts PDF text (`extractPdfText()`); Step 2: server streams `openai/gpt-oss-120b:free` over SSE. No iLoveAPI. The same endpoint also handles multi-turn follow-up chat (`mode: "chat"`) that re-sends the document text + transcript tail; the client renders answers as document bubbles with markdown + Mermaid diagrams. |
-| `translate-pdf` | Client + Server | OpenRouter (via `/api/ai/translate`) | Step 1: client-side `pdfjs-dist` extracts the document text (the iLoveAPI `extract` engine is wired up in the tool config but the view bypasses the API route); Step 2: server streams `openai/gpt-oss-120b:free` over SSE. Custom `TranslatePdfView` renders the streamed translation as a document bubble. |
+| `ai-summarizer` | Client + Server | OpenRouter (via `/api/ai/summarize`) | Step 1: client-side `pdfjs-dist` extracts PDF text (`extractPdfText()`); Step 2: server streams `openrouter/free` over SSE. No iLoveAPI. The same endpoint also handles multi-turn follow-up chat (`mode: "chat"`) that re-sends the document text + transcript tail; the client renders answers as document bubbles with markdown + Mermaid diagrams. |
+| `translate-pdf` | Client + Server | OpenRouter (via `/api/ai/translate`) | Step 1: client-side `pdfjs-dist` extracts the document text (the iLoveAPI `extract` engine is wired up in the tool config but the view bypasses the API route); Step 2: server streams `openrouter/free` over SSE. Custom `TranslatePdfView` renders the streamed translation as a document bubble. |
 
 ### Edit-PDF editor (browser-based)
 
@@ -626,7 +626,7 @@ type ToolState =
 - `CLERK_SECRET_KEY` — Clerk secret key
 - `ILOVEAPI_PUBLIC_KEY` — iLoveAPI public key
 - `ILOVEAPI_SECRET_KEY` — iLoveAPI secret key
-- `OPENROUTER_API_KEY` — OpenRouter API key. Required for the AI summarizer AND translate-pdf — routes completions to `openai/gpt-oss-120b:free` via `https://openrouter.ai/api/v1` (both routes use the `openai` SDK pointed at OpenRouter). When unset, both endpoints fall back to streaming the prompt back in tiny chunks so the UI still has *something* to render during development.
+- `OPENROUTER_API_KEY` — OpenRouter API key. Required for the AI summarizer AND translate-pdf — routes completions to `openrouter/free` via `https://openrouter.ai/api/v1` (both routes use the `openai` SDK pointed at OpenRouter). When unset, both endpoints fall back to streaming the prompt back in tiny chunks so the UI still has *something* to render during development.
 - `NEXT_PUBLIC_SUPABASE_URL` — Supabase project URL. Public — safe to ship to the browser. Used for both the database (via PostgREST) and Storage.
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY` — Supabase anon (publishable) key. Public — safe to ship to the browser. Required for Storage; used as the database fallback when `SUPABASE_SERVICE_ROLE_KEY` is unset.
 

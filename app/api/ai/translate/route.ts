@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { canProcessFile, recordProcessingEvent } from "@/lib/usage"
 import { getUserPlan } from "@/lib/auth"
 
-const OPENROUTER_MODEL = "openai/gpt-oss-120b:free"
+const OPENROUTER_MODEL = "openrouter/free"
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 type ChatStream = {

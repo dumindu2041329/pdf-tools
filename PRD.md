@@ -59,7 +59,7 @@
 
 This document specifies the complete requirements for a modern, web-based PDF productivity platform. The platform provides **29 PDF tools** across 7 categories, powered by a **multi-engine architecture**: iLoveAPI for cloud PDF processing, Adobe PDF Services for Office conversions and OCR, pdf-lib for client-side operations (merge, split, rotate), and pdfjs-dist for browser-based rendering and text extraction.
 
-The platform supports both authenticated users (via Clerk) and guest users (cookie-tracked), with a freemium model: free tier (5 files/day, 30/month, 20 MB max) and premium tier ($20/month via Stripe, unlimited files, 4 GB max). AI features (summarization, translation) are powered by OpenRouter using the `openai/gpt-oss-120b:free` model.
+The platform supports both authenticated users (via Clerk) and guest users (cookie-tracked), with a freemium model: free tier (5 files/day, 30/month, 20 MB max) and premium tier ($20/month via Stripe, unlimited files, 4 GB max). AI features (summarization, translation) are powered by OpenRouter using the `openrouter/free` model.
 
 Dual deployment targets are supported: **Vercel** (primary, serverless) and **Fly.io** (Docker, 2 GB RAM, bypasses Vercel's body-size and timeout limits).
 
@@ -111,7 +111,7 @@ Dual deployment targets are supported: **Vercel** (primary, serverless) and **Fl
 | Layer | Choice |
 |-------|--------|
 | Provider | OpenRouter (via `openai` ^6.33.0 SDK) |
-| Model | `openai/gpt-oss-120b:free` |
+| Model | `openrouter/free` |
 | Base URL | `https://openrouter.ai/api/v1` |
 
 ### Database & Storage

@@ -61,7 +61,7 @@ Chain multiple tools into reusable multi-step pipelines, stored in Neon PostgreS
 | 🎨 Styling | Tailwind CSS v4 + shadcn/ui (Radix + CVA) | ^4 |
 | 🔐 Auth | Clerk | ^7.0.7 |
 | 📑 PDF Engine | iLoveAPI + Adobe PDF Services + pdf-lib | — |
-| 🤖 AI | OpenRouter (via the `openai` SDK, model `openai/gpt-oss-120b:free`) | ^6.33.0 |
+| 🤖 AI | OpenRouter (via the `openai` SDK, model `openrouter/free`) | ^6.33.0 |
 | 💳 Payments | Stripe (Premium subscription) | ^16.12.0 |
 | 💾 Object Storage | Supabase Storage (client-upload for files > 4 MB) | ^2.45.0 |
 | 🗄️ Database | Supabase PostgreSQL (PostgREST, same project as Storage) | ^2.108.2 |
@@ -171,7 +171,7 @@ Create a free app at [clerk.com](https://clerk.com) and add your publishable and
 ### 5. 🔑 Set Up PDF, AI & Payment Services
 
 - **iLoveAPI** — Get keys at [iloveapi.com](https://iloveapi.com)
-- **OpenRouter** — Get an API key at [openrouter.ai](https://openrouter.ai) (the AI summarizer and translate-pdf routes use the `openai` SDK pointed at OpenRouter, model `openai/gpt-oss-120b:free`)
+- **OpenRouter** — Get an API key at [openrouter.ai](https://openrouter.ai) (the AI summarizer and translate-pdf routes use the `openai` SDK pointed at OpenRouter, model `openrouter/free`)
 - **Adobe PDF Services** *(optional, for Word/Excel/PowerPoint export and OCR)* — Get credentials at [developer.adobe.com](https://developer.adobe.com/document-services)
 - **Stripe** *(optional, for Premium subscription)* — Get keys at [dashboard.stripe.com](https://dashboard.stripe.com)
 - **Supabase Storage** *(auto-configured on Supabase; locally add NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY to `.env.local`)* — Used for files > 4 MB via the [client-upload pattern](https://supabase.com/docs/guides/storage/uploads/standard-uploads)
