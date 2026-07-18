@@ -196,6 +196,10 @@ interface DrawAnnotation {
   // Stroke thickness in PDF points (matches what the user picks in the sub-toolbar)
   thickness: number
   opacity: number
+  // Clockwise rotation applied visually via SVG transform and on save via pdf-lib
+  // graphics state. The bounding box is anchored to the unrotated path so the
+  // user keeps the same selection area at any angle.
+  rotation: number
 }
 
 // Build an SVG path "d" attribute from a list of points. Skips points that
@@ -252,6 +256,141 @@ function getDrawBbox(draw: DrawAnnotation): { x: number; y: number; width: numbe
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
 }
 
+// Render a ShapeAnnotation as a fragment of SVG elements. Used by the
+// editor overlay (which uses the canvas / RENDER_SCALE-scaled coordinate
+// system) and the smiley uses the bbox centre/radius derived from the
+// shape's geometry so it scales naturally with resizing.
+function renderShapeGeometry(shape: ShapeAnnotation) {
+  const { x, y, width, height, type, color, thickness, opacity, fill } = shape
+  // Bbox-centre ellipse dimensions — used for circle / smiley so the
+  // shape is always proportional to its bbox.
+  const cx = x + width / 2
+  const cy = y + height / 2
+  const rx = width / 2
+  const ry = height / 2
+  // Display stroke width is in canvas units (already at RENDER_SCALE)
+  const sw = thickness * RENDER_SCALE
+  const baseStroke = {
+    stroke: color,
+    strokeWidth: sw,
+    fill: "none",
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    opacity,
+    vectorEffect: "non-scaling-stroke" as const,
+  }
+  if (type === "line") {
+    // Use explicit endpoints when available (preserves line orientation);
+    // fall back to the bbox diagonal for legacy shapes.
+    const x1 = shape.lineStartX ?? x
+    const y1 = shape.lineStartY ?? y
+    const x2 = shape.lineEndX ?? x + width
+    const y2 = shape.lineEndY ?? y + height
+    return (
+      <line
+        x1={x1}
+        y1={y1}
+        x2={x2}
+        y2={y2}
+        {...baseStroke}
+      />
+    )
+  }
+  if (type === "rect") {
+    return (
+      <rect
+        x={x}
+        y={y}
+        width={width}
+        height={height}
+        fill={fill === "transparent" ? "none" : fill}
+        fillOpacity={fill === "transparent" ? undefined : opacity}
+        stroke={color}
+        strokeWidth={sw}
+        strokeOpacity={opacity}
+        vectorEffect="non-scaling-stroke"
+      />
+    )
+  }
+  if (type === "circle") {
+    return (
+      <ellipse
+        cx={cx}
+        cy={cy}
+        rx={rx}
+        ry={ry}
+        fill={fill === "transparent" ? "none" : fill}
+        fillOpacity={fill === "transparent" ? undefined : opacity}
+        stroke={color}
+        strokeWidth={sw}
+        strokeOpacity={opacity}
+        vectorEffect="non-scaling-stroke"
+      />
+    )
+  }
+  // smiley: circle + two eye dots + an arc mouth, all sized from the
+  // bbox so the face stays roughly proportional to its container.
+  const eyeR = Math.max(1.5, Math.min(width, height) * 0.05)
+  const eyeOffsetX = Math.max(8, width * 0.18)
+  const eyeOffsetY = Math.max(8, height * 0.18)
+  const mouthRy = Math.max(8, height * 0.12)
+  const mouthRx = Math.max(12, width * 0.22)
+  return (
+    <g opacity={opacity}>
+      <ellipse
+        cx={cx}
+        cy={cy}
+        rx={rx}
+        ry={ry}
+        fill="none"
+        stroke={color}
+        strokeWidth={sw}
+        vectorEffect="non-scaling-stroke"
+      />
+      <circle cx={cx - eyeOffsetX} cy={cy - eyeOffsetY} r={eyeR * RENDER_SCALE} fill={color} />
+      <circle cx={cx + eyeOffsetX} cy={cy - eyeOffsetY} r={eyeR * RENDER_SCALE} fill={color} />
+      <path
+        d={`M ${cx - mouthRx} ${cy + mouthRy} Q ${cx} ${cy + mouthRy * 2.4} ${cx + mouthRx} ${cy + mouthRy}`}
+        fill="none"
+        stroke={color}
+        strokeWidth={sw}
+        strokeLinecap="round"
+        vectorEffect="non-scaling-stroke"
+      />
+    </g>
+  )
+}
+
+interface ShapeAnnotation {
+  id: string
+  pageIndex: number
+  // Bounding box in canvas (RENDER_SCALE) coordinates, origin top-left.
+  x: number
+  y: number
+  width: number
+  height: number
+  // "line" = straight line drawn from lineStartX/Y to lineEndX/Y
+  //   (the bbox x/y/width/height is kept in sync to encompass both
+  //   endpoints, but the explicit fields preserve orientation).
+  // "rect" = rectangle outline (or filled when fill !== "transparent")
+  // "circle" = ellipse fitted to the bbox
+  // "smiley" = circle outline + two eye dots + an arc mouth
+  type: "line" | "rect" | "circle" | "smiley"
+  // Explicit endpoints for the line type. When set, the line is drawn
+  // from (lineStartX, lineStartY) to (lineEndX, lineEndY) instead of
+  // the default bbox diagonal. Both fields exist together for lines.
+  lineStartX?: number
+  lineStartY?: number
+  lineEndX?: number
+  lineEndY?: number
+  color: string
+  thickness: number
+  opacity: number
+  fill: string // "transparent" for outlined-only shapes
+  // Clockwise rotation applied visually + on save via pdf-lib graphics state
+  rotation: number
+}
+
 interface RenderedPage {
   pageIndex: number
   dataUrl: string
@@ -274,7 +413,7 @@ const TOOLBAR_TOOLS: { id: ToolId; label: string; icon: typeof Hand; ready: bool
   { id: "text", label: "Add text", icon: Type, ready: true },
   { id: "image", label: "Add image", icon: ImageIcon, ready: true },
   { id: "draw", label: "Draw", icon: Pencil, ready: true },
-  { id: "shape", label: "Shapes", icon: Shapes, ready: false },
+  { id: "shape", label: "Shapes", icon: Shapes, ready: true },
 ]
 
 export function EditPdfEditorClient({ fileUrl, filename }: Props) {
@@ -399,6 +538,66 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
     startMouseX: number
     startMouseY: number
     startPoints: Array<{ x: number; y: number }>
+  } | null>(null)
+  // Shape annotations (line, rect, circle, smiley) — drawn from the shape
+  // sub-toolbar; each has a fixed bbox that the 8-handle resizer scales.
+  const [shapeAnnotations, setShapeAnnotations] = useState<ShapeAnnotation[]>([])
+  const [selectedShapeId, setSelectedShapeId] = useState<string | null>(null)
+  const [hoveredShapeId, setHoveredShapeId] = useState<string | null>(null)
+  const [draggingShapeId, setDraggingShapeId] = useState<string | null>(null)
+  const [resizingShapeId, setResizingShapeId] = useState<string | null>(null)
+  // Multi-selection set: ids of annotations/images/draws/shapes that have
+  // been Shift+clicked. Each type keeps its own "primary" single-selection
+  // state (for drag/resize/sub-toolbar targeting); this set adds extra
+  // items that show selection visuals and are included in batch delete.
+  const [multiSelectedIds, setMultiSelectedIds] = useState<Set<string>>(new Set())
+  // In-progress shape being drawn by dragging (only for the "line" type,
+  // which is dragged from a start point to an end point instead of dropped
+  // as a fixed box). Lives on the current page until mouseup.
+  const [draftShape, setDraftShape] = useState<{
+    pageIndex: number
+    startX: number
+    startY: number
+    x: number
+    y: number
+    width: number
+    height: number
+    color: string
+    thickness: number
+    opacity: number
+  } | null>(null)
+  // Next-shape defaults shown in the sub-toolbar when nothing is selected.
+  const [shapeType, setShapeType] = useState<ShapeAnnotation["type"]>("line")
+  const [shapeColor, setShapeColor] = useState("#000000")
+  const [shapeFill, setShapeFill] = useState("transparent")
+  const [shapeThickness, setShapeThickness] = useState(3)
+  const [hexShapeColor, setHexShapeColor] = useState("000000")
+  const [hexShapeFill, setHexShapeFill] = useState("")
+  const shapeDragStateRef = useRef<{
+    annotationId: string
+    startMouseX: number
+    startMouseY: number
+    startX: number
+    startY: number
+    startLineStartX?: number
+    startLineStartY?: number
+    startLineEndX?: number
+    startLineEndY?: number
+  } | null>(null)
+  const shapeResizeStateRef = useRef<{
+    annotationId: string
+    direction: ResizeDirection
+    startMouseX: number
+    startMouseY: number
+    startX: number
+    startY: number
+    startWidth: number
+    startHeight: number
+    // For line pivot resize: the two endpoints at mousedown time.
+    startLineStartX?: number
+    startLineStartY?: number
+    startLineEndX?: number
+    startLineEndY?: number
   } | null>(null)
   // Queued by the text tool; the placeholder is dropped once the page renders
   const wantPlaceholderRef = useRef(false)
@@ -531,14 +730,113 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
     [selectedDrawId]
   )
 
-  // Delete the draw with the given id and clear the selection if it
-  // was selected. Deactivates the draw tool so the toolbar returns
+  // Rotate the currently selected draw by ±45°. The bounding box is
+  // anchored to the unrotated path so the selection ring stays in
+  // place; the path itself is rotated via SVG transform at render
+  // time and via pdf-lib operators on save.
+  const rotateSelectedDraw = useCallback(
+    (delta: number) => {
+      if (!selectedDrawId) return
+      setDrawAnnotations((prev) =>
+        prev.map((d) => {
+          if (d.id !== selectedDrawId) return d
+          const next = ((d.rotation + delta) % 360 + 360) % 360
+          return { ...d, rotation: next }
+        })
+      )
+    },
+    [selectedDrawId]
+  )
+
+  // Mirror of `activeDrawStyle` for the shape sub-toolbar. Mirrors the
+  // currently-selected shape (so the toolbar shows its current color,
+  // thickness, etc.) or falls back to the next-shape defaults when no
+  // shape is selected yet.
+  const activeShapeStyle = useMemo(() => {
+    if (selectedShapeId) {
+      const shape = shapeAnnotations.find((s) => s.id === selectedShapeId)
+      if (shape) {
+        return {
+          type: shape.type,
+          color: shape.color,
+          thickness: shape.thickness,
+          opacity: shape.opacity,
+          fill: shape.fill,
+        }
+      }
+    }
+    return {
+      type: shapeType,
+      color: shapeColor,
+      thickness: shapeThickness,
+      opacity: 1,
+      fill: shapeFill,
+    }
+  }, [selectedShapeId, shapeAnnotations, shapeType, shapeColor, shapeThickness, shapeFill])
+
+  // Apply a partial style update to the currently selected shape, or
+  // to the next-shape defaults when nothing is selected.
+  const updateShapeStyle = useCallback(
+    (updates: Partial<{ type: ShapeAnnotation["type"]; color: string; thickness: number; opacity: number; fill: string }>) => {
+      if (selectedShapeId) {
+        setShapeAnnotations((prev) =>
+          prev.map((s) => (s.id === selectedShapeId ? { ...s, ...updates } : s))
+        )
+      } else {
+        if (updates.type !== undefined) setShapeType(updates.type)
+        if (updates.color !== undefined) setShapeColor(updates.color)
+        if (updates.thickness !== undefined) setShapeThickness(updates.thickness)
+        if (updates.fill !== undefined) setShapeFill(updates.fill)
+      }
+    },
+    [selectedShapeId]
+  )
+
+  // Rotate the currently selected shape by ±45°. The bbox is anchored
+  // to the unrotated geometry so the selection ring stays in place;
+  // the shape content is rotated via SVG transform at render time
+  // and via pdf-lib operators on save.
+  const rotateSelectedShape = useCallback(
+    (delta: number) => {
+      if (!selectedShapeId) return
+      setShapeAnnotations((prev) =>
+        prev.map((s) => {
+          if (s.id !== selectedShapeId) return s
+          const next = ((s.rotation + delta) % 360 + 360) % 360
+          return { ...s, rotation: next }
+        })
+      )
+    },
+    [selectedShapeId]
+  )
+
+  // Delete the shape with the given id and clear the selection if it
+  // was selected. Deactivates the shape tool so the toolbar returns
   // to its idle state.
-  const removeDrawAnnotation = useCallback((id: string) => {
-    setDrawAnnotations((prev) => prev.filter((d) => d.id !== id))
-    setSelectedDrawId((current) => (current === id ? null : current))
-    setActiveTool(null)
-  }, [])
+  // Apply the current value of the hex shape-stroke input. Accepts
+  // 3- or 6-character hex (shorthand is expanded to 6 chars).
+  const applyShapeColor = useCallback(() => {
+    if (hexShapeColor.length === 3 || hexShapeColor.length === 6) {
+      const normalized = expandHexShorthand(hexShapeColor)
+      if (hexShapeColor.length === 3) setHexShapeColor(normalized)
+      updateShapeStyle({ color: `#${normalized}` })
+    }
+  }, [hexShapeColor, updateShapeStyle])
+
+  // Apply the current value of the hex shape-fill input. Empty input
+  // means "no fill" (transparent), so the active style is set to
+  // "transparent" only when the input is exactly empty.
+  const applyShapeFill = useCallback(() => {
+    if (hexShapeFill.length === 0) {
+      updateShapeStyle({ fill: "transparent" })
+      return
+    }
+    if (hexShapeFill.length === 3 || hexShapeFill.length === 6) {
+      const normalized = expandHexShorthand(hexShapeFill)
+      if (hexShapeFill.length === 3) setHexShapeFill(normalized)
+      updateShapeStyle({ fill: `#${normalized}` })
+    }
+  }, [hexShapeFill, updateShapeStyle])
 
   // Commit a freehand draw to the annotation list. Called from both
   // the document-level mouseup handler and the safety-net useEffect
@@ -556,11 +854,52 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
       color: drawColor,
       thickness: drawThickness,
       opacity: 1,
+      rotation: 0,
     }
     setDraftDraw(null)
     setDrawAnnotations((anns) => [...anns, newAnnotation])
     setSelectedDrawId(newAnnotation.id)
   }, [draftDraw, drawColor, drawThickness])
+
+  // Commit the in-progress line shape to the annotation list. Called
+  // from the document-level mouseup handler. A zero-length drag is
+  // discarded (treated as a stray click) — the line needs real extent.
+  const commitDraftShape = useCallback(() => {
+    const prev = draftShape
+    if (!prev) {
+      setDraftShape(null)
+      return
+    }
+    setDraftShape(null)
+    if (prev.width === 0 && prev.height === 0) return
+    // Derive the actual endpoint from the bbox + start point. The line
+    // goes from (startX, startY) to the opposite corner of the drag bbox.
+    const endX = prev.startX === prev.x ? prev.x + prev.width : prev.x
+    const endY = prev.startY === prev.y ? prev.y + prev.height : prev.y
+    const newId = crypto.randomUUID()
+    setShapeAnnotations((anns) => [
+      ...anns,
+      {
+        id: newId,
+        pageIndex: prev.pageIndex,
+        x: prev.x,
+        y: prev.y,
+        width: prev.width,
+        height: prev.height,
+        type: "line",
+        lineStartX: prev.startX,
+        lineStartY: prev.startY,
+        lineEndX: endX,
+        lineEndY: endY,
+        color: prev.color,
+        thickness: prev.thickness,
+        opacity: prev.opacity,
+        fill: "transparent",
+        rotation: 0,
+      },
+    ])
+    setSelectedShapeId(newId)
+  }, [draftShape])
 
   // Apply the current value of the hex draw-color input. Accepts
   // 3- or 6-character hex (shorthand is expanded to 6 chars).
@@ -660,6 +999,16 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Sync hex input when draw color picker changes
     setHexDrawColor(activeDrawStyle.color.replace("#", ""))
   }, [activeDrawStyle.color])
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Sync hex input when shape stroke color picker changes
+    setHexShapeColor(activeShapeStyle.color.replace("#", ""))
+  }, [activeShapeStyle.color])
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Sync hex input when shape fill picker changes
+    setHexShapeFill(activeShapeStyle.fill === "transparent" ? "" : activeShapeStyle.fill.replace("#", ""))
+  }, [activeShapeStyle.fill])
 
   // Render every page to a JPEG dataURL for the in-browser preview
   useEffect(() => {
@@ -798,8 +1147,11 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
     return () => scroller.removeEventListener("scroll", onScroll)
   }, [renderedPages, displayScale])
 
-  // Deselects the active annotation. Deactivates the active tool only
-  // when something was actually selected (so pan/text/draw tools stay active).
+  // Deselects the active annotation. Deactivates the active tool when
+  // something was actually selected (so pan/text/draw tools stay active),
+  // and also deactivates the shape tool when the user clicks outside of a
+  // shape while it's active — the click only reaches here when no shape was
+  // hit (shapes stopPropagation on their own click).
   const handleCanvasDeselect = useCallback(() => {
     setSelectedAnnotationId(null)
     setSelectedImageId(null)
@@ -807,11 +1159,17 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
     if (activeTool !== "draw") {
       setSelectedDrawId(null)
     }
-    if (selectedAnnotationId || selectedImageId) {
+    if (activeTool !== "shape") {
+      setSelectedShapeId(null)
+    }
+    if (selectedAnnotationId || selectedImageId || selectedShapeId) {
+      setActiveTool(null)
+    } else if (activeTool === "shape") {
       setActiveTool(null)
     }
+    setMultiSelectedIds(new Set())
     window.getSelection()?.removeAllRanges()
-  }, [selectedAnnotationId, selectedImageId, activeTool])
+  }, [selectedAnnotationId, selectedImageId, selectedShapeId, activeTool])
 
   const commitDraft = useCallback(() => {
     if (!draftPosition) return
@@ -846,17 +1204,36 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
     setDraftText("")
   }, [draftPosition, draftText, textStyle])
 
-  const removeAnnotation = useCallback((id: string) => {
-    setAnnotations((prev) => prev.filter((a) => a.id !== id))
-    setSelectedAnnotationId((current) => (current === id ? null : current))
-    setActiveTool(null)
+  // ── Multi-selection helpers ─────────────────────────────────────
+
+  // Clear all individual + multi selections across every annotation type.
+  const clearAllSelections = useCallback(() => {
+    setSelectedAnnotationId(null)
+    setSelectedImageId(null)
+    setSelectedDrawId(null)
+    setSelectedShapeId(null)
+    setMultiSelectedIds(new Set())
   }, [])
 
-  const removeImageAnnotation = useCallback((id: string) => {
-    setImageAnnotations((prev) => prev.filter((a) => a.id !== id))
-    setSelectedImageId((current) => (current === id ? null : current))
+  // Remove all individually- + multi-selected items in one batch.
+  const deleteSelected = useCallback(() => {
+    const idsToRemove = new Set(multiSelectedIds)
+    if (selectedAnnotationId) idsToRemove.add(selectedAnnotationId)
+    if (selectedImageId) idsToRemove.add(selectedImageId)
+    if (selectedDrawId) idsToRemove.add(selectedDrawId)
+    if (selectedShapeId) idsToRemove.add(selectedShapeId)
+    if (idsToRemove.size === 0) return
+    setAnnotations((prev) => prev.filter((a) => !idsToRemove.has(a.id)))
+    setImageAnnotations((prev) => prev.filter((a) => !idsToRemove.has(a.id)))
+    setDrawAnnotations((prev) => prev.filter((a) => !idsToRemove.has(a.id)))
+    setShapeAnnotations((prev) => prev.filter((a) => !idsToRemove.has(a.id)))
+    setSelectedAnnotationId(null)
+    setSelectedImageId(null)
+    setSelectedDrawId(null)
+    setSelectedShapeId(null)
+    setMultiSelectedIds(new Set())
     setActiveTool(null)
-  }, [])
+  }, [multiSelectedIds, selectedAnnotationId, selectedImageId, selectedDrawId, selectedShapeId])
 
   // Drop a chosen image at the center of the current page, width clamped to half the page
   const handleImageFileChange = useCallback(
@@ -1022,9 +1399,9 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
       const y = (event.clientY - rect.top) / displayScale
       setDraftDraw({ pageIndex, points: [{ x, y }] })
       // Starting a new draw implicitly deselects any existing one
-      setSelectedDrawId(null)
+      clearAllSelections()
     },
-    [activeTool, displayScale]
+    [activeTool, displayScale, clearAllSelections]
   )
 
   // Select an existing draw and activate the draw tool so the
@@ -1033,6 +1410,122 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
     (id: string) => {
       setSelectedDrawId(id)
       setActiveTool("draw")
+    },
+    []
+  )
+
+  // Drop a new shape at the click point when the shape tool is active.
+  // For the "line" type the click starts a drag: we record the start
+  // point and let the document-level mousemove handler extend it so the
+  // user draws the line by dragging. All other types are dropped as a
+  // fixed 160×120 box the user can grab and resize. The newly created
+  // shape is selected so the sub-toolbar shows its style.
+  const handlePageShapeMouseDown = useCallback(
+    (event: React.MouseEvent, pageIndex: number) => {
+      if (activeTool !== "shape") return
+      const target = event.target as Element | null
+      if (target?.closest("[data-shape-id]")) return
+      event.stopPropagation()
+      event.preventDefault()
+      const rect = event.currentTarget.getBoundingClientRect()
+      const x = (event.clientX - rect.left) / displayScale
+      const y = (event.clientY - rect.top) / displayScale
+      if (shapeType === "line") {
+        // Begin a drag-to-draw line from this point.
+        setDraftShape({
+          pageIndex,
+          startX: x,
+          startY: y,
+          x,
+          y,
+          width: 0,
+          height: 0,
+          color: shapeColor,
+          thickness: shapeThickness,
+          opacity: 1,
+        })
+        return
+      }
+      // Default size in canvas units (already in RENDER_SCALE-scaled space).
+      const DEFAULT_W = 160
+      const DEFAULT_H = 120
+      const newId = crypto.randomUUID()
+      setShapeAnnotations((prev) => [
+        ...prev,
+        {
+          id: newId,
+          pageIndex,
+          x: x - DEFAULT_W / 2,
+          y: y - DEFAULT_H / 2,
+          width: DEFAULT_W,
+          height: DEFAULT_H,
+          type: shapeType,
+          color: shapeColor,
+          thickness: shapeThickness,
+          opacity: 1,
+          fill: shapeFill,
+          rotation: 0,
+        },
+      ])
+      setSelectedShapeId(newId)
+    },
+    [activeTool, displayScale, shapeType, shapeColor, shapeThickness, shapeFill]
+  )
+
+  // Start shape drag (offset the bbox by the mouse delta)
+  const handleShapeMouseDown = useCallback(
+    (event: React.MouseEvent, annotation: ShapeAnnotation) => {
+      event.preventDefault()
+      event.stopPropagation()
+      shapeDragStateRef.current = {
+        annotationId: annotation.id,
+        startMouseX: event.clientX,
+        startMouseY: event.clientY,
+        startX: annotation.x,
+        startY: annotation.y,
+        startLineStartX: annotation.lineStartX,
+        startLineStartY: annotation.lineStartY,
+        startLineEndX: annotation.lineEndX,
+        startLineEndY: annotation.lineEndY,
+      }
+      setDraggingShapeId(annotation.id)
+    },
+    []
+  )
+
+  // Shape resize — free resize (no aspect lock) like the draw tool. The
+  // original (mousedown) bbox is captured so every mousemove maps from
+  // the original geometry; left/top handles shift the origin so the
+  // opposite edge stays put while the user drags outward.
+  const handleShapeResizeMouseDown = useCallback(
+    (event: React.MouseEvent, annotation: ShapeAnnotation, direction: ResizeDirection) => {
+      event.preventDefault()
+      event.stopPropagation()
+      shapeResizeStateRef.current = {
+        annotationId: annotation.id,
+        direction,
+        startMouseX: event.clientX,
+        startMouseY: event.clientY,
+        startX: annotation.x,
+        startY: annotation.y,
+        startWidth: annotation.width,
+        startHeight: annotation.height,
+        startLineStartX: annotation.lineStartX,
+        startLineStartY: annotation.lineStartY,
+        startLineEndX: annotation.lineEndX,
+        startLineEndY: annotation.lineEndY,
+      }
+      setResizingShapeId(annotation.id)
+    },
+    []
+  )
+
+  // Select an existing shape and activate the shape tool so the
+  // sub-toolbar shows the selected shape's style.
+  const handleSelectShape = useCallback(
+    (id: string) => {
+      setSelectedShapeId(id)
+      setActiveTool("shape")
     },
     []
   )
@@ -1123,6 +1616,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
       setDraftPosition(null)
       wantPlaceholderRef.current = false
       wantImagePickerRef.current = false
+      setSelectedShapeId(null)
       return
     }
     setActiveTool(tool.id)
@@ -1568,6 +2062,141 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
     }
   }, [draggingDrawId, displayScale])
 
+  // Document-level shape drag — offsets the bbox by the mouse delta.
+  // Stroke thickness and rotation are preserved. For lines the explicit
+  // endpoints are shifted by the same delta so orientation is preserved.
+  useEffect(() => {
+    if (!draggingShapeId) return
+    const onMove = (e: MouseEvent) => {
+      const start = shapeDragStateRef.current
+      if (!start) return
+      const dx = (e.clientX - start.startMouseX) / displayScale
+      const dy = (e.clientY - start.startMouseY) / displayScale
+      setShapeAnnotations((prev) =>
+        prev.map((s) =>
+          s.id === start.annotationId
+            ? {
+                ...s,
+                x: start.startX + dx,
+                y: start.startY + dy,
+                lineStartX: start.startLineStartX != null ? start.startLineStartX + dx : undefined,
+                lineStartY: start.startLineStartY != null ? start.startLineStartY + dy : undefined,
+                lineEndX: start.startLineEndX != null ? start.startLineEndX + dx : undefined,
+                lineEndY: start.startLineEndY != null ? start.startLineEndY + dy : undefined,
+              }
+            : s
+        )
+      )
+    }
+    const onUp = () => {
+      shapeDragStateRef.current = null
+      setDraggingShapeId(null)
+    }
+    document.addEventListener("mousemove", onMove)
+    document.addEventListener("mouseup", onUp)
+    return () => {
+      document.removeEventListener("mousemove", onMove)
+      document.removeEventListener("mouseup", onUp)
+    }
+  }, [draggingShapeId, displayScale])
+
+  // Document-level shape resize — free resize (no aspect lock). The
+  // original (mousedown) bbox is captured so every mousemove maps from
+  // the original geometry; left/top handles shift the origin so the
+  // opposite edge stays put while the user drags outward. Stroke
+  // thickness and rotation are preserved — only the bbox scales.
+  //
+  // For lines the two handles ("top-left" / "bottom-right") act as
+  // endpoint pivots: dragging one endpoint keeps the other fixed so the
+  // line rotates around the stationary end. The mousedown state
+  // captures the initial endpoints so we can compute the new bbox from
+  // the moved endpoint + the fixed pivot.
+  useEffect(() => {
+    if (!resizingShapeId) return
+    const onMove = (e: MouseEvent) => {
+      const s = shapeResizeStateRef.current
+      if (!s) return
+      const dx = (e.clientX - s.startMouseX) / displayScale
+      const dy = (e.clientY - s.startMouseY) / displayScale
+      const dir = s.direction
+
+      // Line pivot resize — explicit endpoints are available.
+      if (s.startLineStartX != null) {
+        const pivotX = dir === "top-left" ? s.startLineEndX! : s.startLineStartX!
+        const pivotY = dir === "top-left" ? s.startLineEndY! : s.startLineStartY!
+        // The moved endpoint = the handle being dragged.
+        const movedX = dir === "top-left" ? s.startLineStartX! + dx : s.startLineEndX! + dx
+        const movedY = dir === "top-left" ? s.startLineStartY! + dy : s.startLineEndY! + dy
+        const newX = Math.min(pivotX, movedX)
+        const newY = Math.min(pivotY, movedY)
+        const newWidth = Math.abs(movedX - pivotX)
+        const newHeight = Math.abs(movedY - pivotY)
+        const newStartX = dir === "top-left" ? movedX : pivotX
+        const newStartY = dir === "top-left" ? movedY : pivotY
+        const newEndX = dir === "top-left" ? pivotX : movedX
+        const newEndY = dir === "top-left" ? pivotY : movedY
+        setShapeAnnotations((prev) =>
+          prev.map((sh) =>
+            sh.id === s.annotationId
+              ? {
+                  ...sh,
+                  x: newX,
+                  y: newY,
+                  width: newWidth,
+                  height: newHeight,
+                  lineStartX: newStartX,
+                  lineStartY: newStartY,
+                  lineEndX: newEndX,
+                  lineEndY: newEndY,
+                }
+              : sh
+          )
+        )
+        return
+      }
+
+      // Standard bbox resize for non-line shapes.
+      const resizesRight = dir === "right" || dir === "top-right" || dir === "bottom-right"
+      const resizesLeft = dir === "left" || dir === "top-left" || dir === "bottom-left"
+      const resizesBottom = dir === "bottom" || dir === "bottom-left" || dir === "bottom-right"
+      const resizesTop = dir === "top" || dir === "top-left" || dir === "top-right"
+
+      let newWidth = s.startWidth
+      let newHeight = s.startHeight
+      let newX = s.startX
+      let newY = s.startY
+
+      if (resizesRight) newWidth = Math.max(20, s.startWidth + dx)
+      if (resizesLeft) {
+        newWidth = Math.max(20, s.startWidth - dx)
+        newX = s.startX + (s.startWidth - newWidth)
+      }
+      if (resizesBottom) newHeight = Math.max(20, s.startHeight + dy)
+      if (resizesTop) {
+        newHeight = Math.max(20, s.startHeight - dy)
+        newY = s.startY + (s.startHeight - newHeight)
+      }
+
+      setShapeAnnotations((prev) =>
+        prev.map((sh) =>
+          sh.id === s.annotationId
+            ? { ...sh, x: newX, y: newY, width: newWidth, height: newHeight }
+            : sh
+        )
+      )
+    }
+    const onUp = () => {
+      shapeResizeStateRef.current = null
+      setResizingShapeId(null)
+    }
+    document.addEventListener("mousemove", onMove)
+    document.addEventListener("mouseup", onUp)
+    return () => {
+      document.removeEventListener("mousemove", onMove)
+      document.removeEventListener("mouseup", onUp)
+    }
+  }, [resizingShapeId, displayScale])
+
   // Document-level mouse move/up for freehand drawing. Active only
   // while a draft draw is in progress (mousedown on the page set it).
   // Coordinates are taken from the bounding rect of the page the
@@ -1610,27 +2239,72 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
     }
   }, [activeTool, draftDraw, commitDraftDraw])
 
-  // Delete key removes the selected annotation; skipped in inputs/textareas
+  // Document-level mouse move/up for drag-to-draw lines. Active only
+  // while a draft line is in progress (mousedown on a page set it). The
+  // bbox is recomputed from the start point to the current cursor so the
+  // line follows the drag exactly.
+  useEffect(() => {
+    if (!draftShape) return
+    const onMove = (e: MouseEvent) => {
+      const pageEl = pageRefs.current.get(draftShape.pageIndex)
+      if (!pageEl) return
+      const rect = pageEl.getBoundingClientRect()
+      const x = (e.clientX - rect.left) / displayScale
+      const y = (e.clientY - rect.top) / displayScale
+      const startX = draftShape.startX
+      const startY = draftShape.startY
+      setDraftShape((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          x: Math.min(startX, x),
+          y: Math.min(startY, y),
+          width: Math.abs(x - startX),
+          height: Math.abs(y - startY),
+        }
+      })
+    }
+    const onUp = () => {
+      commitDraftShape()
+    }
+    document.addEventListener("mousemove", onMove)
+    document.addEventListener("mouseup", onUp)
+    return () => {
+      document.removeEventListener("mousemove", onMove)
+      document.removeEventListener("mouseup", onUp)
+    }
+  }, [draftShape, displayScale, commitDraftShape])
+
+  // Safety net: if the tool is deactivated while a draft line is being
+  // drawn, commit the partial line so the user's work isn't lost.
+  useEffect(() => {
+    if (activeTool !== "shape" && draftShape) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Commit pending line when tool switches away
+      commitDraftShape()
+    }
+  }, [activeTool, draftShape, commitDraftShape])
+
+  // Delete key removes all selected annotations (individual + multi);
+  // skipped in inputs/textareas so the user can type freely.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Delete") return
       const textId = selectedAnnotationId
       const imageId = selectedImageId
       const drawId = selectedDrawId
-      if (!textId && !imageId && !drawId) return
+      const shapeId = selectedShapeId
+      if (!textId && !imageId && !drawId && !shapeId && multiSelectedIds.size === 0) return
       const target = e.target as HTMLElement | null
       if (target) {
         const tag = target.tagName
         if (tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable) return
       }
       e.preventDefault()
-      if (textId) removeAnnotation(textId)
-      if (imageId) removeImageAnnotation(imageId)
-      if (drawId) removeDrawAnnotation(drawId)
+      deleteSelected()
     }
     document.addEventListener("keydown", onKeyDown)
     return () => document.removeEventListener("keydown", onKeyDown)
-  }, [selectedAnnotationId, selectedImageId, selectedDrawId, removeAnnotation, removeImageAnnotation, removeDrawAnnotation])
+  }, [selectedAnnotationId, selectedImageId, selectedDrawId, selectedShapeId, multiSelectedIds, deleteSelected])
 
   // One-time auto-fit for new annotations so they don't stay at placeholder size
   useLayoutEffect(() => {
@@ -1798,18 +2472,177 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
         const path = pointsToPdfPath(draw.points, pageHeight)
         if (!path) continue
         const [dr, dg, db] = hexToRgbValues(draw.color)
-        page.pushOperators(
-          pushGraphicsState(),
-          setLineCap(LineCapStyle.Round),
-          setLineJoin(LineJoinStyle.Round)
-        )
-        page.drawSvgPath(path, {
+        const drawOptions = {
           borderColor: rgb(dr, dg, db),
           borderWidth: draw.thickness,
           opacity: draw.opacity,
           borderLineCap: LineCapStyle.Round,
+        }
+        // Rotate around the centre of the draw's bounding box so the
+        // stroke stays anchored the same way the SVG preview does.
+        // pdf-lib's rotation is CCW, so negate the editor's CW value.
+        if (draw.rotation !== 0) {
+          const bbox = getDrawBbox(draw)
+          const cx = (bbox.x + bbox.width / 2) / RENDER_SCALE
+          const cy = pageHeight - (bbox.y + bbox.height / 2) / RENDER_SCALE
+          page.pushOperators(
+            pushGraphicsState(),
+            setLineCap(LineCapStyle.Round),
+            setLineJoin(LineJoinStyle.Round),
+            translate(cx, cy),
+            rotateDegrees(-draw.rotation),
+            translate(-cx, -cy)
+          )
+          page.drawSvgPath(path, drawOptions)
+          page.pushOperators(popGraphicsState())
+        } else {
+          page.pushOperators(
+            pushGraphicsState(),
+            setLineCap(LineCapStyle.Round),
+            setLineJoin(LineJoinStyle.Round)
+          )
+          page.drawSvgPath(path, drawOptions)
+          page.pushOperators(popGraphicsState())
+        }
+      }
+
+      // Shapes (line, rect, circle, smiley) — each is drawn in PDF
+      // coordinates (origin bottom-left) derived from the canvas-space
+      // bbox. Rotation is applied around the bbox centre to match the
+      // editor's visual transform; the bbox itself is anchored to the
+      // unrotated geometry so the saved shape is identical to the
+      // preview after rotation.
+      for (const shape of shapeAnnotations) {
+        const page = pages[shape.pageIndex]
+        if (!page) continue
+        const { height: pageHeight } = page.getSize()
+        const pdfX = shape.x / RENDER_SCALE
+        const pdfY = pageHeight - shape.y / RENDER_SCALE
+        const pdfW = shape.width / RENDER_SCALE
+        const pdfH = shape.height / RENDER_SCALE
+        const [sr, sg, sb] = hexToRgbValues(shape.color)
+        const strokeColor = rgb(sr, sg, sb)
+        const [fr, fg, fb] = hexToRgbValues(shape.fill)
+        const fillColor = rgb(fr, fg, fb)
+        const hasFill = shape.fill !== "transparent" && (shape.type === "rect" || shape.type === "circle")
+
+        // Bbox centre in PDF coordinates — used for rotation and for
+        // circle / smiley geometry.
+        const pdfCx = pdfX + pdfW / 2
+        const pdfCy = pdfY - pdfH / 2
+
+        // Push the graphics state + rotation operators (pdf-lib's
+        // rotation is CCW; the editor stores CW, so negate).
+        const push = () => {
+          page.pushOperators(
+            pushGraphicsState(),
+            setLineCap(LineCapStyle.Round),
+            setLineJoin(LineJoinStyle.Round)
+          )
+          if (shape.rotation !== 0) {
+            page.pushOperators(
+              translate(pdfCx, pdfCy),
+              rotateDegrees(-shape.rotation),
+              translate(-pdfCx, -pdfCy)
+            )
+          }
+        }
+        const pop = () => page.pushOperators(popGraphicsState())
+
+        if (shape.type === "line") {
+          // Draw line from its explicit endpoints (lineStart→lineEnd)
+          // when available, falling back to the bbox diagonal. The pdfY
+          // axis is flipped (origin bottom-left), so y-values are
+          // inverted relative to the canvas coordinate system.
+          const lx1 = shape.lineStartX != null ? shape.lineStartX / RENDER_SCALE : pdfX
+          const ly1 = shape.lineStartY != null ? pageHeight - shape.lineStartY / RENDER_SCALE : pdfY
+          const lx2 = shape.lineEndX != null ? shape.lineEndX / RENDER_SCALE : pdfX + pdfW
+          const ly2 = shape.lineEndY != null ? pageHeight - shape.lineEndY / RENDER_SCALE : pdfY - pdfH
+          push()
+          page.drawLine({
+            start: { x: lx1, y: ly1 },
+            end: { x: lx2, y: ly2 },
+            thickness: shape.thickness,
+            color: strokeColor,
+            opacity: shape.opacity,
+            lineCap: LineCapStyle.Round,
+          })
+          pop()
+          continue
+        }
+
+        if (shape.type === "rect") {
+          // pdf-lib's drawRectangle uses bottom-left origin, so the
+          // rectangle occupies (pdfX, pdfY - pdfH) → (pdfX + pdfW, pdfY).
+          push()
+          page.drawRectangle({
+            x: pdfX,
+            y: pdfY - pdfH,
+            width: pdfW,
+            height: pdfH,
+            borderColor: strokeColor,
+            borderWidth: shape.thickness,
+            borderOpacity: shape.opacity,
+            color: hasFill ? fillColor : undefined,
+            opacity: hasFill ? shape.opacity : undefined,
+            borderLineCap: LineCapStyle.Round,
+          })
+          pop()
+          continue
+        }
+
+        if (shape.type === "circle") {
+          // Ellipse fitted to the bbox; sized by the smaller of the two
+          // axes when the bbox is non-square so a tiny width/height
+          // doesn't produce a degenerate shape.
+          push()
+          page.drawEllipse({
+            x: pdfCx,
+            y: pdfCy,
+            xScale: pdfW / 2,
+            yScale: pdfH / 2,
+            borderColor: strokeColor,
+            borderWidth: shape.thickness,
+            borderOpacity: shape.opacity,
+            color: hasFill ? fillColor : undefined,
+            opacity: hasFill ? shape.opacity : undefined,
+          })
+          pop()
+          continue
+        }
+
+        // smiley: outline ellipse + two filled eye dots + an SVG
+        // arc mouth. All sized from the bbox so the face stays
+        // roughly proportional to the user's drag area.
+        const eyeR = Math.max(0.6, Math.min(pdfW, pdfH) * 0.05)
+        const eyeOffsetX = Math.max(3, pdfW * 0.18)
+        const eyeOffsetY = Math.max(3, pdfH * 0.18)
+        const mouthRy = Math.max(3, pdfH * 0.12)
+        const mouthRx = Math.max(4, pdfW * 0.22)
+        // pdf-lib draws filled dots via drawCircle with `color`.
+        push()
+        page.drawEllipse({
+          x: pdfCx,
+          y: pdfCy,
+          xScale: pdfW / 2,
+          yScale: pdfH / 2,
+          borderColor: strokeColor,
+          borderWidth: shape.thickness,
+          borderOpacity: shape.opacity,
         })
-        page.pushOperators(popGraphicsState())
+        // Build the mouth as an SVG path so we can use a single
+        // drawSvgPath call with a quadratic curve — the same path
+        // is converted to PDF y-up coordinates.
+        const mouthPath = `M ${pdfCx - mouthRx} ${pdfCy + mouthRy} Q ${pdfCx} ${pdfCy - mouthRy * 1.4} ${pdfCx + mouthRx} ${pdfCy + mouthRy}`
+        page.drawSvgPath(mouthPath, {
+          borderColor: strokeColor,
+          borderWidth: shape.thickness,
+          borderOpacity: shape.opacity,
+          borderLineCap: LineCapStyle.Round,
+        })
+        page.drawCircle({ x: pdfCx - eyeOffsetX, y: pdfCy + eyeOffsetY, size: eyeR * 2, color: strokeColor, opacity: shape.opacity })
+        page.drawCircle({ x: pdfCx + eyeOffsetX, y: pdfCy + eyeOffsetY, size: eyeR * 2, color: strokeColor, opacity: shape.opacity })
+        pop()
       }
 
       const bytes = await pdfDoc.save()
@@ -1832,7 +2665,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
     } finally {
       setIsSaving(false)
     }
-  }, [annotations, imageAnnotations, drawAnnotations, fileBuffer, filename])
+  }, [annotations, imageAnnotations, drawAnnotations, shapeAnnotations, fileBuffer, filename])
 
   // Empty / loading states
 
@@ -1885,7 +2718,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
             <button
               type="button"
               onClick={() => toast.info("Full editing is a premium feature — coming soon.")}
-              className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
             >
               <ListFilter className="h-4 w-4" />
               Edit
@@ -1908,7 +2741,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
                   aria-label={tool.label}
                   aria-pressed={isActive}
                   className={cn(
-                    "inline-flex h-10 w-10 items-center justify-center rounded-lg border transition-colors",
+                    "inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-lg border transition-colors",
                     isActive
                       ? "border-primary/30 bg-primary/10 text-primary"
                       : "border-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground",
@@ -1939,7 +2772,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
               type="button"
               data-dropdown-toggle="font"
               onClick={() => setOpenDropdown(openDropdown === "font" ? null : "font")}
-              className="flex h-8 items-center gap-1 rounded border border-border bg-background px-2 text-sm text-foreground hover:bg-accent"
+              className="flex h-8 cursor-pointer items-center gap-1 rounded border border-border bg-background px-2 text-sm text-foreground hover:bg-accent"
               style={{ minWidth: 130 }}
             >
               <span className="flex-1 text-left" style={{ fontFamily: getCssFontFamily(activeStyle.fontFamily) }}>
@@ -1974,7 +2807,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
               type="button"
               data-dropdown-toggle="size"
               onClick={() => setOpenDropdown(openDropdown === "size" ? null : "size")}
-              className="flex h-8 items-center gap-1 rounded border border-border bg-background px-2 text-sm tabular-nums text-foreground hover:bg-accent"
+              className="flex h-8 cursor-pointer items-center gap-1 rounded border border-border bg-background px-2 text-sm tabular-nums text-foreground hover:bg-accent"
               style={{ minWidth: 56 }}
             >
               <span>{activeStyle.fontSize}</span>
@@ -2006,7 +2839,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
             type="button"
             onClick={() => updateStyle({ bold: !activeStyle.bold })}
             className={cn(
-              "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-sm font-bold transition-colors",
+              "inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded text-sm font-bold transition-colors",
               activeStyle.bold
                 ? "bg-accent text-foreground"
                 : "text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -2020,7 +2853,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
             type="button"
             onClick={() => updateStyle({ italic: !activeStyle.italic })}
             className={cn(
-              "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-sm italic transition-colors",
+              "inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded text-sm italic transition-colors",
               activeStyle.italic
                 ? "bg-accent text-foreground"
                 : "text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -2034,7 +2867,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
             type="button"
             onClick={() => updateStyle({ underline: !activeStyle.underline })}
             className={cn(
-              "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-sm underline transition-colors",
+              "inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded text-sm underline transition-colors",
               activeStyle.underline
                 ? "bg-accent text-foreground"
                 : "text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -2109,7 +2942,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
                     type="button"
                     onClick={applyTextColor}
                     disabled={hexTextColor.length !== 3 && hexTextColor.length !== 6}
-                    className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-border bg-accent text-foreground transition-colors hover:bg-accent/80 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded border border-border bg-accent text-foreground transition-colors hover:bg-accent/80 disabled:cursor-not-allowed disabled:opacity-40"
                     title="Apply color"
                     aria-label="Apply color"
                   >
@@ -2202,7 +3035,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
                     type="button"
                     onClick={applyHighlightColor}
                     disabled={hexHighlightColor.length !== 3 && hexHighlightColor.length !== 6}
-                    className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-border bg-accent text-foreground transition-colors hover:bg-accent/80 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded border border-border bg-accent text-foreground transition-colors hover:bg-accent/80 disabled:cursor-not-allowed disabled:opacity-40"
                     title="Apply color"
                     aria-label="Apply color"
                   >
@@ -2225,7 +3058,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
               type="button"
               data-dropdown-toggle="align"
               onClick={() => setOpenDropdown(openDropdown === "align" ? null : "align")}
-              className="inline-flex h-8 shrink-0 items-center gap-0.5 rounded px-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              className="inline-flex h-8 shrink-0 cursor-pointer items-center gap-0.5 rounded px-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               title="Text alignment"
             >
               {activeStyle.textAlign === "center" ? (
@@ -2278,7 +3111,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
                 type="button"
                 data-dropdown-toggle="subOpacity"
                 onClick={() => setOpenDropdown(openDropdown === "subOpacity" ? null : "subOpacity")}
-                className="flex h-8 items-center gap-1 rounded border border-border bg-background px-2 text-sm tabular-nums text-foreground hover:bg-accent"
+                className="flex h-8 cursor-pointer items-center gap-1 rounded border border-border bg-background px-2 text-sm tabular-nums text-foreground hover:bg-accent"
                 style={{ minWidth: 60 }}
                 title="Opacity"
               >
@@ -2314,12 +3147,9 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
 
           <button
             type="button"
-            onClick={() => {
-              if (selectedAnnotationId) removeAnnotation(selectedAnnotationId)
-              if (selectedImageId) removeImageAnnotation(selectedImageId)
-            }}
-            disabled={!selectedAnnotationId && !selectedImageId}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-40"
+            onClick={() => deleteSelected()}
+            disabled={!selectedAnnotationId && !selectedImageId && multiSelectedIds.size === 0}
+            className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-40"
             title="Delete selected"
           >
             <Trash2 className="h-4 w-4" />
@@ -2344,7 +3174,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
               type="button"
               data-dropdown-toggle="imgOpacity"
               onClick={() => setOpenDropdown(openDropdown === "imgOpacity" ? null : "imgOpacity")}
-              className="flex h-8 items-center gap-1 rounded border border-border bg-background px-2 text-sm tabular-nums text-foreground hover:bg-accent"
+              className="flex h-8 cursor-pointer items-center gap-1 rounded border border-border bg-background px-2 text-sm tabular-nums text-foreground hover:bg-accent"
               style={{ minWidth: 64 }}
               title="Opacity"
             >
@@ -2381,7 +3211,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
             type="button"
             onClick={() => rotateSelectedImage(-45)}
             disabled={!selectedImageId}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
             title="Rotate left 45°"
             aria-label="Rotate left 45°"
           >
@@ -2391,7 +3221,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
             type="button"
             onClick={() => rotateSelectedImage(45)}
             disabled={!selectedImageId}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
             title="Rotate right 45°"
             aria-label="Rotate right 45°"
           >
@@ -2402,11 +3232,9 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
 
           <button
             type="button"
-            onClick={() => {
-              if (selectedImageId) removeImageAnnotation(selectedImageId)
-            }}
-            disabled={!selectedImageId}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-40"
+            onClick={() => deleteSelected()}
+            disabled={!selectedImageId && multiSelectedIds.size === 0}
+            className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-40"
             title="Delete image"
             aria-label="Delete image"
           >
@@ -2427,7 +3255,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
               type="button"
               data-dropdown-toggle="drawColor"
               onClick={() => setOpenDropdown(openDropdown === "drawColor" ? null : "drawColor")}
-              className="inline-flex h-8 items-center gap-1 rounded border border-border bg-background pl-2 pr-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+              className="inline-flex h-8 cursor-pointer items-center gap-1 rounded border border-border bg-background pl-2 pr-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
               title="Stroke color"
               aria-label="Stroke color"
             >
@@ -2489,7 +3317,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
                     type="button"
                     onClick={applyDrawColor}
                     disabled={hexDrawColor.length !== 3 && hexDrawColor.length !== 6}
-                    className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-border bg-accent text-foreground transition-colors hover:bg-accent/80 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded border border-border bg-accent text-foreground transition-colors hover:bg-accent/80 disabled:cursor-not-allowed disabled:opacity-40"
                     title="Apply color"
                     aria-label="Apply color"
                   >
@@ -2537,7 +3365,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
               <button
                 type="button"
                 onClick={() => updateDrawStyle({ thickness: Math.min(72, activeDrawStyle.thickness + 1) })}
-                className="flex h-1/2 items-center justify-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                className="flex h-1/2 cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                 title="Increase thickness"
                 aria-label="Increase thickness"
               >
@@ -2546,7 +3374,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
               <button
                 type="button"
                 onClick={() => updateDrawStyle({ thickness: Math.max(1, activeDrawStyle.thickness - 1) })}
-                className="flex h-1/2 items-center justify-center border-t border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                className="flex h-1/2 cursor-pointer items-center justify-center border-t border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                 title="Decrease thickness"
                 aria-label="Decrease thickness"
               >
@@ -2559,32 +3387,391 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
 
           <button
             type="button"
+            onClick={() => rotateSelectedDraw(-45)}
+            disabled={!selectedDrawId}
+            className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            title="Rotate left 45°"
+            aria-label="Rotate left 45°"
+          >
+            <RotateCcw className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => rotateSelectedDraw(45)}
+            disabled={!selectedDrawId}
+            className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            title="Rotate right 45°"
+            aria-label="Rotate right 45°"
+          >
+            <RotateCw className="h-4 w-4" />
+          </button>
+
+          <div className="mx-1 h-6 w-px shrink-0 bg-border" />
+
+          <button
+            type="button"
             onClick={() => {
-              if (selectedDrawId) removeDrawAnnotation(selectedDrawId)
+              deleteSelected()
               setActiveTool(null)
             }}
-            disabled={!selectedDrawId}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-40"
+            disabled={!selectedDrawId && multiSelectedIds.size === 0}
+            className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-40"
             title="Delete drawing"
             aria-label="Delete drawing"
           >
             <Trash2 className="h-4 w-4" />
           </button>
+        </div>
+      )}
+
+      {/* ── Shape sub-toolbar ──────────────────────────────────────── */}
+      {activeTool === "shape" && (
+        <div
+          ref={subToolbarRef}
+          className="relative z-30 flex items-center justify-center gap-1.5 border-b border-border bg-card px-3 py-1.5 sm:pl-40 sm:pr-96"
+        >
+          {/* Shape type buttons (line, rect, circle, smiley) — matching the
+              screenshot layout. Each is an inline SVG icon so we don't depend
+              on lucide-react having a matching glyph. */}
+          {([
+            {
+              value: "line" as const,
+              label: "Line",
+              render: () => (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <line x1="5" y1="19" x2="19" y2="5" />
+                </svg>
+              ),
+            },
+            {
+              value: "rect" as const,
+              label: "Rectangle",
+              render: () => (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <rect x="5" y="7" width="14" height="10" rx="1" />
+                </svg>
+              ),
+            },
+            {
+              value: "circle" as const,
+              label: "Circle",
+              render: () => (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <circle cx="12" cy="12" r="7" />
+                </svg>
+              ),
+            },
+            {
+              value: "smiley" as const,
+              label: "Smiley",
+              render: () => (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <circle cx="12" cy="12" r="7" />
+                  <circle cx="9.5" cy="10" r="0.6" fill="currentColor" />
+                  <circle cx="14.5" cy="10" r="0.6" fill="currentColor" />
+                  <path d="M8.5 14.5 Q12 17 15.5 14.5" />
+                </svg>
+              ),
+            },
+          ]).map((opt) => {
+            const isActive = activeShapeStyle.type === opt.value
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => updateShapeStyle({ type: opt.value })}
+                className={cn(
+                  "inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded border text-muted-foreground transition-colors",
+                  isActive
+                    ? "border-primary/30 bg-primary/10 text-primary"
+                    : "border-transparent hover:bg-accent hover:text-foreground"
+                )}
+                title={opt.label}
+                aria-label={opt.label}
+                aria-pressed={isActive}
+              >
+                {opt.render()}
+              </button>
+            )
+          })}
+
+          <div className="mx-1 h-6 w-px shrink-0 bg-border" />
+
+          {/* Stroke color: same swatch + caret pattern as the draw sub-toolbar */}
+          <div className="relative">
+            <button
+              type="button"
+              data-dropdown-toggle="shapeColor"
+              onClick={() => setOpenDropdown(openDropdown === "shapeColor" ? null : "shapeColor")}
+              className="inline-flex h-8 cursor-pointer items-center gap-1 rounded border border-border bg-background pl-2 pr-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+              title="Stroke color"
+              aria-label="Stroke color"
+            >
+              <span
+                className="block h-5 w-5 rounded-sm border border-border"
+                style={{ backgroundColor: activeShapeStyle.color }}
+              />
+              <ChevronDown className="h-3 w-3 shrink-0" />
+            </button>
+            {openDropdown === "shapeColor" && (
+              <div data-dropdown="shapeColor" className="absolute left-0 top-full z-50 mt-1 w-[178px] rounded-md border border-border bg-popover p-2 shadow-lg">
+                <div className="grid grid-cols-5 gap-1.5">
+                  {COLOR_PALETTE.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => { updateShapeStyle({ color: c }); setOpenDropdown(null) }}
+                      className={cn(
+                        "flex h-7 w-7 items-center justify-center rounded-full border transition-transform hover:scale-110",
+                        activeShapeStyle.color.toLowerCase() === c.toLowerCase()
+                          ? "border-primary ring-2 ring-primary/30"
+                          : c === "#ffffff" ? "border-border" : "border-transparent"
+                      )}
+                      style={{ backgroundColor: c }}
+                      title={c}
+                    >
+                      {activeShapeStyle.color.toLowerCase() === c.toLowerCase() && (
+                        <Check className={cn("h-3.5 w-3.5", c === "#ffffff" || c === "#f3f3f3" || c === "#efefef" || c === "#ffff00" || c === "#00ff00" || c === "#00ffff" ? "text-gray-800" : "text-white")} />
+                      )}
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-2 flex items-center gap-1.5 border-t border-border pt-2">
+                  <span className="text-xs text-muted-foreground">#</span>
+                  <input
+                    type="text"
+                    value={hexShapeColor}
+                    placeholder="000000"
+                    onChange={(e) => {
+                      const v = e.target.value.replace(/[^0-9a-fA-F]/g, "").slice(0, 6)
+                      setHexShapeColor(v)
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault()
+                        applyShapeColor()
+                      }
+                    }}
+                    onBlur={() => {
+                      if (hexShapeColor.length !== 3 && hexShapeColor.length !== 6) {
+                        setHexShapeColor(activeShapeStyle.color.replace("#", ""))
+                      }
+                    }}
+                    className="h-7 w-full rounded border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none focus:ring-1 focus:ring-primary"
+                    maxLength={6}
+                    spellCheck={false}
+                  />
+                  <button
+                    type="button"
+                    onClick={applyShapeColor}
+                    disabled={hexShapeColor.length !== 3 && hexShapeColor.length !== 6}
+                    className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded border border-border bg-accent text-foreground transition-colors hover:bg-accent/80 disabled:cursor-not-allowed disabled:opacity-40"
+                    title="Apply color"
+                    aria-label="Apply color"
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                  </button>
+                  <div className="h-6 w-6 shrink-0 rounded border border-border" style={{ backgroundColor: hexShapeColor.length === 3 || hexShapeColor.length === 6 ? `#${expandHexShorthand(hexShapeColor)}` : activeShapeStyle.color }} />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Fill color — outlined-only shapes (line, smiley) ignore fill */}
+          <div className="relative">
+            <button
+              type="button"
+              data-dropdown-toggle="shapeFill"
+              onClick={() => setOpenDropdown(openDropdown === "shapeFill" ? null : "shapeFill")}
+              className="inline-flex h-8 cursor-pointer items-center gap-1 rounded border border-border bg-background pl-2 pr-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+              title="Fill color (rect / circle)"
+              aria-label="Fill color"
+            >
+              <span
+                className="block h-5 w-5 rounded-sm border border-border"
+                style={{
+                  backgroundColor:
+                    activeShapeStyle.fill === "transparent" ? "transparent" : activeShapeStyle.fill,
+                  backgroundImage:
+                    activeShapeStyle.fill === "transparent"
+                      ? "linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%), linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%)"
+                      : undefined,
+                  backgroundSize: activeShapeStyle.fill === "transparent" ? "8px 8px" : undefined,
+                  backgroundPosition: activeShapeStyle.fill === "transparent" ? "0 0, 4px 4px" : undefined,
+                }}
+              />
+              <ChevronDown className="h-3 w-3 shrink-0" />
+            </button>
+            {openDropdown === "shapeFill" && (
+              <div data-dropdown="shapeFill" className="absolute left-0 top-full z-50 mt-1 w-[178px] rounded-md border border-border bg-popover p-2 shadow-lg">
+                <button
+                  type="button"
+                  onClick={() => { updateShapeStyle({ fill: "transparent" }); setOpenDropdown(null) }}
+                  className={cn(
+                    "mb-1.5 flex w-full items-center gap-2 rounded px-2 py-1 text-xs transition-colors hover:bg-accent",
+                    activeShapeStyle.fill === "transparent" && "bg-accent font-medium"
+                  )}
+                >
+                  <Ban className="h-3.5 w-3.5 text-muted-foreground" />
+                  No fill
+                </button>
+                <div className="grid grid-cols-5 gap-1.5">
+                  {COLOR_PALETTE.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => { updateShapeStyle({ fill: c }); setOpenDropdown(null) }}
+                      className={cn(
+                        "flex h-7 w-7 items-center justify-center rounded-full border transition-transform hover:scale-110",
+                        activeShapeStyle.fill.toLowerCase() === c.toLowerCase()
+                          ? "border-primary ring-2 ring-primary/30"
+                          : c === "#ffffff" ? "border-border" : "border-transparent"
+                      )}
+                      style={{ backgroundColor: c }}
+                      title={c}
+                    >
+                      {activeShapeStyle.fill.toLowerCase() === c.toLowerCase() && (
+                        <Check className={cn("h-3.5 w-3.5", c === "#ffffff" || c === "#f3f3f3" || c === "#efefef" || c === "#ffff00" || c === "#00ff00" || c === "#00ffff" ? "text-gray-800" : "text-white")} />
+                      )}
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-2 flex items-center gap-1.5 border-t border-border pt-2">
+                  <span className="text-xs text-muted-foreground">#</span>
+                  <input
+                    type="text"
+                    value={hexShapeFill}
+                    placeholder="transparent"
+                    onChange={(e) => {
+                      const v = e.target.value.replace(/[^0-9a-fA-F]/g, "").slice(0, 6)
+                      setHexShapeFill(v)
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault()
+                        applyShapeFill()
+                      }
+                    }}
+                    onBlur={() => {
+                      if (hexShapeFill.length !== 0 && hexShapeFill.length !== 3 && hexShapeFill.length !== 6) {
+                        setHexShapeFill(activeShapeStyle.fill === "transparent" ? "" : activeShapeStyle.fill.replace("#", ""))
+                      }
+                    }}
+                    className="h-7 w-full rounded border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none focus:ring-1 focus:ring-primary"
+                    maxLength={6}
+                    spellCheck={false}
+                  />
+                  <button
+                    type="button"
+                    onClick={applyShapeFill}
+                    disabled={hexShapeFill.length !== 0 && hexShapeFill.length !== 3 && hexShapeFill.length !== 6}
+                    className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded border border-border bg-accent text-foreground transition-colors hover:bg-accent/80 disabled:cursor-not-allowed disabled:opacity-40"
+                    title="Apply fill"
+                    aria-label="Apply fill"
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                  </button>
+                  <div
+                    className="h-6 w-6 shrink-0 rounded border border-border"
+                    style={{ backgroundColor: hexShapeFill.length === 3 || hexShapeFill.length === 6 ? `#${expandHexShorthand(hexShapeFill)}` : activeShapeStyle.fill === "transparent" ? "transparent" : activeShapeStyle.fill }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="mx-1 h-6 w-px shrink-0 bg-border" />
+
+          {/* Thickness: icon + numeric input with up/down arrows + "pt" suffix
+              (matches the draw sub-toolbar layout) */}
+          <List className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+          <div className="flex h-8 items-stretch overflow-hidden rounded border border-border bg-background">
+            <input
+              type="number"
+              min={1}
+              max={72}
+              value={activeShapeStyle.thickness}
+              onChange={(e) => {
+                const v = Number(e.target.value)
+                if (!Number.isNaN(v)) {
+                  updateShapeStyle({ thickness: Math.max(1, Math.min(72, v)) })
+                }
+              }}
+              onBlur={(e) => {
+                const v = Number(e.target.value)
+                if (Number.isNaN(v) || v < 1) {
+                  updateShapeStyle({ thickness: 1 })
+                } else if (v > 72) {
+                  updateShapeStyle({ thickness: 72 })
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") e.currentTarget.blur()
+              }}
+              className="w-10 bg-transparent px-1 text-center text-sm tabular-nums text-foreground outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              title="Stroke thickness"
+              aria-label="Stroke thickness in points"
+            />
+            <span className="self-center pr-1 text-xs text-muted-foreground">pt</span>
+            <div className="flex w-5 flex-col border-l border-border">
+              <button
+                type="button"
+                onClick={() => updateShapeStyle({ thickness: Math.min(72, activeShapeStyle.thickness + 1) })}
+                className="flex h-1/2 cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                title="Increase thickness"
+                aria-label="Increase thickness"
+              >
+                <ChevronUp className="h-3 w-3" />
+              </button>
+              <button
+                type="button"
+                onClick={() => updateShapeStyle({ thickness: Math.max(1, activeShapeStyle.thickness - 1) })}
+                className="flex h-1/2 cursor-pointer items-center justify-center border-t border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                title="Decrease thickness"
+                aria-label="Decrease thickness"
+              >
+                <ChevronDown className="h-3 w-3" />
+              </button>
+            </div>
+          </div>
+
+          <div className="mx-1 h-6 w-px shrink-0 bg-border" />
+
+          <button
+            type="button"
+            onClick={() => rotateSelectedShape(-45)}
+            disabled={!selectedShapeId}
+            className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            title="Rotate left 45°"
+            aria-label="Rotate left 45°"
+          >
+            <RotateCcw className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => rotateSelectedShape(45)}
+            disabled={!selectedShapeId}
+            className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            title="Rotate right 45°"
+            aria-label="Rotate right 45°"
+          >
+            <RotateCw className="h-4 w-4" />
+          </button>
+
+          <div className="mx-1 h-6 w-px shrink-0 bg-border" />
 
           <button
             type="button"
             onClick={() => {
-              if (draftDraw && draftDraw.points.length >= 2) {
-                commitDraftDraw()
-              } else {
-                setDraftDraw(null)
-              }
+              deleteSelected()
+              setActiveTool(null)
             }}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-green-600 transition-colors hover:bg-green-50 dark:hover:bg-green-950/40"
-            title="Done drawing"
-            aria-label="Done drawing"
+            disabled={!selectedShapeId && multiSelectedIds.size === 0}
+            className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-40"
+            title="Delete shape"
+            aria-label="Delete shape"
           >
-            <Check className="h-4 w-4" />
+            <Trash2 className="h-4 w-4" />
           </button>
         </div>
       )}
@@ -2677,6 +3864,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
                 const pageAnnotations = annotations.filter((a) => a.pageIndex === page.pageIndex)
                 const pageImageAnnotations = imageAnnotations.filter((a) => a.pageIndex === page.pageIndex)
                 const pageDrawAnnotations = drawAnnotations.filter((d) => d.pageIndex === page.pageIndex)
+                const pageShapeAnnotations = shapeAnnotations.filter((s) => s.pageIndex === page.pageIndex)
                 const isDrafting = draftPosition?.pageIndex === page.pageIndex
                 const isDraftDrawHere = draftDraw?.pageIndex === page.pageIndex
                 return (
@@ -2685,13 +3873,17 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
                       ref={setPageRef(page.pageIndex)}
                       data-page-index={page.pageIndex}
                       onClick={handleCanvasDeselect}
-                      onMouseDown={(e) => handlePageDrawMouseDown(e, page.pageIndex)}
+                      onMouseDown={(e) => {
+                        handlePageDrawMouseDown(e, page.pageIndex)
+                        handlePageShapeMouseDown(e, page.pageIndex)
+                      }}
                       className={cn(
                         "relative shrink-0 bg-white shadow-lg ring-1 ring-black/5",
                         activeTool === "text" && "cursor-crosshair",
                         activeTool === "hand" && !isPanning && "cursor-grab",
                         activeTool === "hand" && isPanning && "cursor-grabbing select-none",
-                        activeTool === "draw" && "cursor-crosshair"
+                        activeTool === "draw" && "cursor-crosshair",
+                        activeTool === "shape" && "cursor-crosshair"
                       )}
                       style={{
                         width: page.width * displayScale,
@@ -2711,7 +3903,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
   
                       {pageAnnotations.map((annotation) => {
                         const isDragging = draggingAnnotationId === annotation.id
-                        const isSelected = selectedAnnotationId === annotation.id
+                        const isSelected = selectedAnnotationId === annotation.id || multiSelectedIds.has(annotation.id)
                         const isEditing = editingAnnotationId === annotation.id
                         const hs = 8
                         const hh = hs / 2
@@ -2747,9 +3939,25 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
                             }}
                             onClick={(e) => {
                               e.stopPropagation()
-                              setSelectedAnnotationId(annotation.id)
-                              // Activate text tool so the sub-toolbar reflects the selection
-                              setActiveTool("text")
+                              if (e.shiftKey) {
+                                setMultiSelectedIds((prev) => {
+                                  const next = new Set(prev)
+                                  // Keep the previously-primary item in the set
+                                  if (selectedAnnotationId != null && selectedAnnotationId !== annotation.id) {
+                                    next.add(selectedAnnotationId)
+                                  }
+                                  // Toggle the clicked item
+                                  if (next.has(annotation.id)) next.delete(annotation.id)
+                                  else next.add(annotation.id)
+                                  return next
+                                })
+                                setSelectedAnnotationId(annotation.id)
+                                setActiveTool("text")
+                              } else {
+                                clearAllSelections()
+                                setSelectedAnnotationId(annotation.id)
+                                setActiveTool("text")
+                              }
                             }}
                             onDoubleClick={(e) => {
                               e.stopPropagation()
@@ -2868,7 +4076,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
 
                       {pageImageAnnotations.map((annotation) => {
                         const isDragging = draggingImageId === annotation.id
-                        const isSelected = selectedImageId === annotation.id
+                        const isSelected = selectedImageId === annotation.id || multiSelectedIds.has(annotation.id)
                         const hs = 8
                         const hh = hs / 2
                         const imgHandle = (dir: ResizeDirection, cursor: string, pos: React.CSSProperties) => (
@@ -2908,9 +4116,23 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
                             }}
                             onClick={(e) => {
                               e.stopPropagation()
-                              setSelectedImageId(annotation.id)
-                              // Selecting an image activates the image tool (icon highlight only)
-                              setActiveTool("image")
+                              if (e.shiftKey) {
+                                setMultiSelectedIds((prev) => {
+                                  const next = new Set(prev)
+                                  if (selectedImageId != null && selectedImageId !== annotation.id) {
+                                    next.add(selectedImageId)
+                                  }
+                                  if (next.has(annotation.id)) next.delete(annotation.id)
+                                  else next.add(annotation.id)
+                                  return next
+                                })
+                                setSelectedImageId(annotation.id)
+                                setActiveTool("image")
+                              } else {
+                                clearAllSelections()
+                                setSelectedImageId(annotation.id)
+                                setActiveTool("image")
+                              }
                             }}
                           >
                             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -2956,24 +4178,44 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
                           aria-hidden
                         >
                           {pageDrawAnnotations.map((ann) => {
-                            const isSelected = selectedDrawId === ann.id
+                            const isSelected = selectedDrawId === ann.id || multiSelectedIds.has(ann.id)
                             const isHovered = hoveredDrawId === ann.id
                             const bbox = getDrawBbox(ann)
                             const strokeHalf = (ann.thickness * RENDER_SCALE) / 2
                             const pad = strokeHalf + 6
                             const hasBbox = bbox.width > 0 || bbox.height > 0
+                            // Rotate the entire group around the bbox centre
+                            // so the selection ring rotates with the stroke.
+                            const groupTransform = ann.rotation
+                              ? `rotate(${ann.rotation} ${bbox.x + bbox.width / 2} ${bbox.y + bbox.height / 2})`
+                              : undefined
                             return (
                               <g
                                 key={ann.id}
                                 data-drawing-id={ann.id}
                                 className="pointer-events-auto"
                                 style={{ cursor: "move" }}
+                                transform={groupTransform}
                                 onMouseDown={(e) => {
                                   handleDrawMouseDown(e, ann)
                                 }}
                                 onClick={(e) => {
                                   e.stopPropagation()
-                                  handleSelectDraw(ann.id)
+                                  if (e.shiftKey) {
+                                    setMultiSelectedIds((prev) => {
+                                      const next = new Set(prev)
+                                      if (selectedDrawId != null && selectedDrawId !== ann.id) {
+                                        next.add(selectedDrawId)
+                                      }
+                                      if (next.has(ann.id)) next.delete(ann.id)
+                                      else next.add(ann.id)
+                                      return next
+                                    })
+                                    handleSelectDraw(ann.id)
+                                  } else {
+                                    clearAllSelections()
+                                    handleSelectDraw(ann.id)
+                                  }
                                 }}
                                 onMouseEnter={() => setHoveredDrawId(ann.id)}
                                 onMouseLeave={() => setHoveredDrawId(null)}
@@ -3022,7 +4264,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
                           click the empty canvas to deselect; only the handle
                           spans re-enable pointer events. */}
                       {pageDrawAnnotations
-                        .filter((d) => selectedDrawId === d.id)
+                        .filter((d) => selectedDrawId === d.id || multiSelectedIds.has(d.id))
                         .map((draw) => {
                           const bbox = getDrawBbox(draw)
                           if (bbox.width === 0 && bbox.height === 0) return null
@@ -3050,19 +4292,28 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
                               onClick={(e) => e.stopPropagation()}
                             />
                           )
+                          // Rotate the wrapper so the 8 handles follow the
+                          // rotated bbox. The bbox itself stays anchored
+                          // to the unrotated stroke; only the visual frame
+                          // spins around the centre.
+                          const wrapperStyle: React.CSSProperties = {
+                            position: "absolute",
+                            left: bbox.x * displayScale,
+                            top: bbox.y * displayScale,
+                            width: bbox.width * displayScale,
+                            height: bbox.height * displayScale,
+                            pointerEvents: "none",
+                          }
+                          if (draw.rotation) {
+                            wrapperStyle.transform = `rotate(${draw.rotation}deg)`
+                            wrapperStyle.transformOrigin = "center"
+                          }
                           return (
                             <div
                               key={draw.id}
                               data-draw-resize-id={draw.id}
                               className="ring-2 ring-primary"
-                              style={{
-                                position: "absolute",
-                                left: bbox.x * displayScale,
-                                top: bbox.y * displayScale,
-                                width: bbox.width * displayScale,
-                                height: bbox.height * displayScale,
-                                pointerEvents: "none",
-                              }}
+                              style={wrapperStyle}
                             >
                               {handle("top-left", "nwse-resize", { left: -hh, top: -hh })}
                               {handle("top", "ns-resize", { left: "50%", top: -hh, transform: "translateX(-50%)" })}
@@ -3072,6 +4323,193 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
                               {handle("bottom-left", "nesw-resize", { left: -hh, bottom: -hh })}
                               {handle("bottom", "ns-resize", { left: "50%", bottom: -hh, transform: "translateX(-50%)" })}
                               {handle("bottom-right", "nwse-resize", { right: -hh, bottom: -hh })}
+                            </div>
+                          )
+                        })}
+
+
+                      {/* Shape overlay. Each shape's bbox is rendered as a
+                          clickable group (so the user can select and drag it),
+                          with the shape itself drawn as SVG inside. Rotation
+                          is applied around the bbox centre via the group
+                          transform so the selection ring spins with it. */}
+                      {pageShapeAnnotations.length > 0 && (
+                        <svg
+                          className="pointer-events-none absolute inset-0"
+                          width={page.width * displayScale}
+                          height={page.height * displayScale}
+                          viewBox={`0 0 ${page.width} ${page.height}`}
+                          aria-hidden
+                        >
+                          {pageShapeAnnotations.map((shape) => {
+                            const isSelected = selectedShapeId === shape.id || multiSelectedIds.has(shape.id)
+                            const isHovered = hoveredShapeId === shape.id
+                            const cx = shape.x + shape.width / 2
+                            const cy = shape.y + shape.height / 2
+                            const groupTransform = shape.rotation
+                              ? `rotate(${shape.rotation} ${cx} ${cy})`
+                              : undefined
+                            const strokeHalf = (shape.thickness * RENDER_SCALE) / 2
+                            const pad = strokeHalf + 6
+                            return (
+                              <g
+                                key={shape.id}
+                                data-shape-id={shape.id}
+                                className="pointer-events-auto"
+                                style={{ cursor: "move" }}
+                                transform={groupTransform}
+                                onMouseDown={(e) => handleShapeMouseDown(e, shape)}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  if (e.shiftKey) {
+                                    setMultiSelectedIds((prev) => {
+                                      const next = new Set(prev)
+                                      if (selectedShapeId != null && selectedShapeId !== shape.id) {
+                                        next.add(selectedShapeId)
+                                      }
+                                      if (next.has(shape.id)) next.delete(shape.id)
+                                      else next.add(shape.id)
+                                      return next
+                                    })
+                                    handleSelectShape(shape.id)
+                                  } else {
+                                    clearAllSelections()
+                                    handleSelectShape(shape.id)
+                                  }
+                                }}
+                                onMouseEnter={() => setHoveredShapeId(shape.id)}
+                                onMouseLeave={() => setHoveredShapeId(null)}
+                              >
+                                {/* Hover ring (visible on hover when not selected) */}
+                                <rect
+                                  x={shape.x - pad}
+                                  y={shape.y - pad}
+                                  width={shape.width + pad * 2}
+                                  height={shape.height + pad * 2}
+                                  fill="transparent"
+                                  stroke={isHovered && !isSelected ? "#2563eb" : "none"}
+                                  strokeWidth={2}
+                                  vectorEffect="non-scaling-stroke"
+                                  rx={3}
+                                />
+                                {renderShapeGeometry(shape)}
+                              </g>
+                            )
+                          })}
+                        </svg>
+                      )}
+
+                      {/* In-progress line being drawn by dragging. Drawn as a
+                          live SVG line so the user sees the segment extend as
+                          they drag; committed on mouseup. */}
+                      {draftShape?.pageIndex === page.pageIndex && (
+                        <svg
+                          className="pointer-events-none absolute inset-0"
+                          width={page.width * displayScale}
+                          height={page.height * displayScale}
+                          viewBox={`0 0 ${page.width} ${page.height}`}
+                          aria-hidden
+                        >
+                          <line
+                            x1={draftShape.startX}
+                            y1={draftShape.startY}
+                            x2={draftShape.startX + draftShape.width}
+                            y2={draftShape.startY + draftShape.height}
+                            stroke={draftShape.color}
+                            strokeWidth={draftShape.thickness * RENDER_SCALE}
+                            strokeLinecap="round"
+                            opacity={draftShape.opacity}
+                            vectorEffect="non-scaling-stroke"
+                          />
+                        </svg>
+                      )}
+
+                      {/* Resize handles around the currently selected shape.
+                          Matches the text/image/draw tool style. Lines are a
+                          special case: only the two endpoints get a handle
+                          (top-left = start, bottom-right = end) so the user
+                          can drag each tip of the line. The bbox-anchored
+                          resize logic still works because a line's bbox
+                          starts at the line's start point and ends at the
+                          line's end point. */}
+                      {pageShapeAnnotations
+                        .filter((s) => selectedShapeId === s.id || multiSelectedIds.has(s.id))
+                        .map((shape) => {
+                          const hs = 8
+                          const hh = hs / 2
+                          const handle = (
+                            dir: ResizeDirection,
+                            cursor: string,
+                            pos: React.CSSProperties
+                          ) => (
+                            <span
+                              key={dir}
+                              className="absolute bg-[#2563eb] border border-white"
+                              style={{
+                                width: hs,
+                                height: hs,
+                                cursor,
+                                pointerEvents: "auto",
+                                ...pos,
+                              }}
+                              onMouseDown={(e) => {
+                                e.stopPropagation()
+                                handleShapeResizeMouseDown(e, shape, dir)
+                              }}
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                          )
+                          const wrapperStyle: React.CSSProperties = {
+                            position: "absolute",
+                            left: shape.x * displayScale,
+                            top: shape.y * displayScale,
+                            width: shape.width * displayScale,
+                            height: shape.height * displayScale,
+                            pointerEvents: "none",
+                          }
+                          if (shape.rotation) {
+                            wrapperStyle.transform = `rotate(${shape.rotation}deg)`
+                            wrapperStyle.transformOrigin = "center"
+                          }
+                          const isLine = shape.type === "line"
+                          const hasExplicitEndpoints =
+                            isLine &&
+                            shape.lineStartX != null
+                          return (
+                            <div
+                              key={shape.id}
+                              data-shape-resize-id={shape.id}
+                              className={cn(!isLine && "ring-2 ring-primary")}
+                              style={wrapperStyle}
+                            >
+                              {isLine && hasExplicitEndpoints ? (
+                                <>
+                                  {handle("top-left", "nwse-resize", {
+                                    left: (shape.lineStartX! - shape.x) * displayScale - hh,
+                                    top: (shape.lineStartY! - shape.y) * displayScale - hh,
+                                  })}
+                                  {handle("bottom-right", "nwse-resize", {
+                                    left: (shape.lineEndX! - shape.x) * displayScale - hh,
+                                    top: (shape.lineEndY! - shape.y) * displayScale - hh,
+                                  })}
+                                </>
+                              ) : isLine ? (
+                                <>
+                                  {handle("top-left", "nwse-resize", { left: -hh, top: -hh })}
+                                  {handle("bottom-right", "nwse-resize", { right: -hh, bottom: -hh })}
+                                </>
+                              ) : (
+                                <>
+                                  {handle("top-left", "nwse-resize", { left: -hh, top: -hh })}
+                                  {handle("top", "ns-resize", { left: "50%", top: -hh, transform: "translateX(-50%)" })}
+                                  {handle("top-right", "nesw-resize", { right: -hh, top: -hh })}
+                                  {handle("left", "ew-resize", { left: -hh, top: "50%", transform: "translateY(-50%)" })}
+                                  {handle("right", "ew-resize", { right: -hh, top: "50%", transform: "translateY(-50%)" })}
+                                  {handle("bottom-left", "nesw-resize", { left: -hh, bottom: -hh })}
+                                  {handle("bottom", "ns-resize", { left: "50%", bottom: -hh, transform: "translateX(-50%)" })}
+                                  {handle("bottom-right", "nwse-resize", { right: -hh, bottom: -hh })}
+                                </>
+                              )}
                             </div>
                           )
                         })}
@@ -3251,7 +4689,7 @@ function ToolbarIconButton({
       disabled={disabled}
       aria-label={label}
       title={label}
-      className="inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-200 transition-colors hover:bg-white/10 disabled:pointer-events-none disabled:opacity-40"
+      className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-zinc-200 transition-colors hover:bg-white/10 disabled:pointer-events-none disabled:opacity-40"
     >
       {children}
     </button>

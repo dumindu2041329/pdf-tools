@@ -9,7 +9,7 @@ export default async function DashboardLayout({
   // Resource-based auth check: this layout protects every route in the
   // (dashboard) group (e.g. /account/*, /workflows/*). Unauthenticated
   // users are redirected to /sign-in by Clerk.
-  const { userId } = await auth.protect()
+  await auth.protect()
 
   return (
     <div className="flex min-h-screen flex-col">
