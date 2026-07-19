@@ -39,6 +39,10 @@ import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 import { PDFDocument, StandardFonts, LineCapStyle, LineJoinStyle, popGraphicsState, pushGraphicsState, rgb, rotateDegrees, setLineCap, setLineJoin, translate } from "pdf-lib"
 import { deleteFromStorageBrowser } from "@/lib/supabase-upload"
+import { ProcessingModal } from "@/components/tools/ProcessingModal"
+import { useTool } from "@/hooks/useTool"
+import { storeEditResult } from "@/lib/editResultStore"
+import type { ProcessingStep } from "@/components/tools/ProcessingModal"
 
 let pdfjsLib: typeof import("pdfjs-dist") | null = null
 
@@ -46,6 +50,8 @@ let pdfjsLib: typeof import("pdfjs-dist") | null = null
 // captured in this scaled space, so `handleSave` divides by it to recover PDF
 // points (origin = bottom-left).
 const RENDER_SCALE = 1.4
+
+const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
 const FONT_FAMILIES = [
   { label: "Arial", value: "Arial", css: "Arial, Helvetica, sans-serif" },
@@ -430,7 +436,9 @@ const [drawAnnotations, setDrawAnnotations] = useState<DrawAnnotation[]>([])
 const [activeTool, setActiveTool] = useState<ToolId | null>(null)
   const [draftText, setDraftText] = useState("")
   const [draftPosition, setDraftPosition] = useState<{ pageIndex: number; x: number; y: number } | null>(null)
-  const [isSaving, setIsSaving] = useState(false)
+  const [saveStatus, setSaveStatus] = useState<"idle" | "processing">("idle")
+  const [saveStep, setSaveStep] = useState<ProcessingStep>("start")
+  const saveStartTimeRef = useRef(0)
   const [zoom, setZoom] = useState(100)
   const [zoomInitialized, setZoomInitialized] = useState(false)
   const [isPanning, setIsPanning] = useState(false)
@@ -2335,11 +2343,23 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
     })
   }, [annotations, resizingAnnotationId, displayScale])
 
+  const handleSaveCancel = useCallback(() => {
+    setSaveStatus("idle")
+    setSaveStep("start")
+  }, [])
+
   const handleSave = useCallback(async () => {
-    if (!fileBuffer) return
+    if (!fileBuffer || saveStatus !== "idle") return
     const sourceBuffer = fileBuffer
-    setIsSaving(true)
+    saveStartTimeRef.current = performance.now()
+    setSaveStatus("processing")
+    setSaveStep("start")
+
     try {
+      await delay(300)
+
+      setSaveStep("process")
+
       // Copy in case pdfjs shares the underlying ArrayBuffer with a worker
       const source = sourceBuffer.slice(0)
       const pdfDoc = await PDFDocument.load(source)
@@ -2649,23 +2669,28 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
       // pdf-lib's save() returns Uint8Array<ArrayBufferLike>; copy to satisfy BlobPart types
       const ab = new ArrayBuffer(bytes.byteLength)
       new Uint8Array(ab).set(bytes)
-      const blob = new Blob([ab], { type: "application/pdf" })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement("a")
-      a.href = url
-      a.download = filename && filename.length > 0 ? `edited-${filename}` : "edited.pdf"
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-      toast.success("Edited PDF downloaded.")
+      const resultName = `edited-${filename || "document.pdf"}`
+      const processingTimeMs = performance.now() - saveStartTimeRef.current
+
+      // Store result in IndexedDB so the tool page can read it instantly
+      const resultKey = crypto.randomUUID()
+      await storeEditResult(resultKey, ab)
+
+      // Navigate back to the tool page with the result key
+      const params = new URLSearchParams({
+        editResult: "1",
+        resultKey,
+        resultFilename: resultName,
+        resultSize: String(ab.byteLength),
+        resultTime: (processingTimeMs / 1000).toFixed(1),
+      })
+      router.push(`/tools/edit-pdf?${params.toString()}`)
     } catch (err) {
       console.error("Failed to save edited PDF:", err)
       toast.error(err instanceof Error ? err.message : "Failed to save the edited PDF.")
-    } finally {
-      setIsSaving(false)
+      setSaveStatus("idle")
     }
-  }, [annotations, imageAnnotations, drawAnnotations, shapeAnnotations, fileBuffer, filename])
+  }, [annotations, imageAnnotations, drawAnnotations, shapeAnnotations, fileBuffer, saveStatus, filename, router])
 
   // Empty / loading states
 
@@ -2693,6 +2718,11 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
       </div>
     )
   }
+
+  // Build a ProcessingModal-compatible state from the save status
+  const modalState = saveStatus === "processing"
+    ? { status: "processing" as const, step: saveStep as ProcessingStep }
+    : { status: "idle" as const }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background text-foreground">
@@ -4573,10 +4603,10 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
             <button
               type="button"
               onClick={handleSave}
-              disabled={!fileBuffer || isSaving}
+              disabled={!fileBuffer || saveStatus !== "idle"}
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-6 py-4 text-base font-semibold text-primary-foreground shadow-lg transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {isSaving ? (
+              {saveStatus !== "idle" ? (
                 <>
                   <Loader2 className="h-5 w-5 animate-spin" />
                   Saving…
@@ -4666,6 +4696,15 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
           </ToolbarIconButton>
         </div>
       </div>
+
+      <ProcessingModal
+        open={saveStatus === "processing"}
+        onClose={() => {}}
+        toolSlug="edit-pdf"
+        toolName="Edit PDF"
+        state={modalState as ReturnType<typeof useTool>["state"]}
+        cancel={handleSaveCancel}
+      />
     </div>
   )
 }

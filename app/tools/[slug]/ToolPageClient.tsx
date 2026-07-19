@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { useTool } from "@/hooks/useTool"
 import { uploadFileDirect } from "@/lib/supabase-upload"
+import { getEditResult, deleteEditResult } from "@/lib/editResultStore"
 import { AiSummarizerView } from "@/components/tools/ai-summarizer/AiSummarizerView"
 import { TranslatePdfView } from "@/components/tools/translate-pdf/TranslatePdfView"
 import { ScanToPdfView } from "@/components/tools/scan-to-pdf/ScanToPdfView"
@@ -93,8 +94,41 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
   const [dailyLimitOpen, setDailyLimitOpen] = useState(false)
   const [upgradeLoading, setUpgradeLoading] = useState(false)
   const [isUploadingForEditor, setIsUploadingForEditor] = useState(false)
-  const { state, process, reset, cancel } = useTool(tool.slug)
+  const { state, process, reset, cancel, forceSuccess } = useTool(tool.slug)
   const isProcessingRef = useRef(false)
+
+  // Handle edit-pdf result coming back from the editor page —
+  // reads the ArrayBuffer from IndexedDB (stored there by the editor)
+  // so the DownloadCard appears instantly without a Storage round-trip.
+  useEffect(() => {
+    if (tool.slug !== "edit-pdf") return
+    const editResult = searchParams.get("editResult")
+    const resultKey = searchParams.get("resultKey")
+    const resultFilename = searchParams.get("resultFilename")
+    const resultSize = searchParams.get("resultSize")
+    const resultTime = searchParams.get("resultTime")
+
+    if (editResult !== "1" || !resultKey) return
+
+    // Clean the URL params from the browser bar so refresh doesn't re-trigger
+    const cleanUrl = window.location.pathname
+    window.history.replaceState({}, "", cleanUrl)
+
+    ;(async () => {
+      const buffer = await getEditResult(resultKey)
+      await deleteEditResult(resultKey)
+      if (!buffer) {
+        toast.error("Could not retrieve the edited PDF. Please try again.")
+        return
+      }
+      const blob = new Blob([buffer], { type: "application/pdf" })
+      const file = new File([blob], resultFilename || `edited-document.pdf`, { type: "application/pdf" })
+      forceSuccess(file, {
+        processingTime: resultTime || undefined,
+        outputSize: resultSize ? Number(resultSize) : undefined,
+      })
+    })()
+  }, [searchParams, tool.slug, forceSuccess])
 
   // Reset loaded state when stepIndex changes to allow loading new step files
   useEffect(() => {

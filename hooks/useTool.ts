@@ -708,14 +708,17 @@ export function useTool(toolSlug: string) {
     setState({ status: "idle" })
   }, [])
 
-  const forceSuccess = useCallback((file: File) => {
+  const forceSuccess = useCallback((
+    file: File,
+    overrides?: { processingTime?: string; outputSize?: number }
+  ) => {
     const downloadUrl = URL.createObjectURL(file)
     setState({
       status: "success",
       downloadUrl,
       filename: file.name,
-      processingTime: "Instant (Local)",
-      outputSize: file.size,
+      processingTime: overrides?.processingTime ?? "Instant (Local)",
+      outputSize: overrides?.outputSize ?? file.size,
     })
     recordActivity(toolSlug, file.name, file.size)
     postActivity(toolSlug, file.name, file.size)
