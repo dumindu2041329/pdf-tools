@@ -899,8 +899,17 @@ export function ChatPanel({
         }
       } catch (err) {
         if (cancelled) return
-        setSummaryError(err instanceof Error ? err.message : "Could not summarize the document.")
-        markMessageDone(assistantId)
+        const message = err instanceof Error ? err.message : "Could not summarize the document."
+        setSummaryError(message)
+        // Clear the partial content the server may have streamed
+        // before it detected a bad response (e.g. a free model
+        // returning a safety classification instead of a summary).
+        // The error banner is the only thing the user needs to see.
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId ? { ...m, content: "", isStreaming: false } : m
+          )
+        )
         setIsSummarizing(false)
       }
     })()

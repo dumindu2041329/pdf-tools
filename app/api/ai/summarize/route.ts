@@ -314,7 +314,22 @@ export async function POST(req: Request) {
     "You are an expert document summarizer. " +
     getLengthInstruction(length) +
     " Use only the document text below as your source of truth. " +
-    "If the document is empty or unreadable, say so plainly."
+    "If the document is empty or unreadable, say so plainly. " +
+    // Some free models (openrouter/free routes to whoever is free at
+    // the moment) have been observed leaking their internal moderation
+    // decision (e.g. "User Safety: safe") as the first output when the
+    // same document is summarized repeatedly. Explicitly forbid it so
+    // the user gets a real summary instead.
+    "IMPORTANT: Output ONLY the summary itself. Do not include any " +
+    "safety classifications, moderation metadata, status codes, or " +
+    "labels such as 'User Safety: safe' in your response."
+
+  // Some free models occasionally return their internal moderation
+  // classification (e.g. "User Safety: safe") as the first output
+  // instead of a real summary. We detect this pattern in the buffered
+  // first ~200 chars of the stream and surface a clear error instead
+  // of showing the user a non-summary string.
+  const SAFETY_RESPONSE_PATTERN = /^\s*User Safety:?\s*(safe|unsafe|blocked|flagged)\b/i
 
   const summaryStream = makeSseStream(
     (async function* (): AsyncGenerator<StreamEvent, void, undefined> {
@@ -323,16 +338,61 @@ export async function POST(req: Request) {
         // Prefix the first chunk with the length label so the user
         // always sees what flavor of summary they're reading.
         let firstChunk = true
+        // Buffer the start of the model output so we can detect a
+        // safety-classification response and abort before flushing
+        // the bad content to the client.
+        let safetyCheckBuffer = ""
+        let isSafetyResponse = false
+
         for await (const text of await stream(
           systemPrompt,
           `Summarize the following document (${filename}):\n\n${documentText.slice(0, 50000)}`
         )) {
           if (firstChunk) {
-            yield { type: "chunk", text: `[${lengthLabel} Summary]\n\n` }
+            const prefix = `[${lengthLabel} Summary]\n\n`
+            safetyCheckBuffer = prefix + text
+            yield { type: "chunk", text: prefix }
             firstChunk = false
+          } else if (!isSafetyResponse) {
+            safetyCheckBuffer += text
           }
+
+          if (!isSafetyResponse) {
+            if (SAFETY_RESPONSE_PATTERN.test(safetyCheckBuffer)) {
+              isSafetyResponse = true
+            } else if (safetyCheckBuffer.length > 200) {
+              // Enough content to be confident this is a real
+              // summary; drop the buffer to free memory.
+              safetyCheckBuffer = ""
+            }
+          }
+
+          if (isSafetyResponse) {
+            // Stop streaming; the error event below will replace the
+            // partial content the client is holding.
+            break
+          }
+
           yield { type: "chunk", text }
         }
+
+        if (isSafetyResponse) {
+          const message =
+            "The AI returned a safety classification instead of a summary. " +
+            "Please try again in a moment."
+          yield { type: "error", message }
+          await recordProcessingEvent({
+            userId,
+            toolSlug: "ai-summarizer",
+            status: "error",
+            engine,
+            inputFilesCount: 1,
+            processingTimeMs: Date.now() - start,
+            errorMessage: message,
+          })
+          return
+        }
+
         // Hand the extracted text back so the client can use it for
         // follow-up questions without re-uploading the PDF.
         yield { type: "done", documentText }
