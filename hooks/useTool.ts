@@ -343,7 +343,11 @@ function buildUploadPayload({
     form.append(
       "blobUrls",
       JSON.stringify(
-        directUploads.map((u) => ({ url: u.url, filename: u.file.name }))
+        directUploads.map((u) => ({
+          url: u.url,
+          filename: u.file.name,
+          size: u.file.size,
+        }))
       )
     )
   }

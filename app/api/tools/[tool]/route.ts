@@ -113,13 +113,16 @@ function randomToken(): string {
  */
 function shouldEnqueueAsync(
   tool: string,
-  files: Array<{ buffer: Buffer; filename: string }>
+  files: Array<{ buffer: Buffer; filename: string }>,
+  blobEntries: Array<{ url: string; filename: string; size?: number }>
 ): boolean {
   if (tool === "validate-pdfa" || tool === "rotate-pdf" || tool === "edit-pdf") {
     return false
   }
-  const totalBytes = files.reduce((sum, f) => sum + f.buffer.byteLength, 0)
-  return files.length > 1 || totalBytes > ASYNC_THRESHOLD_BYTES
+  const totalBytes =
+    files.reduce((sum, f) => sum + f.buffer.byteLength, 0) +
+    blobEntries.reduce((sum, e) => sum + (e.size ?? 0), 0)
+  return files.length + blobEntries.length > 1 || totalBytes > ASYNC_THRESHOLD_BYTES
 }
 
 export async function POST(
@@ -141,8 +144,10 @@ async function processToolRequest(
   const downloadedBlobUrls: string[] = []
   // URL + filename pairs for files that came in via the direct-to-Storage
   // path. Needed by the async job pipeline so the background function can
-  // re-hydrate each file by URL.
-  const blobEntries: Array<{ url: string; filename: string }> = []
+  // re-hydrate each file by URL. `size` is optional metadata sent by the
+  // client so the quota gates and the async threshold can be evaluated
+  // without downloading every blob into this function.
+  const blobEntries: Array<{ url: string; filename: string; size?: number }> = []
 
   try {
     const { tool } = await params
@@ -241,49 +246,42 @@ async function processToolRequest(
           { status: 400 }
         )
       }
-      const { url, filename } = entry as { url: string; filename: string }
-      // Track BEFORE downloading so a download failure (502) still
-      // results in the blob being cleaned up by the finally block.
-      downloadedBlobUrls.push(url)
-      blobEntries.push({ url, filename })
-      try {
-        const buffer = await downloadFromStorage(url)
-        files.push({ buffer, filename, fromBlob: true })
-      } catch (err) {
-        console.error(`Failed to download blob ${url}:`, err)
-        return NextResponse.json(
-          { error: `Failed to download uploaded file "${filename}"` },
-          { status: 502 }
-        )
+      const { url, filename, size } = entry as {
+        url: string
+        filename: string
+        size?: unknown
       }
+      // Metadata only — the bytes stay in Storage. The async pipeline
+      // enqueues these URLs directly; the synchronous fallback below
+      // hydrates them only when this request actually needs the buffers.
+      // Downloading every blob here would burn the function timeout
+      // budget before a background job had even started.
+      blobEntries.push({
+        url,
+        filename,
+        size: typeof size === "number" && Number.isFinite(size) ? size : undefined,
+      })
     }
   }
 
-  // Extract watermark image if provided (blob URL form, e.g. `watermarkImageUrl`)
-  const watermarkImageUrl = formData.get("watermarkImageUrl")
-  if (typeof watermarkImageUrl === "string" && watermarkImageUrl.length > 0) {
-    // Track for cleanup (see comment above on the main blobUrls block).
-    downloadedBlobUrls.push(watermarkImageUrl)
-    const watermarkFilenameRaw = formData.get("watermarkImageFilename")
-    const watermarkFilename =
-      typeof watermarkFilenameRaw === "string" && watermarkFilenameRaw.length > 0
-        ? watermarkFilenameRaw
-        : "watermark.png"
-    try {
-      const buffer = await downloadFromStorage(watermarkImageUrl)
-      watermarkImage = { buffer, filename: watermarkFilename }
-    } catch (err) {
-      console.error(`Failed to download watermark blob ${watermarkImageUrl}:`, err)
-      return NextResponse.json(
-        { error: "Failed to download watermark image" },
-        { status: 502 }
-      )
-    }
-  }
+  // Extract watermark image if provided (blob URL form, e.g. `watermarkImageUrl`).
+  // Parsed eagerly but downloaded only when the request falls through to the
+  // synchronous path — the async pipeline passes the URL straight through.
+  const watermarkImageUrlRaw = formData.get("watermarkImageUrl")
+  const watermarkImageUrl =
+    typeof watermarkImageUrlRaw === "string" && watermarkImageUrlRaw.length > 0
+      ? watermarkImageUrlRaw
+      : undefined
+  const watermarkImageFilenameRaw = formData.get("watermarkImageFilename")
+  const watermarkImageFilename =
+    typeof watermarkImageFilenameRaw === "string" && watermarkImageFilenameRaw.length > 0
+      ? watermarkImageFilenameRaw
+      : "watermark.png"
 
   const userPlan = userId ? await getUserPlan(userId) : null
 
-  if (files.length === 0) {
+  const totalFileCount = files.length + blobEntries.length
+  if (totalFileCount === 0) {
     if (tool === "html-to-pdf" && options.url) {
       try {
         if (userId) {
@@ -349,7 +347,9 @@ async function processToolRequest(
   }
 
   if (userId) {
-    const totalBytes = files.reduce((sum, f) => sum + f.buffer.byteLength, 0)
+    const totalBytes =
+      files.reduce((sum, f) => sum + f.buffer.byteLength, 0) +
+      blobEntries.reduce((sum, e) => sum + (e.size ?? 0), 0)
     const gate = await canProcessFile(userId, totalBytes, userPlan ?? "free")
     if (!gate.allowed) {
       return NextResponse.json(
@@ -369,6 +369,16 @@ async function processToolRequest(
       return NextResponse.json(
         {
           error: `"${oversized.filename}" is ${(oversized.buffer.byteLength / (1024 * 1024)).toFixed(1)} MB. Guests can process files up to ${guestLimits.maxFileSizeMB} MB. Sign in for a free account to continue, or upgrade to Premium for files up to 4 GB.`,
+          upgradeRequired: true,
+        },
+        { status: 402 }
+      )
+    }
+    const oversizedBlob = blobEntries.find((e) => (e.size ?? 0) > guestMaxBytes)
+    if (oversizedBlob) {
+      return NextResponse.json(
+        {
+          error: `"${oversizedBlob.filename}" is ${((oversizedBlob.size ?? 0) / (1024 * 1024)).toFixed(1)} MB. Guests can process files up to ${guestLimits.maxFileSizeMB} MB. Sign in for a free account to continue, or upgrade to Premium for files up to 4 GB.`,
           upgradeRequired: true,
         },
         { status: 402 }
@@ -402,11 +412,24 @@ async function processToolRequest(
   // route responds immediately with a jobId and the client polls
   // /api/jobs/[jobId]. Each Inngest step runs as its own Vercel request,
   // so no single invocation ever outlives the function timeout.
-  if (isInngestConfigured() && shouldEnqueueAsync(tool, files)) {
+  if (isInngestConfigured() && shouldEnqueueAsync(tool, files, blobEntries)) {
     // Adobe rejects >100MB inputs — fail fast before enqueueing.
+    // Inline files are checked against their buffers; direct-uploaded
+    // blobs aren't hydrated yet, so use the client-reported size.
     if (ADOBE_SDK_TOOLS.has(tool)) {
       const adobePreflight = adobePreflightCheck(files, tool)
       if (adobePreflight) return adobePreflight
+      const oversizedBlob = blobEntries.find(
+        (e) => (e.size ?? 0) > ADOBE_MAX_INPUT_BYTES
+      )
+      if (oversizedBlob) {
+        return NextResponse.json(
+          {
+            error: `"${oversizedBlob.filename}" is ${((oversizedBlob.size ?? 0) / (1024 * 1024)).toFixed(1)} MB, which exceeds Adobe's ${tool} limit of 100 MB. Try splitting the PDF first.`,
+          },
+          { status: 413 }
+        )
+      }
     }
 
     const jobId = newJobId()
@@ -436,23 +459,17 @@ async function processToolRequest(
 
       // Watermark image: pass through the direct-upload URL when present,
       // otherwise persist the in-memory buffer for the job.
-      let watermarkImageUrl: string | undefined
-      let watermarkImageFilename: string | undefined
-      const watermarkImageUrlRaw = formData.get("watermarkImageUrl")
-      if (typeof watermarkImageUrlRaw === "string" && watermarkImageUrlRaw.length > 0) {
-        watermarkImageUrl = watermarkImageUrlRaw
-        const wfRaw = formData.get("watermarkImageFilename")
-        watermarkImageFilename =
-          typeof wfRaw === "string" && wfRaw.length > 0 ? wfRaw : "watermark.png"
-      } else if (watermarkImage) {
+      let asyncWatermarkImageUrl = watermarkImageUrl
+      let asyncWatermarkImageFilename = watermarkImageFilename
+      if (!asyncWatermarkImageUrl && watermarkImage) {
         const stored = await uploadToStorage({
           bucket: RESULTS_BUCKET,
           pathname: `uploads/${jobId}/watermark-${safeJobFilename(watermarkImage.filename)}`,
           body: watermarkImage.buffer,
           contentType: "application/octet-stream",
         })
-        watermarkImageUrl = stored.url
-        watermarkImageFilename = watermarkImage.filename
+        asyncWatermarkImageUrl = stored.url
+        asyncWatermarkImageFilename = watermarkImage.filename
       }
 
       const sent = await sendEvent("tool/job.requested", {
@@ -461,14 +478,15 @@ async function processToolRequest(
         toolSlug: tool,
         blobUrls: jobFiles,
         options,
-        ...(watermarkImageUrl ? { watermarkImageUrl, watermarkImageFilename } : {}),
+        ...(asyncWatermarkImageUrl
+          ? {
+              watermarkImageUrl: asyncWatermarkImageUrl,
+              watermarkImageFilename: asyncWatermarkImageFilename,
+            }
+          : {}),
       })
       if (!sent) throw new Error("Failed to enqueue job")
 
-      // The Inngest function now owns these blobs (it deletes them once
-      // it has finished) — stop the `finally` cleanup below from deleting
-      // them before the job has had a chance to read them.
-      downloadedBlobUrls.length = 0
       return NextResponse.json({ jobId })
     } catch (err) {
       console.error("Failed to enqueue background job:", err)
@@ -479,6 +497,41 @@ async function processToolRequest(
       }).catch(() => {})
       // Fall through to the synchronous path — the file buffers are still
       // in memory, so nothing about the request was consumed.
+    }
+  }
+
+  // ── Synchronous fallback — hydrate file buffers now ─────────────────
+  // We're here because Inngest isn't configured or the job didn't qualify
+  // for the background pipeline, so the file bytes are needed in memory.
+  // The direct-uploaded blobs were deliberately NOT downloaded earlier.
+  if (blobEntries.length > 0) {
+    for (const entry of blobEntries) {
+      // Track BEFORE downloading so a download failure (502) still
+      // results in the blob being cleaned up by the finally block.
+      downloadedBlobUrls.push(entry.url)
+      try {
+        const buffer = await downloadFromStorage(entry.url)
+        files.push({ buffer, filename: entry.filename, fromBlob: true })
+      } catch (err) {
+        console.error(`Failed to download blob ${entry.url}:`, err)
+        return NextResponse.json(
+          { error: `Failed to download uploaded file "${entry.filename}"` },
+          { status: 502 }
+        )
+      }
+    }
+  }
+  if (watermarkImageUrl && !watermarkImage) {
+    downloadedBlobUrls.push(watermarkImageUrl)
+    try {
+      const buffer = await downloadFromStorage(watermarkImageUrl)
+      watermarkImage = { buffer, filename: watermarkImageFilename }
+    } catch (err) {
+      console.error(`Failed to download watermark blob ${watermarkImageUrl}:`, err)
+      return NextResponse.json(
+        { error: "Failed to download watermark image" },
+        { status: 502 }
+      )
     }
   }
 
@@ -1074,18 +1127,49 @@ async function processToolRequest(
       const JSZip = (await import("jszip")).default
       const zip = new JSZip()
 
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i]
-        const singleResult = await runTool({
-          tool: "officepdf",
-          files: [file],
-          options: { ...options },
-        })
-        const pdfBuffer = singleResult.buffer instanceof Uint8Array
-          ? singleResult.buffer
-          : new Uint8Array(singleResult.buffer as ArrayBuffer)
-        const pdfFilename = `pdf_${i + 1}.pdf`
-        zip.file(pdfFilename, pdfBuffer)
+      // Process files concurrently (same pattern as the scan-to-pdf
+      // branch) so a large batch finishes inside the function timeout
+      // even when the job can't be dispatched to the Inngest pipeline.
+      // Per-file failures are collected and skipped — the zip still
+      // ships with every file that converted.
+      const CONCURRENCY = 4
+      let successCount = 0
+      const failures: { index: number; filename: string; error: unknown }[] = []
+
+      console.log(`[OfficePDF] Processing ${files.length} files with concurrency=${CONCURRENCY}`)
+
+      const tasks = files.map((file, i) => async () => {
+        try {
+          const singleResult = await runTool({
+            tool: "officepdf",
+            files: [file],
+            options: { ...options },
+          })
+          const pdfBuffer = singleResult.buffer instanceof Uint8Array
+            ? singleResult.buffer
+            : new Uint8Array(singleResult.buffer as ArrayBuffer)
+          const pdfFilename = `pdf_${i + 1}.pdf`
+          zip.file(pdfFilename, pdfBuffer)
+          successCount++
+          console.log(`[OfficePDF] Added to zip: ${pdfFilename}`)
+        } catch (err) {
+          console.warn(`[OfficePDF] File ${i + 1} (${file.filename}) failed:`, err)
+          failures.push({ index: i, filename: file.filename, error: err })
+        }
+      })
+
+      for (let i = 0; i < tasks.length; i += CONCURRENCY) {
+        const chunk = tasks.slice(i, i + CONCURRENCY)
+        await Promise.allSettled(chunk.map((t) => t()))
+      }
+
+      if (successCount === 0) {
+        console.error(`[OfficePDF] All ${files.length} files failed`)
+        return NextResponse.json({ error: `Failed to convert files to PDF` }, { status: 500 })
+      }
+
+      if (failures.length > 0) {
+        console.warn(`[OfficePDF] ${failures.length}/${files.length} files failed but ${successCount} succeeded`)
       }
 
       const zipBuffer = await zip.generateAsync({ type: "uint8array" })
