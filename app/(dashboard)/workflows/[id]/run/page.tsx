@@ -6,6 +6,7 @@ import { ArrowLeft, Upload, CheckCircle, XCircle, Loader2, ArrowRight, Download 
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { getToolBySlug } from "@/lib/tools-config"
+import { mimeTypeForFilename } from "@/lib/utils"
 import type { Workflow } from "@/lib/workflowStore"
 import { createWorkflowSession, clearWorkflowSession, loadWorkflowSession } from "@/lib/workflowSession"
 import { toast } from "sonner"
@@ -151,7 +152,9 @@ export default function WorkflowRunPage() {
   function downloadResult() {
     if (!finalResult) return
 
-    const blob = new Blob([finalResult.buffer], { type: "application/pdf" })
+    const blob = new Blob([finalResult.buffer], {
+      type: mimeTypeForFilename(finalResult.filename),
+    })
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
     a.href = url
@@ -165,7 +168,9 @@ export default function WorkflowRunPage() {
   function finishStepByStepWorkflow() {
     if (!finalResult) return
 
-    const blob = new Blob([finalResult.buffer], { type: "application/pdf" })
+    const blob = new Blob([finalResult.buffer], {
+      type: mimeTypeForFilename(finalResult.filename),
+    })
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
     a.href = url

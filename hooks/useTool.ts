@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import type { ProcessingStep } from "@/components/tools/ProcessingModal"
 import { recordActivity } from "@/lib/activityStore"
 import { shouldUseDirectUpload, uploadFileDirect, deleteFromStorageBrowser } from "@/lib/supabase-upload"
+import { mimeTypeForFilename } from "@/lib/utils"
 
 function postActivity(toolSlug: string, fileName: string, outputSize: number): void {
   fetch("/api/activity", {
@@ -519,7 +520,7 @@ export function useTool(toolSlug: string) {
           await delay(STEP_DELAY_DOWNLOAD_MS)
 
           const blob = new Blob([result.buffer as unknown as BlobPart], {
-            type: result.downloadFilename.endsWith(".zip") ? "application/zip" : "application/pdf"
+            type: mimeTypeForFilename(result.downloadFilename)
           });
           const downloadUrl = URL.createObjectURL(blob);
 
@@ -577,7 +578,9 @@ export function useTool(toolSlug: string) {
           setState({ status: "processing", step: "download" })
           await delay(STEP_DELAY_DOWNLOAD_MS)
 
-          const blob = new Blob([result.buffer as unknown as BlobPart], { type: "application/pdf" });
+          const blob = new Blob([result.buffer as unknown as BlobPart], {
+            type: mimeTypeForFilename(result.downloadFilename)
+          });
           const downloadUrl = URL.createObjectURL(blob);
 
           setState({ status: "processing", step: "done" })
@@ -739,7 +742,12 @@ export function useTool(toolSlug: string) {
           for (let i = 0; i < binaryString.length; i++) {
             bytes[i] = binaryString.charCodeAt(i)
           }
-          const blob = new Blob([bytes], { type: "application/pdf" })
+          // Mobile browsers (notably iOS Safari) ignore the `download`
+          // attribute on blob: URLs and derive the extension from the
+          // blob's MIME type — a zip typed as application/pdf downloads
+          // as "converted-pdfs.zip.pdf". Derive the type from the real
+          // output filename instead.
+          const blob = new Blob([bytes], { type: mimeTypeForFilename(data.filename) })
           downloadUrl = URL.createObjectURL(blob)
         } else {
           downloadUrl = `/api/download/${data.downloadId}`
