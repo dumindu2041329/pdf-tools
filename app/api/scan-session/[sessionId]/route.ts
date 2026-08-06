@@ -8,6 +8,7 @@ import {
   SCAN_SESSIONS_BUCKET,
   uploadToStorage,
 } from "@/lib/supabase-storage"
+import { pollLimiter } from "@/lib/ratelimit"
 import type { DeviceInfo } from "@/lib/device-info"
 
 /**
@@ -64,6 +65,13 @@ export async function GET(
 
   if (!isValidSessionId(sessionId)) {
     return NextResponse.json({ error: "Invalid sessionId" }, { status: 400 })
+  }
+
+  // The desktop side polls this route every ~2s; cap it so a runaway
+  // poll loop (or an abuser) can't hammer the storage listing.
+  const rl = await pollLimiter.limit(`session:${sessionId}`)
+  if (!rl.success) {
+    return NextResponse.json({ error: "Too many requests" }, { status: 429 })
   }
 
   const tokenError = ensureToken()

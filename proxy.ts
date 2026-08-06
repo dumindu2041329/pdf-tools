@@ -10,5 +10,5 @@ export default clerkMiddleware(async (_auth, _req) => {
 }, { clockSkewInMs: 60000 })
 
 export const config = {
-  matcher: ["/((?!_next|/api/tools/|/api/activity|/api/usage|/api/download/|/api/ai/|/api/billing/|/api/webhooks/.*).*)"],
+  matcher: ["/((?!_next|/api/tools/|/api/activity|/api/usage|/api/download/|/api/ai/|/api/billing/|/api/webhooks/.*|/api/inngest|/api/jobs/.*).*)"],
 }

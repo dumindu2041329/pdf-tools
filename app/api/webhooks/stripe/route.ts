@@ -1,10 +1,24 @@
 // app/api/webhooks/stripe/route.ts
-// Stripe webhook handler — keeps the user's plan in sync with subscription lifecycle events.
+// Stripe webhook handler — keeps the user's plan in sync with
+// subscription lifecycle events.
+//
+// Signature is verified here; the actual plan change is applied by the
+// Inngest function (`handleStripeEvent`) so the route can acknowledge
+// Stripe immediately instead of holding the function open for DB writes.
+// The event is idempotent via `event.id` (Stripe redelivers webhooks, so
+// this prevents double-applying a plan change).
+//
+// When Inngest isn't configured, the same logic runs inline so the
+// billing flow keeps working untouched.
 
 import { NextResponse } from "next/server"
 import type Stripe from "stripe"
 import { stripe, STRIPE_WEBHOOK_SECRET } from "@/lib/stripe"
-import { grantPremiumAccess, revokePremiumAccess } from "@/lib/auth"
+import { isInngestConfigured, sendEvent } from "@/lib/inngest/client"
+import {
+  applyStripeEventData,
+  type StripeEventData,
+} from "@/lib/inngest/functions/stripe-events"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -24,6 +38,26 @@ function resolveUserIdFromSubscription(
   const meta = subscription.metadata?.userId
   if (typeof meta === "string" && meta.length > 0) return meta
   return null
+}
+
+function extractEventData(event: Stripe.Event): StripeEventData {
+  const data: StripeEventData = { eventType: event.type }
+
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object as Stripe.Checkout.Session
+    data.sessionMode = session.mode ?? undefined
+    data.userId = resolveUserIdFromSession(session)
+  } else if (
+    event.type === "customer.subscription.created" ||
+    event.type === "customer.subscription.updated" ||
+    event.type === "customer.subscription.deleted"
+  ) {
+    const subscription = event.data.object as Stripe.Subscription
+    data.subscriptionStatus = subscription.status
+    data.userId = resolveUserIdFromSubscription(subscription)
+  }
+
+  return data
 }
 
 export async function POST(req: Request) {
@@ -60,45 +94,24 @@ export async function POST(req: Request) {
     )
   }
 
+  const data = extractEventData(event)
+
   try {
-    switch (event.type) {
-      case "checkout.session.completed": {
-        const session = event.data.object as Stripe.Checkout.Session
-        if (session.mode === "subscription") {
-          const userId = resolveUserIdFromSession(session)
-          if (userId) {
-            await grantPremiumAccess(userId)
-          } else {
-            console.warn(
-              "[stripe webhook] checkout.session.completed without userId"
-            )
-          }
-        }
-        break
+    if (isInngestConfigured()) {
+      // Acknowledge Stripe immediately; the Inngest function applies the
+      // plan change with retries. `event.id` dedupes redeliveries.
+      const sent = await sendEvent(
+        "stripe/event.received",
+        data as unknown as Record<string, unknown>,
+        event.id
+      )
+      if (!sent) {
+        // Send failed for a non-config reason — apply inline so the plan
+        // change isn't lost.
+        await applyStripeEventData(data)
       }
-      case "customer.subscription.created":
-      case "customer.subscription.updated":
-      case "customer.subscription.deleted": {
-        const subscription = event.data.object as Stripe.Subscription
-        const userId = resolveUserIdFromSubscription(subscription)
-        if (!userId) break
-
-        const status = subscription.status
-        const isActive =
-          status === "active" ||
-          status === "trialing" ||
-          status === "past_due"
-
-        if (event.type === "customer.subscription.deleted" || !isActive) {
-          await revokePremiumAccess(userId)
-        } else if (isActive) {
-          await grantPremiumAccess(userId)
-        }
-        break
-      }
-      default:
-        // Unhandled events are acknowledged to keep Stripe retrying at a minimum.
-        break
+    } else {
+      await applyStripeEventData(data)
     }
   } catch (err) {
     console.error("[stripe webhook] handler error:", err)

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { canProcessFile, recordProcessingEvent } from "@/lib/usage"
 import { getUserPlan } from "@/lib/auth"
+import { aiLimiter, getClientIp, rateLimitKey } from "@/lib/ratelimit"
 
 const OPENROUTER_MODEL = "openrouter/free"
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
@@ -154,6 +155,13 @@ export async function POST(req: Request) {
   const userId = await getAuthenticatedUserId()
   const start = Date.now()
   const engine = "openrouter"
+
+  // Burst protection (Upstash Redis) — complements the daily/monthly
+  // quotas enforced via canProcessFile below.
+  const rl = await aiLimiter.limit(rateLimitKey(userId, getClientIp(req)))
+  if (!rl.success) {
+    return errorResponse("Too many requests. Please wait a moment and try again.", 429)
+  }
 
   const contentType = req.headers.get("content-type") || ""
   if (!contentType.startsWith("application/json")) {

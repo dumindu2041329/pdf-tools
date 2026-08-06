@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server"
 import { NextResponse } from "next/server"
 import { getLimitsForPlan } from "@/lib/usageLimits"
+import { getClientIp, rateLimitKey, uploadLimiter } from "@/lib/ratelimit"
 import {
   createSignedUploadUrl,
   isSupabaseStorageConfigured,
@@ -70,6 +71,16 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const { userId } = await auth()
   const isGuest = !userId
+
+  // Burst protection (Upstash Redis) — issue signed upload URLs at most
+  // 30x/min per user/IP.
+  const rl = await uploadLimiter.limit(rateLimitKey(userId, getClientIp(request)))
+  if (!rl.success) {
+    return NextResponse.json(
+      { error: "Too many upload requests. Please try again shortly." },
+      { status: 429 }
+    )
+  }
 
   let payload: UploadTokenRequest
   try {

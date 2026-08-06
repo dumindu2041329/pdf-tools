@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server"
 import { NextResponse } from "next/server"
 import { runWorkflow, upsertUser } from "@/lib/db"
+import { isInngestConfigured, sendEvent } from "@/lib/inngest/client"
 
 export async function POST(
   _req: Request,
@@ -12,6 +13,19 @@ export async function POST(
   }
 
   const { id } = await params
+
+  // When Inngest is available, run the workflow in the background so the
+  // client gets an immediate acknowledgement and transient DB failures
+  // are retried by the function. Otherwise run inline as before.
+  if (isInngestConfigured()) {
+    const sent = await sendEvent("workflow/run.requested", {
+      userId,
+      workflowId: id,
+    })
+    if (sent) {
+      return NextResponse.json({ ok: true, queued: true })
+    }
+  }
 
   await upsertUser(userId)
   await runWorkflow(userId, id)

@@ -125,7 +125,9 @@ export function ProcessingModal({ open, onClose, toolSlug, toolName, state, canc
               {wasCancelled
                 ? "Cancelling…"
                 : showCancel
-                ? "Hang tight — this may take a moment for large files."
+                ? state.status === "processing" && state.async === true
+                  ? "Your file is processing in the background — this page updates automatically when it's ready."
+                  : "Hang tight — this may take a moment for large files."
                 : "All set!"}
             </p>
 

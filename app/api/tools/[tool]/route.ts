@@ -14,7 +14,15 @@ import { canProcessFile, recordProcessingEvent } from "@/lib/usage"
 import { getUserPlan } from "@/lib/auth"
 import { getLimitsForPlan } from "@/lib/usageLimits"
 import { checkGuestLimits, incrementGuestUsage } from "@/lib/guest-usage"
-import { downloadFromStorage, deleteFromStorage } from "@/lib/supabase-storage"
+import {
+  deleteFromStorage,
+  deleteStoragePrefix,
+  downloadFromStorage,
+  uploadToStorage,
+} from "@/lib/supabase-storage"
+import { getClientIp, rateLimitKey, toolLimiter } from "@/lib/ratelimit"
+import { isInngestConfigured, sendEvent } from "@/lib/inngest/client"
+import { createJob, deleteJob, newJobId, RESULTS_BUCKET } from "@/lib/jobs"
 
 /**
  * Map an error thrown by the Adobe PDF Services SDK into a user-friendly
@@ -74,6 +82,46 @@ export const maxDuration = 60
 
 export const dynamic = "force-dynamic"
 
+// Jobs above this total size (or with more than one file) are dispatched
+// to the Inngest background pipeline instead of blocking this function.
+const ASYNC_THRESHOLD_BYTES = 10 * 1024 * 1024
+
+// Tools backed by the Adobe PDF Services SDK (100 MB per-file limit).
+const ADOBE_SDK_TOOLS = new Set([
+  "ocr-pdf",
+  "pdf-to-excel",
+  "pdf-to-word",
+  "pdf-to-powerpoint",
+])
+
+function safeJobFilename(name: string): string {
+  const cleaned = name.replace(/[^a-zA-Z0-9._-]/g, "_")
+  return cleaned.length > 0 ? cleaned : "file"
+}
+
+function randomToken(): string {
+  // 9-char base36 token — ~47 bits of entropy, URL-safe, cheap.
+  return Math.random().toString(36).slice(2, 11)
+}
+
+/**
+ * True when a request should be processed as an async Inngest job.
+ * Multi-file jobs (the sequential loops that blow the 60s/120s budget)
+ * and single files above the size threshold are the heavy cases.
+ * validate-pdfa keeps its dedicated synchronous response shape and
+ * rotate-pdf is a fast local (pdf-lib) operation.
+ */
+function shouldEnqueueAsync(
+  tool: string,
+  files: Array<{ buffer: Buffer; filename: string }>
+): boolean {
+  if (tool === "validate-pdfa" || tool === "rotate-pdf" || tool === "edit-pdf") {
+    return false
+  }
+  const totalBytes = files.reduce((sum, f) => sum + f.buffer.byteLength, 0)
+  return files.length > 1 || totalBytes > ASYNC_THRESHOLD_BYTES
+}
+
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ tool: string }> }
@@ -91,10 +139,24 @@ async function processToolRequest(
   // fire-and-forget — a failed tool run (iLoveAPI/Adobe error, guest
   // cap, etc.) still releases the storage objects.
   const downloadedBlobUrls: string[] = []
+  // URL + filename pairs for files that came in via the direct-to-Storage
+  // path. Needed by the async job pipeline so the background function can
+  // re-hydrate each file by URL.
+  const blobEntries: Array<{ url: string; filename: string }> = []
 
   try {
     const { tool } = await params
     const { userId } = await auth()
+
+    // Burst protection (Upstash Redis) — complements the daily/monthly
+    // quotas enforced below. Guards iLoveAPI/Adobe credits from abuse.
+    const rl = await toolLimiter.limit(rateLimitKey(userId, getClientIp(req)))
+    if (!rl.success) {
+      return NextResponse.json(
+        { error: "Too many requests. Please wait a moment and try again." },
+        { status: 429 }
+      )
+    }
 
   const contentType = req.headers.get("content-type")
   console.log("[DEBUG] Content-Type:", contentType)
@@ -107,7 +169,14 @@ async function processToolRequest(
     return NextResponse.json({ error: "Failed to parse file upload request" }, { status: 400 })
   }
 
-  const files: Array<{ buffer: Buffer; filename: string; password?: string }> = []
+  const files: Array<{
+    buffer: Buffer
+    filename: string
+    password?: string
+    // True when this file was re-hydrated from a direct-to-Storage blob
+    // (already reachable by URL for background jobs).
+    fromBlob?: boolean
+  }> = []
   let watermarkImage: { buffer: Buffer; filename: string } | undefined
 
   const uploadedFiles = formData.getAll("file")
@@ -176,9 +245,10 @@ async function processToolRequest(
       // Track BEFORE downloading so a download failure (502) still
       // results in the blob being cleaned up by the finally block.
       downloadedBlobUrls.push(url)
+      blobEntries.push({ url, filename })
       try {
         const buffer = await downloadFromStorage(url)
-        files.push({ buffer, filename })
+        files.push({ buffer, filename, fromBlob: true })
       } catch (err) {
         console.error(`Failed to download blob ${url}:`, err)
         return NextResponse.json(
@@ -324,6 +394,92 @@ async function processToolRequest(
       )
     }
     await incrementGuestUsage(1)
+  }
+
+  // ── Background job (Inngest) — heavy requests ──────────────────────
+  // Multi-file jobs and files above the size threshold are dispatched to
+  // the Inngest function (lib/inngest/functions/tool-processing.ts): this
+  // route responds immediately with a jobId and the client polls
+  // /api/jobs/[jobId]. Each Inngest step runs as its own Vercel request,
+  // so no single invocation ever outlives the function timeout.
+  if (isInngestConfigured() && shouldEnqueueAsync(tool, files)) {
+    // Adobe rejects >100MB inputs — fail fast before enqueueing.
+    if (ADOBE_SDK_TOOLS.has(tool)) {
+      const adobePreflight = adobePreflightCheck(files, tool)
+      if (adobePreflight) return adobePreflight
+    }
+
+    const jobId = newJobId()
+    try {
+      await createJob({ jobId, userId, toolSlug: tool })
+
+      // Every file must be reachable by the background job via a storage
+      // URL. Blob-hydrated files already are; files that arrived inline
+      // (small multipart uploads) are persisted now. Dedupe by name+size
+      // (two distinct files may share a filename) and give each upload a
+      // unique suffix so same-named files can't overwrite each other.
+      const jobFiles: Array<{ url: string; filename: string }> = [...blobEntries]
+      const inlineSeen = new Set<string>()
+      for (const f of files) {
+        if (f.fromBlob) continue
+        const key = `${f.filename}:${f.buffer.byteLength}`
+        if (inlineSeen.has(key)) continue
+        inlineSeen.add(key)
+        const stored = await uploadToStorage({
+          bucket: RESULTS_BUCKET,
+          pathname: `uploads/${jobId}/${safeJobFilename(f.filename)}-${randomToken()}`,
+          body: f.buffer,
+          contentType: "application/pdf",
+        })
+        jobFiles.push({ url: stored.url, filename: f.filename })
+      }
+
+      // Watermark image: pass through the direct-upload URL when present,
+      // otherwise persist the in-memory buffer for the job.
+      let watermarkImageUrl: string | undefined
+      let watermarkImageFilename: string | undefined
+      const watermarkImageUrlRaw = formData.get("watermarkImageUrl")
+      if (typeof watermarkImageUrlRaw === "string" && watermarkImageUrlRaw.length > 0) {
+        watermarkImageUrl = watermarkImageUrlRaw
+        const wfRaw = formData.get("watermarkImageFilename")
+        watermarkImageFilename =
+          typeof wfRaw === "string" && wfRaw.length > 0 ? wfRaw : "watermark.png"
+      } else if (watermarkImage) {
+        const stored = await uploadToStorage({
+          bucket: RESULTS_BUCKET,
+          pathname: `uploads/${jobId}/watermark-${safeJobFilename(watermarkImage.filename)}`,
+          body: watermarkImage.buffer,
+          contentType: "application/octet-stream",
+        })
+        watermarkImageUrl = stored.url
+        watermarkImageFilename = watermarkImage.filename
+      }
+
+      const sent = await sendEvent("tool/job.requested", {
+        jobId,
+        userId,
+        toolSlug: tool,
+        blobUrls: jobFiles,
+        options,
+        ...(watermarkImageUrl ? { watermarkImageUrl, watermarkImageFilename } : {}),
+      })
+      if (!sent) throw new Error("Failed to enqueue job")
+
+      // The Inngest function now owns these blobs (it deletes them once
+      // it has finished) — stop the `finally` cleanup below from deleting
+      // them before the job has had a chance to read them.
+      downloadedBlobUrls.length = 0
+      return NextResponse.json({ jobId })
+    } catch (err) {
+      console.error("Failed to enqueue background job:", err)
+      await deleteJob(jobId).catch(() => {})
+      await deleteStoragePrefix({
+        bucket: RESULTS_BUCKET,
+        prefix: `uploads/${jobId}/`,
+      }).catch(() => {})
+      // Fall through to the synchronous path — the file buffers are still
+      // in memory, so nothing about the request was consumed.
+    }
   }
 
   if (tool === "jpg-to-pdf" && options.merge_after === false) {

@@ -46,6 +46,8 @@ export type ToolState =
       step: ProcessingStep
       uploadProgress?: number
       uploadBytes?: UploadProgress
+      /** True while waiting on an async (Inngest) background job. */
+      async?: boolean
     }
   | { status: "success"; downloadUrl: string; filename: string; processingTime: string; outputSize: number }
   | { status: "validation-success"; message: string; result?: string; processingTime: string }
@@ -59,6 +61,56 @@ const STEP_DELAY_DOWNLOAD_MS = 400
 const STEP_DELAY_DONE_MS = 600
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+
+interface JobStatusResponse {
+  status: "queued" | "processing" | "completed" | "failed" | "cancelled"
+  resultUrl?: string
+  filename?: string
+  outputSize?: number
+  error?: string
+}
+
+const JOB_POLL_INTERVAL_MS = 2000
+const JOB_POLL_MAX_MS = 30 * 60 * 1000
+
+/**
+ * Polls /api/jobs/[jobId] until the background (Inngest) job reaches a
+ * terminal state. Returns the terminal job on success, or a synthetic
+ * `cancelled` record on abort / timeout. Respects the shared abort
+ * signal so the Cancel button still works during background jobs.
+ */
+async function pollJobStatus(
+  jobId: string,
+  signal: AbortSignal
+): Promise<JobStatusResponse> {
+  const startedAt = Date.now()
+  while (!signal.aborted) {
+    if (Date.now() - startedAt > JOB_POLL_MAX_MS) {
+      return { status: "cancelled", error: "Processing took too long. Please try again." }
+    }
+    try {
+      const res = await fetch(`/api/jobs/${jobId}`, {
+        cache: "no-store",
+        signal,
+      })
+      if (res.ok) {
+        const job = (await res.json()) as JobStatusResponse
+        if (
+          job.status === "completed" ||
+          job.status === "failed" ||
+          job.status === "cancelled"
+        ) {
+          return job
+        }
+      }
+    } catch {
+      // Transient network error — keep polling unless the user aborted.
+      if (signal.aborted) return { status: "cancelled" }
+    }
+    await delay(JOB_POLL_INTERVAL_MS)
+  }
+  return { status: "cancelled" }
+}
 
 interface UploadResult {
   ok: boolean
@@ -311,6 +363,9 @@ export function useTool(toolSlug: string) {
   // (rendered by ProcessingModal) can abort it. We keep this in a ref so
   // the cancel handler is stable across renders.
   const abortRef = useRef<AbortController | null>(null)
+  // The async (Inngest) job currently being polled, so cancel can tell
+  // the server to stop it.
+  const jobIdRef = useRef<string | null>(null)
 
   const process = useCallback(
     async (files: File[], options: Record<string, unknown> = {}) => {
@@ -621,12 +676,46 @@ export function useTool(toolSlug: string) {
         const data = response.json() as {
           fileData?: string
           downloadId?: string
+          jobId?: string
           filename?: string
           processingTime?: string
           outputSize?: number | string
           validationSuccess?: boolean
           message?: string
           result?: string
+        }
+
+        // Async (Inngest) job: the server returned a jobId instead of the
+        // finished file. Poll /api/jobs/[jobId] until the background
+        // function completes, then present the stored result.
+        if (typeof data.jobId === "string" && data.jobId.length > 0) {
+          const asyncStart = Date.now()
+          jobIdRef.current = data.jobId
+          setState({ status: "processing", step: "process", async: true })
+          const job = await pollJobStatus(data.jobId, signal)
+          jobIdRef.current = null
+          if (signal.aborted) return
+          if (job.status === "completed" && job.resultUrl) {
+            setState({ status: "processing", step: "download" })
+            await delay(STEP_DELAY_DOWNLOAD_MS)
+            setState({ status: "processing", step: "done" })
+            await delay(STEP_DELAY_DONE_MS)
+            setState({
+              status: "success",
+              downloadUrl: job.resultUrl,
+              filename: job.filename || "output.pdf",
+              processingTime: ((Date.now() - asyncStart) / 1000).toFixed(2),
+              outputSize: job.outputSize || 0,
+            })
+            recordActivity(toolSlug, job.filename || "output.pdf", job.outputSize || 0)
+          } else {
+            setState({
+              status: "error",
+              message: job.error || "Processing failed. Please try again.",
+              retryable: true,
+            })
+          }
+          return
         }
 
         if (data.validationSuccess !== undefined) {
@@ -701,6 +790,14 @@ export function useTool(toolSlug: string) {
     if (abortRef.current) {
       abortRef.current.abort()
       abortRef.current = null
+    }
+    // Tell the server to stop a background job if one was running; the
+    // Inngest function's complete step honours the "cancelled" status
+    // and skips publishing a result.
+    const jobId = jobIdRef.current
+    jobIdRef.current = null
+    if (jobId) {
+      fetch(`/api/jobs/${jobId}`, { method: "DELETE" }).catch(() => {})
     }
     // Reset to idle immediately so the modal closes; the rejected
     // promises that propagate up will see `isAbortError` and bail
