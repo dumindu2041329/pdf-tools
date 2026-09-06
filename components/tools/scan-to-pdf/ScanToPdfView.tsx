@@ -7,6 +7,7 @@ import { Check, Smartphone } from "lucide-react"
 import { motion } from "framer-motion"
 import { useTheme } from "next-themes"
 import type { DeviceInfo } from "@/lib/device-info"
+import { createBackgroundPoller, type BackgroundPollerStatus } from "@/lib/backgroundPoller"
 
 function QrCodeSvg({ value }: { value: string }) {
   const [svg, setSvg] = useState<string>("")
@@ -88,25 +89,22 @@ export function ScanToPdfView() {
 
     let cancelled = false
 
-    async function poll() {
-      try {
-        const res = await fetch(`/api/scan-session/${id}`, {
-          cache: "no-store",
-        })
-        if (!res.ok) {
-          // Transient failure — don't clear `device`/`images` we already
-          // have. Just flip `connected` off so the badge reflects that
-          // we lost touch with the server. The next successful poll
-          // will restore it.
-          if (!cancelled) setConnected(false)
-          return
-        }
-        const data = (await res.json()) as {
+    // Poll from a Web Worker when possible: the desktop keeps monitoring the
+    // phone's uploads even while the tab is hidden, because worker timers
+    // aren't throttled the way main-thread timers are in background tabs.
+    const poller = createBackgroundPoller()
+    const sessionUrl = `/api/scan-session/${id}`
+
+    // Apply one poll result to the UI. Shared by the Worker path and the
+    // setInterval fallback so both behave identically.
+    const applyPollResult = async (result: BackgroundPollerStatus) => {
+      if (cancelled) return
+      if (result.type === "ok") {
+        const data = result.data as {
           images: ScannedImage[]
           device: DeviceInfo | null
           saved?: boolean
         }
-        if (cancelled) return
         setImages(data.images)
         // `device` is sticky — once a phone has joined, treat the
         // session as locked for its lifetime. A transient response that
@@ -124,16 +122,47 @@ export function ScanToPdfView() {
           autoNavTriggeredRef.current = true
           router.push(`/scan-editor?session=${id}`)
         }
-      } catch {
-        if (!cancelled) setConnected(false)
+      } else {
+        // Transient failure — don't clear `device`/`images` we already
+        // have. Just flip `connected` off so the badge reflects that
+        // we lost touch with the server. The next successful poll
+        // will restore it.
+        setConnected(false)
       }
     }
 
-    poll()
-    const pollId = window.setInterval(poll, POLL_INTERVAL_MS)
+    let fallbackInterval: number | undefined
+
+    if (poller) {
+      poller.start(sessionUrl, POLL_INTERVAL_MS, applyPollResult)
+    } else {
+      // Fallback (no Worker support): the original fetch + setInterval loop.
+      const poll = async () => {
+        try {
+          const res = await fetch(sessionUrl, { cache: "no-store" })
+          if (!res.ok) {
+            await applyPollResult({ type: "http-error", status: res.status })
+            return
+          }
+          const data = (await res.json()) as {
+            images: ScannedImage[]
+            device: DeviceInfo | null
+            saved?: boolean
+          }
+          await applyPollResult({ type: "ok", data })
+        } catch {
+          await applyPollResult({ type: "error", message: "network" })
+        }
+      }
+
+      poll()
+      fallbackInterval = window.setInterval(poll, POLL_INTERVAL_MS)
+    }
+
     return () => {
       cancelled = true
-      window.clearInterval(pollId)
+      if (fallbackInterval !== undefined) window.clearInterval(fallbackInterval)
+      poller?.stop()
     }
     // `router` is stable across renders (Next.js returns the same
     // singleton) but the exhaustive-deps lint rule can't prove that,

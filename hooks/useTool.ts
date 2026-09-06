@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import type { ProcessingStep } from "@/components/tools/ProcessingModal"
 import { recordActivity } from "@/lib/activityStore"
 import { shouldUseDirectUpload, uploadFileDirect, deleteFromStorageBrowser } from "@/lib/supabase-upload"
+import { createBackgroundPoller } from "@/lib/backgroundPoller"
 import { mimeTypeForFilename } from "@/lib/utils"
 
 function postActivity(toolSlug: string, fileName: string, outputSize: number): void {
@@ -79,38 +80,88 @@ const JOB_POLL_MAX_MS = 30 * 60 * 1000
  * terminal state. Returns the terminal job on success, or a synthetic
  * `cancelled` record on abort / timeout. Respects the shared abort
  * signal so the Cancel button still works during background jobs.
+ *
+ * Polling runs inside a Web Worker when the browser supports it: browsers
+ * throttle main-thread timers in hidden tabs (Chrome's intensive wake-up
+ * throttling clamps them to ~1/minute), which made completion detection
+ * stall whenever the user switched to another tab. Worker timers are exempt
+ * from that throttling, so the job status keeps updating in the background.
  */
-async function pollJobStatus(
-  jobId: string,
-  signal: AbortSignal
-): Promise<JobStatusResponse> {
+function pollJobStatus(jobId: string, signal: AbortSignal): Promise<JobStatusResponse> {
   const startedAt = Date.now()
-  while (!signal.aborted) {
-    if (Date.now() - startedAt > JOB_POLL_MAX_MS) {
-      return { status: "cancelled", error: "Processing took too long. Please try again." }
+  const url = `/api/jobs/${jobId}`
+  const isTerminal = (job: JobStatusResponse) =>
+    job.status === "completed" || job.status === "failed" || job.status === "cancelled"
+
+  return new Promise((resolve) => {
+    let settled = false
+    let poller: ReturnType<typeof createBackgroundPoller> = null
+
+    const tooSlow = () =>
+      finish({ status: "cancelled", error: "Processing took too long. Please try again." })
+    // Cap the total wait (parity with the original while-loop timeout).
+    const maxTimeout = setTimeout(tooSlow, JOB_POLL_MAX_MS)
+    const onAbort = () => finish({ status: "cancelled" })
+
+    const finish = (job: JobStatusResponse) => {
+      if (settled) return
+      settled = true
+      clearTimeout(maxTimeout)
+      signal.removeEventListener("abort", onAbort)
+      poller?.stop()
+      resolve(job)
     }
-    try {
-      const res = await fetch(`/api/jobs/${jobId}`, {
-        cache: "no-store",
-        signal,
-      })
-      if (res.ok) {
-        const job = (await res.json()) as JobStatusResponse
-        if (
-          job.status === "completed" ||
-          job.status === "failed" ||
-          job.status === "cancelled"
-        ) {
-          return job
+
+    signal.addEventListener("abort", onAbort, { once: true })
+
+    // Preferred path: poll from a Web Worker so background-tab timer
+    // throttling doesn't stall completion detection.
+    poller = createBackgroundPoller()
+    if (poller) {
+      poller.start(url, JOB_POLL_INTERVAL_MS, (status) => {
+        if (status.type === "ok") {
+          const job = status.data as Partial<JobStatusResponse>
+          if (
+            typeof job.status === "string" &&
+            (job.status === "completed" || job.status === "failed" || job.status === "cancelled")
+          ) {
+            finish(job as JobStatusResponse)
+          }
         }
-      }
-    } catch {
-      // Transient network error — keep polling unless the user aborted.
-      if (signal.aborted) return { status: "cancelled" }
+        // HTTP / network errors are transient — keep polling until the
+        // max timeout or until the user cancels.
+      })
+      return
     }
-    await delay(JOB_POLL_INTERVAL_MS)
-  }
-  return { status: "cancelled" }
+
+    // Fallback (no Worker support): the original setTimeout-paced loop.
+    void (async () => {
+      while (!signal.aborted) {
+        if (Date.now() - startedAt > JOB_POLL_MAX_MS) {
+          tooSlow()
+          return
+        }
+        try {
+          const res = await fetch(url, { cache: "no-store", signal })
+          if (res.ok) {
+            const job = (await res.json()) as JobStatusResponse
+            if (isTerminal(job)) {
+              finish(job)
+              return
+            }
+          }
+        } catch {
+          // Transient network error — keep polling unless the user aborted.
+          if (signal.aborted) {
+            finish({ status: "cancelled" })
+            return
+          }
+        }
+        await delay(JOB_POLL_INTERVAL_MS)
+      }
+      finish({ status: "cancelled" })
+    })()
+  })
 }
 
 interface UploadResult {
