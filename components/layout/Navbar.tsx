@@ -83,14 +83,10 @@ export function Navbar() {
         {/* Desktop nav */}
         <div className="hidden md:flex items-center gap-1">
           {navLinks.map((link) => (
-            <div
-              key={link.href}
-              className={cn(
-                link.hasDropdown ? "relative inline-block" : ""
-              )}
-            >
+            <div key={link.href}>
               {link.hasDropdown ? (
                 <div
+                  className="flex h-16 items-center"
                   onMouseEnter={() => setToolsDropdownOpen(true)}
                   onMouseLeave={() => setToolsDropdownOpen(false)}
                 >
