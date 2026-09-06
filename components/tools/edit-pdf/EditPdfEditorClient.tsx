@@ -1155,11 +1155,11 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
     return () => scroller.removeEventListener("scroll", onScroll)
   }, [renderedPages, displayScale])
 
-  // Deselects the active annotation. Deactivates the active tool when
-  // something was actually selected (so pan/text/draw tools stay active),
-  // and also deactivates the shape tool when the user clicks outside of a
-  // shape while it's active — the click only reaches here when no shape was
-  // hit (shapes stopPropagation on their own click).
+  // Deselects the active annotation. Text/image selections clear and
+  // deactivate their tool, but draw/shape are persistent tools — clicking
+  // the canvas keeps their sub-toolbar visible so the user can keep
+  // drawing without re-activating the tool. Shapes stopPropagation on
+  // their own click, so this only fires for empty-canvas clicks.
   const handleCanvasDeselect = useCallback(() => {
     setSelectedAnnotationId(null)
     setSelectedImageId(null)
@@ -1170,14 +1170,16 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
     if (activeTool !== "shape") {
       setSelectedShapeId(null)
     }
-    if (selectedAnnotationId || selectedImageId || selectedShapeId) {
-      setActiveTool(null)
-    } else if (activeTool === "shape") {
-      setActiveTool(null)
+    // Only deactivate for non-persistent tools. Draw/shape stay active
+    // so their sub-toolbars don't disappear right after drawing a shape.
+    if (activeTool !== "draw" && activeTool !== "shape") {
+      if (selectedAnnotationId || selectedImageId) {
+        setActiveTool(null)
+      }
     }
     setMultiSelectedIds(new Set())
     window.getSelection()?.removeAllRanges()
-  }, [selectedAnnotationId, selectedImageId, selectedShapeId, activeTool])
+  }, [selectedAnnotationId, selectedImageId, activeTool])
 
   const commitDraft = useCallback(() => {
     if (!draftPosition) return
