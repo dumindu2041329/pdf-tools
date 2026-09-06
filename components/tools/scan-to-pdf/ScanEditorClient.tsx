@@ -236,6 +236,61 @@ export function ScanEditorClient({ sessionId }: { sessionId: string }) {
     })
   }, [validSession, sessionId, state.status])
 
+  // Cleanup effect #2: when the user is bounced off the page for hitting
+  // their processing limit (guest 402 → redirectToSignUp), they can never
+  // come back to this session — useTool navigates to /sign-up ~1.2s after
+  // the error lands. Without this, the session's images would stay in
+  // Supabase Storage forever. Only the redirect path destroys the session:
+  // retryable errors keep it so the user can try again.
+  const limitCleanupFiredRef = useRef(false)
+  useEffect(() => {
+    if (!validSession) return
+    if (state.status !== "error" || !state.redirectToSignUp) return
+    if (limitCleanupFiredRef.current) return
+    limitCleanupFiredRef.current = true
+
+    fetch(`/api/scan-session/${sessionId}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ destroy: true }),
+    }).catch((err) => {
+      // Best-effort — the page-leave beacon below retries the destroy
+      // when the redirect tears the page down.
+      console.warn("[scan-editor] limit-rejection cleanup failed:", err)
+    })
+  }, [validSession, sessionId, state])
+
+  // Cleanup effect #3: page-leave safety net. Any exit that skips the
+  // explicit cleanups above — closing the tab, the sign-up redirect
+  // after hitting the guest limit, or an abandon mid-processing (the
+  // in-flight upload dies with the page, so the job can never finish) —
+  // would otherwise orphan the session's images in Supabase Storage.
+  // Matches the beacons MobileScanView / ScanToPdfView already use and
+  // the PRD's cleanup spec for this page.
+  useEffect(() => {
+    if (!validSession) return
+    const url = `/api/scan-session/${sessionId}/destroy`
+    const beacon = () => {
+      try {
+        const blob = new Blob([JSON.stringify({ destroy: true })], {
+          type: "application/json",
+        })
+        navigator.sendBeacon(url, blob)
+      } catch (err) {
+        // Best-effort — if beacon fails the worst case is a stale
+        // session sitting in storage until the next destroy.
+        console.warn("[scan-editor] destroy beacon failed:", err)
+      }
+    }
+    window.addEventListener("pagehide", beacon)
+    // `beforeunload` covers Safari where `pagehide` is inconsistent.
+    window.addEventListener("beforeunload", beacon)
+    return () => {
+      window.removeEventListener("pagehide", beacon)
+      window.removeEventListener("beforeunload", beacon)
+    }
+  }, [validSession, sessionId])
+
   const rotate = (pathname: string) => {
     setImages((prev) =>
       prev.map((img) =>
