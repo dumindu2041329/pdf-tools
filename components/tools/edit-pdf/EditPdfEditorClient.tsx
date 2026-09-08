@@ -71,6 +71,145 @@ const COLOR_PALETTE = [
   "#00ffff", "#4a86e8", "#0000ff", "#9900ff", "#ff00ff",
 ]
 
+// Real emoji picker contents shown when the shape tool's emoji button is
+// opened. Selecting one arms the emoji stamp; the next page click places
+// it (rasterized to a transparent PNG so it survives PDF export).
+const EMOJI_GROUPS: { label: string; emojis: string[] }[] = [
+  {
+    label: "Smileys",
+    emojis: [
+      "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "😊", "😇", "🙂", "🙃",
+      "😉", "😌", "😍", "🥰", "😘", "😗", "😙", "😚", "😋", "😛", "😝", "😜",
+      "🤪", "🤨", "🧐", "🤓", "😎", "🤩", "🥳", "😏", "😒", "😞", "😔", "😟",
+      "😕", "🙁", "☹️", "😣", "😖", "😫", "😩", "🥺", "😢", "😭", "😤", "😠",
+      "😡", "🤬", "🤯", "😳", "🥵", "🥶", "😱", "😨", "😰", "😥", "😓", "🤗",
+      "🤔", "🤭", "🤫", "🤥", "😶", "😐", "😑", "😬", "🙄", "😯", "😦", "😧",
+      "😮", "😲", "🥱", "😴", "🤤", "😪", "😵", "🤐", "🥴", "🤢", "🤮", "🤧",
+      "😷", "🤒", "🤕", "🤑", "🤠", "😈", "👿", "👹", "👺", "🤡", "💩", "👻",
+      "💀", "👽", "🤖", "🎃", "😺", "😸", "😹", "😻", "😼", "😽", "🙀", "😿",
+      "😾",
+    ],
+  },
+  {
+    label: "Gestures & hands",
+    emojis: [
+      "👋", "🤚", "✋", "🖖", "👌", "🤌", "🤏", "✌️", "🤞", "🤟", "🤘", "🤙",
+      "👈", "👉", "👆", "👇", "☝️", "👍", "👎", "✊", "👊", "🤛", "🤜", "👏",
+      "🙌", "👐", "🤲", "🤝", "🙏", "💪", "✍️", "💅", "🤳", "💪",
+    ],
+  },
+  {
+    label: "Hearts & romance",
+    emojis: [
+      "❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "🤎", "💔", "❣️", "💕",
+      "💞", "💓", "💗", "💖", "💘", "💝", "💟", "💌", "💋",
+    ],
+  },
+  {
+    label: "Animals & nature",
+    emojis: [
+      "🐶", "🐱", "🐭", "🐹", "🐰", "🦊", "🐻", "🐼", "🐨", "🐯", "🦁", "🐮",
+      "🐷", "🐸", "🐵", "🐔", "🐧", "🐦", "🦆", "🦅", "🦉", "🦄", "🐝", "🐛",
+      "🦋", "🐌", "🐞", "🌹", "🌸", "🌺", "🌻", "🌼", "🌷", "🍀", "🌿", "🍄",
+      "🌈", "⭐", "✨", "☀️", "🌙", "⛅", "🌊", "🌋",
+    ],
+  },
+  {
+    label: "Food & drink",
+    emojis: [
+      "🍏", "🍎", "🍊", "🍋", "🍌", "🍉", "🍇", "🍓", "🍒", "🍑", "🥭", "🍍",
+      "🍅", "🥑", "🥕", "🌽", "🍞", "🥐", "🧀", "🍳", "🍔", "🍟", "🍕", "🌭",
+      "🥪", "🌮", "🌯", "🍝", "🍜", "🍣", "🍱", "🍦", "🍩", "🍪", "🎂", "🍰",
+      "🧁", "🍫", "🍬", "🍭", "☕", "🍵", "🍺", "🍻", "🥂", "🍷", "🥤", "🧋",
+    ],
+  },
+  {
+    label: "Activities",
+    emojis: [
+      "⚽", "🏀", "🏈", "⚾", "🎾", "🏐", "🎱", "🏓", "🏸", "🥊", "⛳", "🎣",
+      "🎿", "🛹", "🎮", "🎲", "🎯", "🎳", "🎪", "🎭", "🎨", "🎬", "🎤", "🎧",
+      "🎹", "🎸", "🎺", "🎻", "🎁", "🎈", "🎉", "🎊",
+    ],
+  },
+  {
+    label: "Objects & symbols",
+    emojis: [
+      "📱", "💻", "⌚", "💡", "🔋", "🔒", "🔑", "🔨", "📦", "📚", "✏️", "📝",
+      "📌", "📎", "🔍", "✂️", "✅", "❌", "⚠️", "🚫", "❗", "❓", "⁉️", "💯",
+      "💬", "💭", "💤", "🔥", "💥", "💫", "💢", "🏁", "🚩", "🎌", "🔴", "🟠",
+      "🟡", "🟢", "🔵", "🟣", "⚫", "⚪", "♥️", "♦️", "♣️", "♠️", "🎵", "🎶",
+    ],
+  },
+]
+
+// Rasterize a real emoji character onto a transparent PNG data URL. Uses
+// the OS color-emoji font stack, then crops to the actual glyph bounding
+// box so the stamp keeps the emoji's natural aspect and crispness.
+// Returns the data URL plus the cropped pixel dimensions, or null if the
+// browser can't rasterize it (no emoji font / canvas unavailable).
+function rasterizeEmoji(emoji: string): { src: string; width: number; height: number } | null {
+  try {
+    const fontSize = 320
+    const fontStack =
+      '"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji","Noto Emoji","Twemoji Mozilla",sans-serif'
+    const probe = document.createElement("canvas")
+    const pctx = probe.getContext("2d")
+    if (!pctx) return null
+    pctx.font = `${fontSize}px ${fontStack}`
+    const textWidth = pctx.measureText(emoji).width
+    const w = Math.ceil(Math.max(fontSize, textWidth) * 1.15)
+    const h = Math.ceil(fontSize * 1.25)
+
+    const canvas = document.createElement("canvas")
+    canvas.width = w
+    canvas.height = h
+    const ctx = canvas.getContext("2d", { willReadFrequently: true })
+    if (!ctx) return null
+    ctx.clearRect(0, 0, w, h)
+    ctx.font = `${fontSize}px ${fontStack}`
+    ctx.textAlign = "center"
+    ctx.textBaseline = "alphabetic"
+    ctx.fillText(emoji, w / 2, h - fontSize * 0.2)
+
+    // Find the tight alpha bounding box so wide glyphs (ZWJ sequences,
+    // family groups) aren't cropped and narrow ones aren't padded.
+    const img = ctx.getImageData(0, 0, w, h)
+    const px = img.data
+    let minX = w
+    let minY = h
+    let maxX = -1
+    let maxY = -1
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (px[(y * w + x) * 4 + 3] > 8) {
+          if (x < minX) minX = x
+          if (x > maxX) maxX = x
+          if (y < minY) minY = y
+          if (y > maxY) maxY = y
+        }
+      }
+    }
+    if (maxX < 0) return null
+
+    const pad = Math.ceil(fontSize * 0.06)
+    const sx = Math.max(0, minX - pad)
+    const sy = Math.max(0, minY - pad)
+    const cw = Math.min(w - sx, maxX - minX + 1 + pad * 2)
+    const ch = Math.min(h - sy, maxY - minY + 1 + pad * 2)
+
+    const out = document.createElement("canvas")
+    out.width = cw
+    out.height = ch
+    const octx = out.getContext("2d")
+    if (!octx) return null
+    octx.clearRect(0, 0, cw, ch)
+    octx.drawImage(canvas, sx, sy, cw, ch, 0, 0, cw, ch)
+    return { src: out.toDataURL("image/png"), width: cw, height: ch }
+  } catch {
+    return null
+  }
+}
+
 interface TextStyle {
   fontFamily: string
   fontSize: number
@@ -262,23 +401,85 @@ function getDrawBbox(draw: DrawAnnotation): { x: number; y: number; width: numbe
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
 }
 
+// Compute the bbox after a Shift-locked resize for drawings and shapes.
+// Holding Shift while dragging a resize handle snaps the result to a
+// square: width and height end up equal (e.g. a rect becomes a perfect
+// square, a circle stays circular). The side opposite the grabbed
+// handle stays fixed, mirroring free-resize anchoring; when only a
+// top/bottom or left/right handle is used the un-dragged axis expands
+// about its centre. The shared size follows the axis whose edge moves
+// the most relative to its start length.
+function computeSquareResize(opts: {
+  direction: ResizeDirection
+  startX: number
+  startY: number
+  startWidth: number
+  startHeight: number
+  dx: number
+  dy: number
+  minSize?: number
+}): { x: number; y: number; width: number; height: number } {
+  const { direction, startX, startY, startWidth, startHeight, dx, dy, minSize = 20 } = opts
+
+  const resizesRight = direction === "right" || direction === "top-right" || direction === "bottom-right"
+  const resizesLeft = direction === "left" || direction === "top-left" || direction === "bottom-left"
+  const resizesBottom = direction === "bottom" || direction === "bottom-left" || direction === "bottom-right"
+  const resizesTop = direction === "top" || direction === "top-left" || direction === "top-right"
+
+  // How far the dragged edge moved, signed so expanding outward is positive.
+  const edgeDx = resizesRight ? dx : resizesLeft ? -dx : 0
+  const edgeDy = resizesBottom ? dy : resizesTop ? -dy : 0
+
+  // Pick the axis with the largest relative drag to derive the shared
+  // width == height size.
+  const relX = startWidth > 0 ? Math.abs(edgeDx) / startWidth : 0
+  const relY = startHeight > 0 ? Math.abs(edgeDy) / startHeight : 0
+  let size = startWidth
+  if (startWidth > 0 && (startHeight === 0 || relX >= relY)) {
+    size = startWidth + edgeDx
+  } else if (startHeight > 0) {
+    size = startHeight + edgeDy
+  }
+  size = Math.max(minSize, size)
+
+  const width = size
+  const height = size
+
+  const x = resizesLeft
+    ? startX + (startWidth - width)
+    : resizesRight
+      ? startX
+      : startX + (startWidth - width) / 2
+  const y = resizesTop
+    ? startY + (startHeight - height)
+    : resizesBottom
+      ? startY
+      : startY + (startHeight - height) / 2
+
+  return { x, y, width, height }
+}
+
 // Render a ShapeAnnotation as a fragment of SVG elements. Used by the
 // editor overlay (which uses the canvas / RENDER_SCALE-scaled coordinate
-// system) and the smiley uses the bbox centre/radius derived from the
-// shape's geometry so it scales naturally with resizing.
+// system) and derives the geometry from the shape's bbox so the shape
+// scales naturally with resizing.
 function renderShapeGeometry(shape: ShapeAnnotation) {
   const { x, y, width, height, type, color, thickness, opacity, fill } = shape
-  // Bbox-centre ellipse dimensions — used for circle / smiley so the
-  // shape is always proportional to its bbox.
+  // Bbox-centre ellipse dimensions — used for circle so the shape stays
+  // proportional to its bbox.
   const cx = x + width / 2
   const cy = y + height / 2
   const rx = width / 2
   const ry = height / 2
   // Display stroke width is in canvas units (already at RENDER_SCALE)
   const sw = thickness * RENDER_SCALE
+  // "transparent" stroke color = no stroke at all
+  const noStroke = color === "transparent"
+  const strokeProps = noStroke ? "none" : color
+  const strokeWidthProps = noStroke ? 0 : sw
   const baseStroke = {
-    stroke: color,
-    strokeWidth: sw,
+    stroke: strokeProps,
+    strokeWidth: strokeWidthProps,
     fill: "none",
     strokeLinecap: "round" as const,
     strokeLinejoin: "round" as const,
@@ -311,9 +512,9 @@ function renderShapeGeometry(shape: ShapeAnnotation) {
         height={height}
         fill={fill === "transparent" ? "none" : fill}
         fillOpacity={fill === "transparent" ? undefined : opacity}
-        stroke={color}
-        strokeWidth={sw}
-        strokeOpacity={opacity}
+        stroke={strokeProps}
+        strokeWidth={strokeWidthProps}
+        strokeOpacity={noStroke ? undefined : opacity}
         vectorEffect="non-scaling-stroke"
       />
     )
@@ -327,44 +528,14 @@ function renderShapeGeometry(shape: ShapeAnnotation) {
         ry={ry}
         fill={fill === "transparent" ? "none" : fill}
         fillOpacity={fill === "transparent" ? undefined : opacity}
-        stroke={color}
-        strokeWidth={sw}
-        strokeOpacity={opacity}
+        stroke={strokeProps}
+        strokeWidth={strokeWidthProps}
+        strokeOpacity={noStroke ? undefined : opacity}
         vectorEffect="non-scaling-stroke"
       />
     )
   }
-  // smiley: circle + two eye dots + an arc mouth, all sized from the
-  // bbox so the face stays roughly proportional to its container.
-  const eyeR = Math.max(1.5, Math.min(width, height) * 0.05)
-  const eyeOffsetX = Math.max(8, width * 0.18)
-  const eyeOffsetY = Math.max(8, height * 0.18)
-  const mouthRy = Math.max(8, height * 0.12)
-  const mouthRx = Math.max(12, width * 0.22)
-  return (
-    <g opacity={opacity}>
-      <ellipse
-        cx={cx}
-        cy={cy}
-        rx={rx}
-        ry={ry}
-        fill="none"
-        stroke={color}
-        strokeWidth={sw}
-        vectorEffect="non-scaling-stroke"
-      />
-      <circle cx={cx - eyeOffsetX} cy={cy - eyeOffsetY} r={eyeR * RENDER_SCALE} fill={color} />
-      <circle cx={cx + eyeOffsetX} cy={cy - eyeOffsetY} r={eyeR * RENDER_SCALE} fill={color} />
-      <path
-        d={`M ${cx - mouthRx} ${cy + mouthRy} Q ${cx} ${cy + mouthRy * 2.4} ${cx + mouthRx} ${cy + mouthRy}`}
-        fill="none"
-        stroke={color}
-        strokeWidth={sw}
-        strokeLinecap="round"
-        vectorEffect="non-scaling-stroke"
-      />
-    </g>
-  )
+  return null
 }
 
 interface ShapeAnnotation {
@@ -380,8 +551,7 @@ interface ShapeAnnotation {
   //   endpoints, but the explicit fields preserve orientation).
   // "rect" = rectangle outline (or filled when fill !== "transparent")
   // "circle" = ellipse fitted to the bbox
-  // "smiley" = circle outline + two eye dots + an arc mouth
-  type: "line" | "rect" | "circle" | "smiley"
+  type: "line" | "rect" | "circle"
   // Explicit endpoints for the line type. When set, the line is drawn
   // from (lineStartX, lineStartY) to (lineEndX, lineEndY) instead of
   // the default bbox diagonal. Both fields exist together for lines.
@@ -389,6 +559,7 @@ interface ShapeAnnotation {
   lineStartY?: number
   lineEndX?: number
   lineEndY?: number
+  // "transparent" = no stroke (stroke color is ignored for drawing)
   color: string
   thickness: number
   opacity: number
@@ -547,7 +718,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
     startMouseY: number
     startPoints: Array<{ x: number; y: number }>
   } | null>(null)
-  // Shape annotations (line, rect, circle, smiley) — drawn from the shape
+  // Shape annotations (line, rect, circle) — drawn from the shape
   // sub-toolbar; each has a fixed bbox that the 8-handle resizer scales.
   const [shapeAnnotations, setShapeAnnotations] = useState<ShapeAnnotation[]>([])
   const [selectedShapeId, setSelectedShapeId] = useState<string | null>(null)
@@ -581,6 +752,19 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
   const [shapeThickness, setShapeThickness] = useState(3)
   const [hexShapeColor, setHexShapeColor] = useState("000000")
   const [hexShapeFill, setHexShapeFill] = useState("")
+  // Emoji selected from the shape toolbar's emoji dropdown. When armed,
+  // clicking the page drops that emoji (rasterized to a transparent PNG)
+  // at the click point instead of a vector shape. Clearing happens when a
+  // vector shape type or another tool is chosen.
+  const [armedEmoji, setArmedEmoji] = useState<{
+    char: string
+    src: string
+    naturalWidth: number
+    naturalHeight: number
+  } | null>(null)
+  // Cache rasterized emoji PNGs by character so re-arming the same emoji
+  // doesn't rescan the canvas.
+  const emojiRasterCacheRef = useRef(new Map<string, { src: string; width: number; height: number }>())
   const shapeDragStateRef = useRef<{
     annotationId: string
     startMouseX: number
@@ -822,8 +1006,13 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
   // was selected. Deactivates the shape tool so the toolbar returns
   // to its idle state.
   // Apply the current value of the hex shape-stroke input. Accepts
-  // 3- or 6-character hex (shorthand is expanded to 6 chars).
+  // 3- or 6-character hex (shorthand is expanded to 6 chars). Empty
+  // input means "no stroke" (transparent).
   const applyShapeColor = useCallback(() => {
+    if (hexShapeColor.length === 0) {
+      updateShapeStyle({ color: "transparent" })
+      return
+    }
     if (hexShapeColor.length === 3 || hexShapeColor.length === 6) {
       const normalized = expandHexShorthand(hexShapeColor)
       if (hexShapeColor.length === 3) setHexShapeColor(normalized)
@@ -1010,7 +1199,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Sync hex input when shape stroke color picker changes
-    setHexShapeColor(activeShapeStyle.color.replace("#", ""))
+    setHexShapeColor(activeShapeStyle.color === "transparent" ? "" : activeShapeStyle.color.replace("#", ""))
   }, [activeShapeStyle.color])
 
   useEffect(() => {
@@ -1440,6 +1629,33 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
       const rect = event.currentTarget.getBoundingClientRect()
       const x = (event.clientX - rect.left) / displayScale
       const y = (event.clientY - rect.top) / displayScale
+      if (armedEmoji) {
+        // Emoji stamp mode: drop the rasterized emoji PNG centered on the
+        // click, sized to a default square-ish footprint while preserving
+        // the emoji's natural aspect ratio.
+        const targetSize = 120
+        const scale = targetSize / Math.max(armedEmoji.naturalWidth, armedEmoji.naturalHeight)
+        const width = armedEmoji.naturalWidth * scale
+        const height = armedEmoji.naturalHeight * scale
+        const newId = crypto.randomUUID()
+        setImageAnnotations((prev) => [
+          ...prev,
+          {
+            id: newId,
+            pageIndex,
+            x: x - width / 2,
+            y: y - height / 2,
+            width,
+            height,
+            src: armedEmoji.src,
+            opacity: 1,
+            rotation: 0,
+          },
+        ])
+        // Select the stamp so the user can immediately move/resize/delete it.
+        setSelectedImageId(newId)
+        return
+      }
       if (shapeType === "line") {
         // Begin a drag-to-draw line from this point.
         setDraftShape({
@@ -1479,7 +1695,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
       ])
       setSelectedShapeId(newId)
     },
-    [activeTool, displayScale, shapeType, shapeColor, shapeThickness, shapeFill]
+    [activeTool, displayScale, shapeType, shapeColor, shapeThickness, shapeFill, armedEmoji]
   )
 
   // Start shape drag (offset the bbox by the mouse delta)
@@ -1539,6 +1755,31 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
     },
     []
   )
+
+  // Arm an emoji from the picker as the active stamp. Rasterizes the real
+  // emoji to a transparent PNG once (cached by character), then page
+  // clicks drop it as an image annotation. Exiting to a vector shape type
+  // or another tool clears the armed emoji.
+  const armEmoji = useCallback((emoji: string) => {
+    let raster = emojiRasterCacheRef.current.get(emoji)
+    if (!raster) {
+      const r = rasterizeEmoji(emoji)
+      if (!r) {
+        toast.error("This emoji couldn't be rendered on your device.")
+        return
+      }
+      emojiRasterCacheRef.current.set(emoji, r)
+      raster = r
+    }
+    setArmedEmoji({
+      char: emoji,
+      src: raster.src,
+      naturalWidth: raster.width,
+      naturalHeight: raster.height,
+    })
+    setOpenDropdown(null)
+    setSelectedShapeId(null)
+  }, [])
 
   // Drop a text placeholder — auto-selected and in inline-edit mode
   const insertPlaceholderAtCenter = useCallback(() => {
@@ -1627,9 +1868,15 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
       wantPlaceholderRef.current = false
       wantImagePickerRef.current = false
       setSelectedShapeId(null)
+      if (tool.id === "shape") setArmedEmoji(null)
       return
     }
     setActiveTool(tool.id)
+    if (tool.id !== "shape") {
+      // Leaving the shape tool clears the armed emoji stamp so re-entering
+      // it doesn't stamp unexpectedly.
+      setArmedEmoji(null)
+    }
     if (tool.id === "image") {
       wantImagePickerRef.current = true
       setDraftPosition(null)
@@ -1988,21 +2235,44 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
       // Step 1: figure out where the new bbox should be, based
       // on the handle the user is dragging. The "left"/"top"
       // handles shift the bbox origin so the opposite edge stays
-      // put while the user drags outward.
-      let newWidth = s.startBboxWidth
-      let newHeight = s.startBboxHeight
-      let newBboxX = s.startBboxX
-      let newBboxY = s.startBboxY
+      // put while the user drags outward. Holding Shift snaps the
+      // result to a square (width == height).
+      let newWidth: number
+      let newHeight: number
+      let newBboxX: number
+      let newBboxY: number
 
-      if (resizesRight) newWidth = Math.max(20, s.startBboxWidth + dx)
-      if (resizesLeft) {
-        newWidth = Math.max(20, s.startBboxWidth - dx)
-        newBboxX = s.startBboxX + (s.startBboxWidth - newWidth)
-      }
-      if (resizesBottom) newHeight = Math.max(20, s.startBboxHeight + dy)
-      if (resizesTop) {
-        newHeight = Math.max(20, s.startBboxHeight - dy)
-        newBboxY = s.startBboxY + (s.startBboxHeight - newHeight)
+      if (e.shiftKey) {
+        const sq = computeSquareResize({
+          direction: dir,
+          startX: s.startBboxX,
+          startY: s.startBboxY,
+          startWidth: s.startBboxWidth,
+          startHeight: s.startBboxHeight,
+          dx,
+          dy,
+          minSize: 20,
+        })
+        newWidth = sq.width
+        newHeight = sq.height
+        newBboxX = sq.x
+        newBboxY = sq.y
+      } else {
+        newWidth = s.startBboxWidth
+        newHeight = s.startBboxHeight
+        newBboxX = s.startBboxX
+        newBboxY = s.startBboxY
+
+        if (resizesRight) newWidth = Math.max(20, s.startBboxWidth + dx)
+        if (resizesLeft) {
+          newWidth = Math.max(20, s.startBboxWidth - dx)
+          newBboxX = s.startBboxX + (s.startBboxWidth - newWidth)
+        }
+        if (resizesBottom) newHeight = Math.max(20, s.startBboxHeight + dy)
+        if (resizesTop) {
+          newHeight = Math.max(20, s.startBboxHeight - dy)
+          newBboxY = s.startBboxY + (s.startBboxHeight - newHeight)
+        }
       }
 
       // Step 2: derive the per-axis scale that maps the original
@@ -2165,26 +2435,49 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
         return
       }
 
-      // Standard bbox resize for non-line shapes.
+      // Standard bbox resize for non-line shapes. Holding Shift snaps
+      // the result to a square (width == height).
       const resizesRight = dir === "right" || dir === "top-right" || dir === "bottom-right"
       const resizesLeft = dir === "left" || dir === "top-left" || dir === "bottom-left"
       const resizesBottom = dir === "bottom" || dir === "bottom-left" || dir === "bottom-right"
       const resizesTop = dir === "top" || dir === "top-left" || dir === "top-right"
 
-      let newWidth = s.startWidth
-      let newHeight = s.startHeight
-      let newX = s.startX
-      let newY = s.startY
+      let newWidth: number
+      let newHeight: number
+      let newX: number
+      let newY: number
 
-      if (resizesRight) newWidth = Math.max(20, s.startWidth + dx)
-      if (resizesLeft) {
-        newWidth = Math.max(20, s.startWidth - dx)
-        newX = s.startX + (s.startWidth - newWidth)
-      }
-      if (resizesBottom) newHeight = Math.max(20, s.startHeight + dy)
-      if (resizesTop) {
-        newHeight = Math.max(20, s.startHeight - dy)
-        newY = s.startY + (s.startHeight - newHeight)
+      if (e.shiftKey) {
+        const sq = computeSquareResize({
+          direction: dir,
+          startX: s.startX,
+          startY: s.startY,
+          startWidth: s.startWidth,
+          startHeight: s.startHeight,
+          dx,
+          dy,
+          minSize: 20,
+        })
+        newWidth = sq.width
+        newHeight = sq.height
+        newX = sq.x
+        newY = sq.y
+      } else {
+        newWidth = s.startWidth
+        newHeight = s.startHeight
+        newX = s.startX
+        newY = s.startY
+
+        if (resizesRight) newWidth = Math.max(20, s.startWidth + dx)
+        if (resizesLeft) {
+          newWidth = Math.max(20, s.startWidth - dx)
+          newX = s.startX + (s.startWidth - newWidth)
+        }
+        if (resizesBottom) newHeight = Math.max(20, s.startHeight + dy)
+        if (resizesTop) {
+          newHeight = Math.max(20, s.startHeight - dy)
+          newY = s.startY + (s.startHeight - newHeight)
+        }
       }
 
       setShapeAnnotations((prev) =>
@@ -2528,12 +2821,11 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
         }
       }
 
-      // Shapes (line, rect, circle, smiley) — each is drawn in PDF
-      // coordinates (origin bottom-left) derived from the canvas-space
-      // bbox. Rotation is applied around the bbox centre to match the
-      // editor's visual transform; the bbox itself is anchored to the
-      // unrotated geometry so the saved shape is identical to the
-      // preview after rotation.
+      // Shapes (line, rect, circle) — each is drawn in PDF coordinates
+      // (origin bottom-left) derived from the canvas-space bbox. Rotation
+      // is applied around the bbox centre to match the editor's visual
+      // transform; the bbox itself is anchored to the unrotated geometry
+      // so the saved shape is identical to the preview after rotation.
       for (const shape of shapeAnnotations) {
         const page = pages[shape.pageIndex]
         if (!page) continue
@@ -2544,12 +2836,14 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
         const pdfH = shape.height / RENDER_SCALE
         const [sr, sg, sb] = hexToRgbValues(shape.color)
         const strokeColor = rgb(sr, sg, sb)
+        // "transparent" stroke = no border/stroke drawn on save
+        const hasStroke = shape.color !== "transparent"
         const [fr, fg, fb] = hexToRgbValues(shape.fill)
         const fillColor = rgb(fr, fg, fb)
         const hasFill = shape.fill !== "transparent" && (shape.type === "rect" || shape.type === "circle")
 
         // Bbox centre in PDF coordinates — used for rotation and for
-        // circle / smiley geometry.
+        // circle geometry.
         const pdfCx = pdfX + pdfW / 2
         const pdfCy = pdfY - pdfH / 2
 
@@ -2586,7 +2880,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
             end: { x: lx2, y: ly2 },
             thickness: shape.thickness,
             color: strokeColor,
-            opacity: shape.opacity,
+            opacity: hasStroke ? shape.opacity : 0,
             lineCap: LineCapStyle.Round,
           })
           pop()
@@ -2602,9 +2896,9 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
             y: pdfY - pdfH,
             width: pdfW,
             height: pdfH,
-            borderColor: strokeColor,
-            borderWidth: shape.thickness,
-            borderOpacity: shape.opacity,
+            borderColor: hasStroke ? strokeColor : undefined,
+            borderWidth: hasStroke ? shape.thickness : undefined,
+            borderOpacity: hasStroke ? shape.opacity : undefined,
             color: hasFill ? fillColor : undefined,
             opacity: hasFill ? shape.opacity : undefined,
             borderLineCap: LineCapStyle.Round,
@@ -2623,48 +2917,15 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
             y: pdfCy,
             xScale: pdfW / 2,
             yScale: pdfH / 2,
-            borderColor: strokeColor,
-            borderWidth: shape.thickness,
-            borderOpacity: shape.opacity,
+            borderColor: hasStroke ? strokeColor : undefined,
+            borderWidth: hasStroke ? shape.thickness : undefined,
+            borderOpacity: hasStroke ? shape.opacity : undefined,
             color: hasFill ? fillColor : undefined,
             opacity: hasFill ? shape.opacity : undefined,
           })
           pop()
           continue
         }
-
-        // smiley: outline ellipse + two filled eye dots + an SVG
-        // arc mouth. All sized from the bbox so the face stays
-        // roughly proportional to the user's drag area.
-        const eyeR = Math.max(0.6, Math.min(pdfW, pdfH) * 0.05)
-        const eyeOffsetX = Math.max(3, pdfW * 0.18)
-        const eyeOffsetY = Math.max(3, pdfH * 0.18)
-        const mouthRy = Math.max(3, pdfH * 0.12)
-        const mouthRx = Math.max(4, pdfW * 0.22)
-        // pdf-lib draws filled dots via drawCircle with `color`.
-        push()
-        page.drawEllipse({
-          x: pdfCx,
-          y: pdfCy,
-          xScale: pdfW / 2,
-          yScale: pdfH / 2,
-          borderColor: strokeColor,
-          borderWidth: shape.thickness,
-          borderOpacity: shape.opacity,
-        })
-        // Build the mouth as an SVG path so we can use a single
-        // drawSvgPath call with a quadratic curve — the same path
-        // is converted to PDF y-up coordinates.
-        const mouthPath = `M ${pdfCx - mouthRx} ${pdfCy + mouthRy} Q ${pdfCx} ${pdfCy - mouthRy * 1.4} ${pdfCx + mouthRx} ${pdfCy + mouthRy}`
-        page.drawSvgPath(mouthPath, {
-          borderColor: strokeColor,
-          borderWidth: shape.thickness,
-          borderOpacity: shape.opacity,
-          borderLineCap: LineCapStyle.Round,
-        })
-        page.drawCircle({ x: pdfCx - eyeOffsetX, y: pdfCy + eyeOffsetY, size: eyeR * 2, color: strokeColor, opacity: shape.opacity })
-        page.drawCircle({ x: pdfCx + eyeOffsetX, y: pdfCy + eyeOffsetY, size: eyeR * 2, color: strokeColor, opacity: shape.opacity })
-        pop()
       }
 
       const bytes = await pdfDoc.save()
@@ -3462,7 +3723,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
           ref={subToolbarRef}
           className="relative z-30 flex items-center justify-center gap-1.5 border-b border-border bg-card px-3 py-1.5 sm:pl-40 sm:pr-96"
         >
-          {/* Shape type buttons (line, rect, circle, smiley) — matching the
+          {/* Shape type buttons (line, rect, circle) — matching the
               screenshot layout. Each is an inline SVG icon so we don't depend
               on lucide-react having a matching glyph. */}
           {([
@@ -3493,25 +3754,16 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
                 </svg>
               ),
             },
-            {
-              value: "smiley" as const,
-              label: "Smiley",
-              render: () => (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                  <circle cx="12" cy="12" r="7" />
-                  <circle cx="9.5" cy="10" r="0.6" fill="currentColor" />
-                  <circle cx="14.5" cy="10" r="0.6" fill="currentColor" />
-                  <path d="M8.5 14.5 Q12 17 15.5 14.5" />
-                </svg>
-              ),
-            },
           ]).map((opt) => {
-            const isActive = activeShapeStyle.type === opt.value
+            const isActive = !armedEmoji && activeShapeStyle.type === opt.value
             return (
               <button
                 key={opt.value}
                 type="button"
-                onClick={() => updateShapeStyle({ type: opt.value })}
+                onClick={() => {
+                  setArmedEmoji(null)
+                  updateShapeStyle({ type: opt.value })
+                }}
                 className={cn(
                   "inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded border text-muted-foreground transition-colors",
                   isActive
@@ -3527,6 +3779,86 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
             )
           })}
 
+          {/* Emoji stamp trigger — replaced the old vector smiley shape. Clicking
+              it opens a picker of real emojis; choosing one arms the emoji stamp,
+              and the next page click drops it as a transparent PNG image. */}
+          <div className="relative">
+            <button
+              type="button"
+              data-dropdown-toggle="shapeEmoji"
+              onClick={() => setOpenDropdown(openDropdown === "shapeEmoji" ? null : "shapeEmoji")}
+              className={cn(
+                "inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded border text-muted-foreground transition-colors",
+                armedEmoji || openDropdown === "shapeEmoji"
+                  ? "border-primary/30 bg-primary/10 text-primary"
+                  : "border-transparent hover:bg-accent hover:text-foreground"
+              )}
+              title={armedEmoji ? `Emoji stamp: ${armedEmoji.char}` : "Emoji stamp"}
+              aria-label="Emoji stamp"
+              aria-expanded={openDropdown === "shapeEmoji"}
+            >
+              {armedEmoji ? (
+                <span className="text-base leading-none">{armedEmoji.char}</span>
+              ) : (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <circle cx="12" cy="12" r="7" />
+                  <circle cx="9.5" cy="10" r="0.6" fill="currentColor" />
+                  <circle cx="14.5" cy="10" r="0.6" fill="currentColor" />
+                  <path d="M8.5 14.5 Q12 17 15.5 14.5" />
+                </svg>
+              )}
+            </button>
+            {openDropdown === "shapeEmoji" && (
+              <div
+                data-dropdown="shapeEmoji"
+                className="absolute left-0 top-full z-50 mt-1 w-[340px] rounded-md border border-border bg-popover p-2 shadow-lg"
+              >
+                <div className="max-h-72 overflow-y-auto pr-1">
+                  {armedEmoji && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setArmedEmoji(null)
+                        setOpenDropdown(null)
+                      }}
+                      className="mb-2 flex w-full cursor-pointer items-center justify-center gap-1.5 rounded border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    >
+                      <Ban className="h-3.5 w-3.5" />
+                      Stop emoji stamping
+                    </button>
+                  )}
+                  {EMOJI_GROUPS.map((group) => {
+                    const uniqueEmojis = Array.from(new Set(group.emojis))
+                    return (
+                      <div key={group.label} className="mb-2 last:mb-0">
+                        <p className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          {group.label}
+                        </p>
+                        <div className="grid grid-cols-8 gap-0.5">
+                          {uniqueEmojis.map((emoji, idx) => (
+                            <button
+                              key={`${emoji}-${idx}`}
+                              type="button"
+                              onClick={() => armEmoji(emoji)}
+                              className={cn(
+                                "flex h-9 w-9 cursor-pointer items-center justify-center rounded text-xl transition-colors hover:bg-accent",
+                                armedEmoji?.char === emoji && "bg-primary/10 ring-1 ring-primary/40"
+                              )}
+                              title={emoji}
+                              aria-label={emoji}
+                            >
+                              <span aria-hidden>{emoji}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="mx-1 h-6 w-px shrink-0 bg-border" />
 
           {/* Stroke color: same swatch + caret pattern as the draw sub-toolbar */}
@@ -3541,12 +3873,32 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
             >
               <span
                 className="block h-5 w-5 rounded-sm border border-border"
-                style={{ backgroundColor: activeShapeStyle.color }}
+                style={{
+                  backgroundColor:
+                    activeShapeStyle.color === "transparent" ? "transparent" : activeShapeStyle.color,
+                  backgroundImage:
+                    activeShapeStyle.color === "transparent"
+                      ? "linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%), linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%)"
+                      : undefined,
+                  backgroundSize: activeShapeStyle.color === "transparent" ? "8px 8px" : undefined,
+                  backgroundPosition: activeShapeStyle.color === "transparent" ? "0 0, 4px 4px" : undefined,
+                }}
               />
               <ChevronDown className="h-3 w-3 shrink-0" />
             </button>
             {openDropdown === "shapeColor" && (
               <div data-dropdown="shapeColor" className="absolute left-0 top-full z-50 mt-1 w-[178px] rounded-md border border-border bg-popover p-2 shadow-lg">
+                <button
+                  type="button"
+                  onClick={() => { updateShapeStyle({ color: "transparent" }); setOpenDropdown(null) }}
+                  className={cn(
+                    "mb-1.5 flex w-full items-center gap-2 rounded px-2 py-1 text-xs transition-colors hover:bg-accent",
+                    activeShapeStyle.color === "transparent" && "bg-accent font-medium"
+                  )}
+                >
+                  <Ban className="h-3.5 w-3.5 text-muted-foreground" />
+                  No stroke
+                </button>
                 <div className="grid grid-cols-5 gap-1.5">
                   {COLOR_PALETTE.map((c) => (
                     <button
@@ -3573,7 +3925,7 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
                   <input
                     type="text"
                     value={hexShapeColor}
-                    placeholder="000000"
+                    placeholder="transparent"
                     onChange={(e) => {
                       const v = e.target.value.replace(/[^0-9a-fA-F]/g, "").slice(0, 6)
                       setHexShapeColor(v)
@@ -3585,8 +3937,8 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
                       }
                     }}
                     onBlur={() => {
-                      if (hexShapeColor.length !== 3 && hexShapeColor.length !== 6) {
-                        setHexShapeColor(activeShapeStyle.color.replace("#", ""))
+                      if (hexShapeColor.length !== 0 && hexShapeColor.length !== 3 && hexShapeColor.length !== 6) {
+                        setHexShapeColor(activeShapeStyle.color === "transparent" ? "" : activeShapeStyle.color.replace("#", ""))
                       }
                     }}
                     className="h-7 w-full rounded border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none focus:ring-1 focus:ring-primary"
@@ -3596,20 +3948,20 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
                   <button
                     type="button"
                     onClick={applyShapeColor}
-                    disabled={hexShapeColor.length !== 3 && hexShapeColor.length !== 6}
+                    disabled={hexShapeColor.length !== 0 && hexShapeColor.length !== 3 && hexShapeColor.length !== 6}
                     className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded border border-border bg-accent text-foreground transition-colors hover:bg-accent/80 disabled:cursor-not-allowed disabled:opacity-40"
                     title="Apply color"
                     aria-label="Apply color"
                   >
                     <Check className="h-3.5 w-3.5" />
                   </button>
-                  <div className="h-6 w-6 shrink-0 rounded border border-border" style={{ backgroundColor: hexShapeColor.length === 3 || hexShapeColor.length === 6 ? `#${expandHexShorthand(hexShapeColor)}` : activeShapeStyle.color }} />
+                  <div className="h-6 w-6 shrink-0 rounded border border-border" style={{ backgroundColor: hexShapeColor.length === 3 || hexShapeColor.length === 6 ? `#${expandHexShorthand(hexShapeColor)}` : activeShapeStyle.color === "transparent" ? "transparent" : activeShapeStyle.color }} />
                 </div>
               </div>
             )}
           </div>
 
-          {/* Fill color — outlined-only shapes (line, smiley) ignore fill */}
+          {/* Fill color — outlined-only shapes (line) ignore fill */}
           <div className="relative">
             <button
               type="button"
