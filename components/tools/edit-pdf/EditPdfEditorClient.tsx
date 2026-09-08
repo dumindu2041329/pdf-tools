@@ -15,10 +15,10 @@ import {
   ChevronDown,
   ChevronUp,
   Droplet,
+  GripVertical,
   Hand,
   Highlighter,
   Image as ImageIcon,
-  Info,
   List,
   ListFilter,
   Loader2,
@@ -34,6 +34,22 @@ import {
   Trash2,
   Type,
 } from "lucide-react"
+import {
+  DndContext,
+  PointerSensor,
+  KeyboardSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core"
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable"
+import { CSS } from "@dnd-kit/utilities"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
@@ -592,6 +608,346 @@ const TOOLBAR_TOOLS: { id: ToolId; label: string; icon: typeof Hand; ready: bool
   { id: "draw", label: "Draw", icon: Pencil, ready: true },
   { id: "shape", label: "Shapes", icon: Shapes, ready: true },
 ]
+
+type SidebarItemKind = "text" | "image" | "draw" | "shape"
+
+interface SidebarItem {
+  kind: SidebarItemKind
+  id: string
+  pageIndex: number
+  // Present only for "shape" rows — used to label lines/rectangles/circles.
+  shapeType?: ShapeAnnotation["type"]
+}
+
+// dnd-kit sortable row wrapper: renders the grip handle and applies the drag
+// transform. The row content (icon, label, actions) is passed as children.
+function SortableSidebarRow({
+  id,
+  isCurrent,
+  children,
+}: {
+  id: string
+  isCurrent: boolean
+  children: React.ReactNode
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+  return (
+    <li
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={cn(
+        "flex items-center gap-2 rounded-lg border bg-background px-2 py-2",
+        isCurrent ? "border-border" : "border-dashed border-border/60 opacity-90",
+        isDragging && "relative z-10 shadow-lg"
+      )}
+    >
+      <button
+        type="button"
+        aria-label="Drag to reorder"
+        className="shrink-0 cursor-grab touch-none rounded p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground active:cursor-grabbing"
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical className="h-4 w-4" />
+      </button>
+      {children}
+    </li>
+  )
+}
+
+interface SidebarItemsProps {
+  currentPage: number
+  pageCount: number
+  onGoToPage: (page: number) => void
+  annotations: TextAnnotation[]
+  imageAnnotations: ImageAnnotation[]
+  drawAnnotations: DrawAnnotation[]
+  shapeAnnotations: ShapeAnnotation[]
+  setAnnotations: React.Dispatch<React.SetStateAction<TextAnnotation[]>>
+  setImageAnnotations: React.Dispatch<React.SetStateAction<ImageAnnotation[]>>
+  setDrawAnnotations: React.Dispatch<React.SetStateAction<DrawAnnotation[]>>
+  setShapeAnnotations: React.Dispatch<React.SetStateAction<ShapeAnnotation[]>>
+  setSelectedAnnotationId: React.Dispatch<React.SetStateAction<string | null>>
+  setSelectedImageId: React.Dispatch<React.SetStateAction<string | null>>
+  setSelectedDrawId: React.Dispatch<React.SetStateAction<string | null>>
+  setSelectedShapeId: React.Dispatch<React.SetStateAction<string | null>>
+  setEditingAnnotationId: React.Dispatch<React.SetStateAction<string | null>>
+  setMultiSelectedIds: React.Dispatch<React.SetStateAction<Set<string>>>
+}
+
+function SidebarItems({
+  currentPage,
+  pageCount,
+  onGoToPage,
+  annotations,
+  imageAnnotations,
+  drawAnnotations,
+  shapeAnnotations,
+  setAnnotations,
+  setImageAnnotations,
+  setDrawAnnotations,
+  setShapeAnnotations,
+  setSelectedAnnotationId,
+  setSelectedImageId,
+  setSelectedDrawId,
+  setSelectedShapeId,
+  setEditingAnnotationId,
+  setMultiSelectedIds,
+}: SidebarItemsProps) {
+  // Group the items per page. Within each page the order follows the canvas
+  // stacking: text items first, then images, then drawings.
+  const pageGroups = useMemo(() => {
+    const groups = new Map<number, SidebarItem[]>()
+    const push = (kind: SidebarItemKind, id: string, pageIndex: number) => {
+      let list = groups.get(pageIndex)
+      if (!list) {
+        list = []
+        groups.set(pageIndex, list)
+      }
+      list.push({ kind, id, pageIndex })
+    }
+    annotations.forEach((a) => push("text", a.id, a.pageIndex))
+    imageAnnotations.forEach((a) => push("image", a.id, a.pageIndex))
+    drawAnnotations.forEach((a) => push("draw", a.id, a.pageIndex))
+    shapeAnnotations.forEach((a) => {
+      push("shape", a.id, a.pageIndex)
+      // Attach the concrete shape type for a nicer row label (line/rect/circle)
+      const entry = groups.get(a.pageIndex)?.find((i) => i.kind === "shape" && i.id === a.id)
+      if (entry) entry.shapeType = a.type
+    })
+    return [...groups.entries()]
+      .filter(([pageIndex]) => pageIndex >= 0 && pageIndex < pageCount)
+      .sort(([a], [b]) => a - b)
+  }, [annotations, imageAnnotations, drawAnnotations, shapeAnnotations, pageCount])
+
+  // Reorder an item inside its own page + its own annotation kind. Items from
+  // other pages/types are left untouched and keep their relative order.
+  const reorderKind = <T extends { id: string; pageIndex: number }>(
+    arr: T[],
+    pageIndex: number,
+    fromId: string,
+    toId: string
+  ) => {
+    const positions: number[] = []
+    arr.forEach((entry, i) => {
+      if (entry.pageIndex === pageIndex) positions.push(i)
+    })
+    if (positions.length < 2) return arr
+    const ids = positions.map((i) => arr[i].id)
+    const from = ids.indexOf(fromId)
+    const to = ids.indexOf(toId)
+    if (from === -1 || to === -1 || from === to) return arr
+    const values = positions.map((i) => arr[i])
+    const [moved] = values.splice(from, 1)
+    values.splice(to, 0, moved)
+    const next = [...arr]
+    positions.forEach((pos, i) => {
+      next[pos] = values[i]
+    })
+    return next
+  }
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  )
+
+  // Commit a drag reorder. Rows can only be reordered with items of the same
+  // annotation kind inside the same page (each kind is a fixed render block).
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const splitId = (dndId: string) => {
+      const [kind, ...rest] = dndId.split(":")
+      return { kind: kind as SidebarItemKind, id: rest.join(":") }
+    }
+    const activeParsed = splitId(String(active.id))
+    const overParsed = splitId(String(over.id))
+    if (activeParsed.kind !== overParsed.kind) return
+    const group = pageGroups.find(([, list]) =>
+      list.some((i) => i.kind === activeParsed.kind && i.id === activeParsed.id)
+    )?.[1]
+    if (!group) return
+    const pageIndex = group.find((i) => i.kind === activeParsed.kind && i.id === activeParsed.id)?.pageIndex
+    if (pageIndex === undefined) return
+    if (activeParsed.kind === "text") {
+      setAnnotations((prev) => reorderKind(prev, pageIndex, activeParsed.id, overParsed.id))
+    } else if (activeParsed.kind === "image") {
+      setImageAnnotations((prev) => reorderKind(prev, pageIndex, activeParsed.id, overParsed.id))
+    } else if (activeParsed.kind === "draw") {
+      setDrawAnnotations((prev) => reorderKind(prev, pageIndex, activeParsed.id, overParsed.id))
+    } else {
+      setShapeAnnotations((prev) => reorderKind(prev, pageIndex, activeParsed.id, overParsed.id))
+    }
+  }
+
+  const focusItem = (item: SidebarItem) => {
+    // Jump to the item's page so the selection is visible on the canvas.
+    if (item.pageIndex !== currentPage - 1) {
+      onGoToPage(item.pageIndex + 1)
+    }
+    setMultiSelectedIds(new Set())
+    if (item.kind === "text") {
+      setSelectedImageId(null)
+      setSelectedDrawId(null)
+      setSelectedShapeId(null)
+      setSelectedAnnotationId(item.id)
+      setEditingAnnotationId(item.id)
+    } else if (item.kind === "image") {
+      setSelectedAnnotationId(null)
+      setSelectedDrawId(null)
+      setSelectedShapeId(null)
+      setSelectedImageId(item.id)
+    } else if (item.kind === "draw") {
+      setSelectedAnnotationId(null)
+      setSelectedImageId(null)
+      setSelectedShapeId(null)
+      setSelectedDrawId(item.id)
+    } else {
+      setSelectedAnnotationId(null)
+      setSelectedImageId(null)
+      setSelectedDrawId(null)
+      setSelectedShapeId(item.id)
+    }
+  }
+
+  const deleteItem = (item: SidebarItem) => {
+    if (item.kind === "text") {
+      setAnnotations((prev) => prev.filter((a) => a.id !== item.id))
+      setSelectedAnnotationId((cur) => (cur === item.id ? null : cur))
+    } else if (item.kind === "image") {
+      setImageAnnotations((prev) => prev.filter((a) => a.id !== item.id))
+      setSelectedImageId((cur) => (cur === item.id ? null : cur))
+    } else if (item.kind === "draw") {
+      setDrawAnnotations((prev) => prev.filter((a) => a.id !== item.id))
+      setSelectedDrawId((cur) => (cur === item.id ? null : cur))
+    } else {
+      setShapeAnnotations((prev) => prev.filter((a) => a.id !== item.id))
+      setSelectedShapeId((cur) => (cur === item.id ? null : cur))
+    }
+    setMultiSelectedIds((prev) => {
+      if (!prev.has(item.id)) return prev
+      const next = new Set(prev)
+      next.delete(item.id)
+      return next
+    })
+  }
+
+  const itemCount = pageGroups.reduce((sum, [, list]) => sum + list.length, 0)
+
+  return (
+    <div className="flex-1 space-y-4 overflow-y-auto p-6">
+      <h2 className="font-serif text-2xl font-bold text-foreground">Edit PDF</h2>
+
+      <div className="flex items-start gap-2.5 rounded-lg border border-border bg-muted p-3 text-sm text-muted-foreground">
+        <Pencil className="mt-0.5 h-4 w-4 shrink-0" />
+        <p>Drag the handle to move an item to the back or front.</p>
+      </div>
+
+      {itemCount === 0 ? (
+        <p className="rounded-lg border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
+          No changes yet. Add text, images, drawings or shapes to annotate your PDF.
+        </p>
+      ) : (
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <div className="space-y-4">
+            {pageGroups.map(([pageIndex, items]) => {
+              const isCurrent = pageIndex === currentPage - 1
+              const dndId = (item: SidebarItem) => `${item.kind}:${item.id}`
+              return (
+                <section key={pageIndex} className="space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => onGoToPage(pageIndex + 1)}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-lg px-1 py-0.5 text-left font-semibold transition-colors",
+                      isCurrent ? "text-primary" : "text-foreground hover:text-primary"
+                    )}
+                  >
+                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-muted text-xs tabular-nums">
+                      {pageIndex + 1}
+                    </span>
+                    <span className="text-sm uppercase tracking-wide">Page {pageIndex + 1}</span>
+                    <span className="ml-auto rounded-full bg-muted px-2 py-0.5 text-xs tabular-nums text-muted-foreground">
+                      {items.length}
+                    </span>
+                  </button>
+
+                  <SortableContext items={items.map(dndId)} strategy={verticalListSortingStrategy}>
+                    <ul className="space-y-2">
+                      {items.map((item, index) => {
+                        // Sequential per-type number inside this page only.
+                        let typeIndex = 0
+                        for (let i = 0; i <= index; i++) {
+                          if (items[i].kind === item.kind) typeIndex++
+                        }
+                        const shapeName = item.shapeType === "line"
+                          ? "Line"
+                          : item.shapeType === "rect"
+                          ? "Rectangle"
+                          : "Circle"
+                        const label =
+                          item.kind === "text"
+                            ? `New Text ${typeIndex}`
+                            : item.kind === "image"
+                            ? `New Image ${typeIndex}`
+                            : item.kind === "draw"
+                            ? typeIndex === 1
+                              ? "New drawing"
+                              : `New drawing ${typeIndex}`
+                            : typeIndex === 1
+                            ? `New ${shapeName}`
+                            : `New ${shapeName} ${typeIndex}`
+                        const Icon =
+                          item.kind === "text"
+                            ? Type
+                            : item.kind === "image"
+                            ? ImageIcon
+                            : item.kind === "draw"
+                            ? Pencil
+                            : Shapes
+                        return (
+                          <SortableSidebarRow
+                            key={dndId(item)}
+                            id={dndId(item)}
+                            isCurrent={isCurrent}
+                          >
+                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-muted-foreground">
+                              <Icon className="h-4 w-4" />
+                            </span>
+
+                            <span className="flex-1 truncate text-sm font-medium text-foreground">{label}</span>
+
+                            <button
+                              type="button"
+                              onClick={() => focusItem(item)}
+                              aria-label="Edit item"
+                              className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => deleteItem(item)}
+                              aria-label="Delete item"
+                              className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-destructive"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </SortableSidebarRow>
+                        )
+                      })}
+                    </ul>
+                  </SortableContext>
+                </section>
+              )
+            })}
+          </div>
+        </DndContext>
+      )}
+    </div>
+  )
+}
 
 export function EditPdfEditorClient({ fileUrl, filename }: Props) {
   const router = useRouter()
@@ -3010,7 +3366,6 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
             </span>
             <button
               type="button"
-              onClick={() => toast.info("Full editing is a premium feature — coming soon.")}
               className="inline-flex cursor-pointer items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
             >
               <ListFilter className="h-4 w-4" />
@@ -3755,14 +4110,20 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
               ),
             },
           ]).map((opt) => {
-            const isActive = !armedEmoji && activeShapeStyle.type === opt.value
+            // The button is "active" when the next-shape default type
+            // matches. We deliberately don't mirror the selected shape's
+            // type here: clicking a type button should set the kind of the
+            // NEXT shape the user draws, not silently mutate the shape
+            // that's already on the canvas (which would make the existing
+            // shape disappear when its geometry doesn't match the new type).
+            const isActive = !armedEmoji && shapeType === opt.value
             return (
               <button
                 key={opt.value}
                 type="button"
                 onClick={() => {
                   setArmedEmoji(null)
-                  updateShapeStyle({ type: opt.value })
+                  setShapeType(opt.value)
                 }}
                 className={cn(
                   "inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded border text-muted-foreground transition-colors",
@@ -4944,14 +5305,25 @@ const [activeTool, setActiveTool] = useState<ToolId | null>(null)
 
 
         <aside className="flex w-96 shrink-0 flex-col border-l border-border bg-card">
-          <div className="flex-1 space-y-5 overflow-y-auto p-6">
-            <h2 className="font-serif text-2xl font-bold text-foreground">Edit PDF</h2>
-
-            <div className="flex items-start gap-2.5 rounded-lg border border-border bg-muted p-3 text-sm text-muted-foreground">
-              <Info className="mt-0.5 h-4 w-4 shrink-0" />
-              <p>Reorder items to move them to the back or front.</p>
-            </div>
-          </div>
+          <SidebarItems
+            currentPage={currentPage}
+            pageCount={pageCount}
+            onGoToPage={goToPage}
+            annotations={annotations}
+            imageAnnotations={imageAnnotations}
+            drawAnnotations={drawAnnotations}
+            shapeAnnotations={shapeAnnotations}
+            setAnnotations={setAnnotations}
+            setImageAnnotations={setImageAnnotations}
+            setDrawAnnotations={setDrawAnnotations}
+            setShapeAnnotations={setShapeAnnotations}
+            setSelectedAnnotationId={setSelectedAnnotationId}
+            setSelectedImageId={setSelectedImageId}
+            setSelectedDrawId={setSelectedDrawId}
+            setSelectedShapeId={setSelectedShapeId}
+            setEditingAnnotationId={setEditingAnnotationId}
+            setMultiSelectedIds={setMultiSelectedIds}
+          />
 
           <div className="border-t border-border p-4">
             <button
