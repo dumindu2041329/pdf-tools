@@ -32,6 +32,10 @@ The biggest lesson? Real-world software is about the details. Error handling, ed
 
 A huge thank you to my lecturers at SLIATE for their guidance and support throughout this journey. 🙏
 
+🔗 Links:
+• GitHub Repository: https://github.com/dumindu2041329/pdf-tools
+• Live Demo (Vercel): https://pdf-tools-chi.vercel.app/
+
 I'd love to hear your feedback. Feel free to try it out or drop your thoughts in the comments! 👇
 
 #HNDIT #SLIATE #NextJS #React #TypeScript #FullStackDevelopment #WebDevelopment #AI #StudentProject #SoftwareEngineering #PDF #TailwindCSS #Supabase #Stripe #Vercel #OpenRouter
