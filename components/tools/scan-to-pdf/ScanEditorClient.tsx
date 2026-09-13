@@ -841,7 +841,6 @@ function DownloadCardWrapper({
     <DownloadCard
       downloadUrl={state.downloadUrl}
       filename={state.filename}
-      processingTime={state.processingTime}
       outputSize={state.outputSize}
       onReset={onReset}
     />

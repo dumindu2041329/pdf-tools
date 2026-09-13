@@ -862,7 +862,6 @@ export function ToolPageClient({ slug }: ToolPageClientProps) {
             <DownloadCard
               downloadUrl={state.downloadUrl}
               filename={state.filename}
-              processingTime={state.processingTime}
               outputSize={state.outputSize}
               onReset={handleReset}
             />

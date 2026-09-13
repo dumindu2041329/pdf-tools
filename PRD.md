@@ -6,7 +6,7 @@
 **Version:** 3.0  
 **Date:** July 7, 2026  
 **Status:** Production  
-**Changelog from v2.0:** Next.js upgraded to 16.x. Database migrated from Neon to Supabase PostgreSQL. Object storage added via Supabase Storage (client-upload pattern for files > 4 MB). PDF processing expanded to a multi-engine architecture: iLoveAPI (cloud), Adobe PDF Services (Office/OCR conversions), pdf-lib (client-side merge/split/rotate), and pdfjs-dist (browser rendering/text extraction). AI features powered by OpenRouter (not direct OpenAI). Stripe billing integrated. Dual deployment targets: Vercel + Fly.io. Mobile Scan-to-PDF flow added. Browser-based Edit PDF editor added. Guest usage tracking via cookies. 29 tools registered.
+**Changelog from v2.0:** Next.js upgraded to 16.x. Database migrated from Neon to Supabase PostgreSQL. Object storage added via Supabase Storage (client-upload pattern for files > 4 MB). PDF processing expanded to a multi-engine architecture: iLoveAPI (cloud), Adobe PDF Services (Office/OCR conversions), pdf-lib (client-side merge/split/rotate), and pdfjs-dist (browser rendering/text extraction). AI features powered by OpenRouter (not direct OpenAI). Stripe billing integrated. Deployed on Vercel. Mobile Scan-to-PDF flow added. Browser-based Edit PDF editor added. Guest usage tracking via cookies. 29 tools registered.
 
 ---
 
@@ -61,7 +61,7 @@ This document specifies the complete requirements for a modern, web-based PDF pr
 
 The platform supports both authenticated users (via Clerk) and guest users (cookie-tracked), with a freemium model: free tier (5 files/day, 30/month, 20 MB max) and premium tier ($20/month via Stripe, unlimited files, 4 GB max). AI features (summarization, translation) are powered by OpenRouter using the `openrouter/free` model.
 
-Dual deployment targets are supported: **Vercel** (primary, serverless) and **Fly.io** (Docker, 2 GB RAM, bypasses Vercel's body-size and timeout limits).
+The platform is deployed on **Vercel** (serverless), with large-file handling and long-running processing handled through the client-upload pattern and dedicated job routes.
 
 ---
 
@@ -133,8 +133,7 @@ Dual deployment targets are supported: **Vercel** (primary, serverless) and **Fl
 
 | Layer | Choice |
 |-------|--------|
-| Primary Deployment | Vercel |
-| Docker Deployment | Fly.io (`pdf-tools-chi.fly.dev`) |
+| Deployment | Vercel |
 | Analytics | Vercel Analytics + Vercel Speed Insights |
 
 ---
@@ -313,9 +312,6 @@ pdf-tools/
 ├── proxy.ts                                   # Clerk middleware (Next.js 16 convention)
 ├── next.config.ts                             # Turbopack, proxyClientMaxBodySize: "4gb"
 ├── vercel.json                                # Per-route maxDuration + security headers
-├── Dockerfile                                 # Fly.io: node:22-slim, multi-stage
-├── docker-entrypoint.js                       # Node CJS entrypoint for Fly
-├── fly.toml                                   # Fly.io: 2 GB RAM, bom region
 ├── eslint.config.mjs                          # Flat ESLint config
 ├── postcss.config.mjs                         # Tailwind v4 PostCSS plugin
 ├── tsconfig.json                              # "@/*" path alias
@@ -1203,19 +1199,11 @@ NEXT_PUBLIC_APP_URL=https://pdftools.app     # Optional (defaults to localhost)
 
 ## 22. Deployment
 
-### Vercel (Primary)
+### Vercel
 
 - `vercel.json` carries per-route `maxDuration` overrides and security headers
 - `next.config.ts` sets `experimental.proxyClientMaxBodySize: "4gb"`
-- Limited by ~4.5 MB request body cap (mitigated by client-upload pattern) and function timeouts (mitigated by Fly.io)
-
-### Fly.io (Docker)
-
-The production instance at `pdf-tools-chi.fly.dev` runs on Fly with a 2 GB RAM budget, bypassing Vercel's body cap and timeout limits.
-
-- `Dockerfile` — multi-stage `node:22.21.1-slim`: install deps → `next build --experimental-build-mode compile` → prune → slim runtime
-- `docker-entrypoint.js` — CJS shim: runs `next build --experimental-build-mode generate` at container start, then execs `next start`
-- `fly.toml` — `app = "pdf-tools-chi"`, `primary_region = "bom"`, `internal_port = 8080`, `memory = "2gb"`, `auto_stop_machines = "stop"`, `min_machines_running = 0`
+- Limited by ~4.5 MB request body cap (mitigated by the client-upload pattern) and function timeouts (mitigated by dedicated job routes)
 
 ### Vercel Config (`vercel.json`)
 
@@ -1395,6 +1383,6 @@ The production instance at `pdf-tools-chi.fly.dev` runs on Fly with a 2 GB RAM b
 
 ---
 
-*This PRD (v3.0) supersedes v2.0. Key changes: multi-engine architecture (iLoveAPI + Adobe + pdf-lib + pdfjs-dist), Supabase for database and storage, OpenRouter for AI, Stripe billing, dual deployment (Vercel + Fly.io), mobile scan flow, browser-based PDF editor, guest usage tracking, 29 tools.*
+*This PRD (v3.0) supersedes v2.0. Key changes: multi-engine architecture (iLoveAPI + Adobe + pdf-lib + pdfjs-dist), Supabase for database and storage, OpenRouter for AI, Stripe billing, Vercel deployment, mobile scan flow, browser-based PDF editor, guest usage tracking, 29 tools.*
 
 *Last updated: July 7, 2026 — v3.0*

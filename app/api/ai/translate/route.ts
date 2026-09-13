@@ -151,6 +151,50 @@ function errorResponse(message: string, status: number) {
   return NextResponse.json({ error: message }, { status })
 }
 
+// The free model has a small context window and a tight tokens-per-minute
+// budget. Asking it to translate an entire 50k-char document in one
+// generation stalls the stream and trips an upstream error partway
+// through, so we translate the document in smaller segments instead.
+const MAX_CHUNK_CHARS = 3000
+
+// Split text on paragraph boundaries and pack paragraphs into chunks of
+// at most `maxLen` characters. A single oversized paragraph is hard-split
+// so no chunk ever exceeds the limit.
+function chunkText(text: string, maxLen: number): string[] {
+  const chunks: string[] = []
+  let current = ""
+
+  const flush = () => {
+    if (current.trim()) chunks.push(current.trim())
+    current = ""
+  }
+
+  for (const paragraph of text.split(/\n{2,}/)) {
+    const pieces: string[] = []
+    if (paragraph.length <= maxLen) {
+      pieces.push(paragraph)
+    } else {
+      for (let i = 0; i < paragraph.length; i += maxLen) {
+        pieces.push(paragraph.slice(i, i + maxLen))
+      }
+    }
+
+    for (const piece of pieces) {
+      if (current.length === 0) {
+        current = piece
+      } else if (current.length + piece.length + 2 <= maxLen) {
+        current += "\n\n" + piece
+      } else {
+        flush()
+        current = piece
+      }
+    }
+  }
+
+  flush()
+  return chunks
+}
+
 export async function POST(req: Request) {
   const userId = await getAuthenticatedUserId()
   const start = Date.now()
@@ -199,16 +243,23 @@ export async function POST(req: Request) {
     (async function* (): AsyncGenerator<StreamEvent, void, undefined> {
       try {
         const { stream } = await buildStreamingClient()
-        const translateText = await stream(
-          systemPrompt,
-          `Translate this document to ${targetLanguage}.\n\n--- DOCUMENT (${filename}) START ---\n${documentText.slice(
-            0,
-            50000
-          )}\n--- DOCUMENT END ---`
-        )
+        const segments = chunkText(documentText, MAX_CHUNK_CHARS)
 
-        for await (const text of translateText) {
-          yield { type: "chunk", text }
+        for (let i = 0; i < segments.length; i++) {
+          const translated = await stream(
+            systemPrompt,
+            `Translate this document segment to ${targetLanguage}. ` +
+              `This is segment ${i + 1} of ${segments.length}; translate only this segment and ` +
+              `do not add commentary.\n\n--- SEGMENT (${filename}) START ---\n${segments[i]}\n--- SEGMENT END ---`
+          )
+
+          // Separate translated segments so paragraph boundaries between
+          // chunks survive the round trip.
+          if (i > 0) yield { type: "chunk", text: "\n\n" }
+
+          for await (const text of translated) {
+            yield { type: "chunk", text }
+          }
         }
 
         yield { type: "done" }
@@ -229,7 +280,13 @@ export async function POST(req: Request) {
           inputFilesCount: 1,
           errorMessage: (err as Error).message || "Translation failed",
         })
-        throw err
+        // Emit a real SSE error event instead of letting the stream
+        // abort. An aborted stream reaches the browser as an opaque
+        // "Failed to fetch", which tells the user nothing.
+        const message = isRateLimitError(err)
+          ? "The AI service is temporarily rate-limited. Please try again in a moment."
+          : (err as Error).message || "Translation failed"
+        yield { type: "error", message }
       }
     })()
   )

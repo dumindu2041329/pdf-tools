@@ -1,7 +1,7 @@
 "use client"
 
 import { motion } from "framer-motion"
-import { Download, FileText, Clock, HardDrive, ArrowRight } from "lucide-react"
+import { Download, FileText, HardDrive, ArrowRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
 function formatSize(bytes: number) {
@@ -13,7 +13,6 @@ function formatSize(bytes: number) {
 interface DownloadCardProps {
   downloadUrl: string
   filename: string
-  processingTime: string
   outputSize: number
   onReset: () => void
 }
@@ -21,7 +20,6 @@ interface DownloadCardProps {
 export function DownloadCard({
   downloadUrl,
   filename,
-  processingTime,
   outputSize,
   onReset,
 }: DownloadCardProps) {
