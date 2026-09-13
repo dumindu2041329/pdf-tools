@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { canProcessFile, recordProcessingEvent } from "@/lib/usage"
 import { getUserPlan } from "@/lib/auth"
+import { checkGuestLimits, incrementGuestUsage } from "@/lib/guest-usage"
 import { aiLimiter, getClientIp, rateLimitKey } from "@/lib/ratelimit"
 
 const OPENROUTER_MODEL = "openrouter/free"
@@ -21,6 +22,7 @@ type TranslateRequestBody = {
 type StreamEvent =
   | { type: "chunk"; text: string }
   | { type: "done"; documentText?: string }
+  | { type: "error"; message: string }
 
 const SSE_HEADERS = {
   "Content-Type": "text/event-stream; charset=utf-8",
@@ -60,33 +62,75 @@ async function getAuthenticatedUserId(): Promise<string | null> {
   }
 }
 
-// Detect OpenRouter rate-limit responses from the OpenAI SDK error.
-// The free model is shared across all OpenRouter users and is
-// frequently rate-limited upstream.
-function isRateLimitError(err: unknown): boolean {
-  if (!err || typeof err !== "object") return false
-  const e = err as { status?: unknown; code?: unknown; error?: { code?: unknown } }
-  return (
-    e.status === 429 ||
-    e.code === 429 ||
-    e.error?.code === 429
-  )
+// The free-model tier allows 20 requests/minute and, for accounts that
+// have not purchased at least 10 credits, only 50 requests/day.
+const FREE_TIER_DAILY_REQUESTS = 50
+
+// The server's `Retry-After` hint, in ms. The OpenAI SDK exposes the
+// response headers, but OpenRouter also nests the rate-limit headers
+// inside the error body, so both shapes are checked. Returns null when
+// the server didn't send one.
+function readRetryAfterMs(err: unknown): number | null {
+  const e = err as {
+    headers?: { get?: (name: string) => string | null }
+    error?: { metadata?: { headers?: Record<string, string | undefined> } }
+  }
+
+  const raw =
+    e.error?.metadata?.headers?.["Retry-After"] ??
+    e.error?.metadata?.headers?.["retry-after"] ??
+    (typeof e.headers?.get === "function" ? e.headers.get("retry-after") : null)
+  if (!raw) return null
+
+  const seconds = Number(raw)
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000
+  const date = Date.parse(raw)
+  return Number.isNaN(date) ? null : Math.max(0, date - Date.now())
 }
 
-// Retry a promise-returning function on 429 with exponential backoff.
+// Classify a 429. A per-minute throttle clears on its own, so it is
+// worth waiting out. The daily free-model allowance does not — retrying
+// it only wastes the remaining attempts (and the little quota left), so
+// the caller fails fast with an accurate message instead.
+function describeRateLimit(err: unknown): { isDaily: boolean; retryAfterMs: number } | null {
+  if (!err || typeof err !== "object") return null
+  const e = err as {
+    status?: unknown
+    code?: unknown
+    message?: unknown
+    error?: { code?: unknown; message?: unknown }
+  }
+  const status = e.status ?? e.code ?? e.error?.code
+  const upstream = `${e.error?.message ?? ""} ${e.message ?? ""}`
+  if (status !== 429 && !/rate limit|too many requests/i.test(upstream)) return null
+
+  return {
+    // OpenRouter tags the exhausted allowance in the message, e.g.
+    // "Rate limit exceeded: free-models-per-day".
+    isDaily: /per[-\s]?day|daily/i.test(upstream),
+    retryAfterMs: readRetryAfterMs(err) ?? 0,
+  }
+}
+
+// Retry a promise-returning function on a *transient* rate limit.
 async function withRateLimitRetry<T>(
   fn: () => Promise<T>,
-  maxAttempts: number = 3
+  maxAttempts: number = 4
 ): Promise<T> {
-  const delays = [1000, 2000, 4000]
+  const backoffMs = [2000, 5000, 10000]
   let lastErr: unknown
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
       return await fn()
     } catch (err) {
       lastErr = err
-      if (!isRateLimitError(err) || attempt === maxAttempts - 1) throw err
-      await new Promise((r) => setTimeout(r, delays[attempt] ?? 4000))
+      const limit = describeRateLimit(err)
+      if (!limit || limit.isDaily || attempt === maxAttempts - 1) throw err
+      // Cap the wait: the route streams inside a bounded serverless
+      // execution budget, so a long throttle has to surface as an
+      // error rather than a hung request.
+      const wait = Math.min(Math.max(limit.retryAfterMs, backoffMs[attempt] ?? 10000), 30000)
+      await new Promise((r) => setTimeout(r, wait))
     }
   }
   throw lastErr
@@ -151,11 +195,15 @@ function errorResponse(message: string, status: number) {
   return NextResponse.json({ error: message }, { status })
 }
 
-// The free model has a small context window and a tight tokens-per-minute
-// budget. Asking it to translate an entire 50k-char document in one
-// generation stalls the stream and trips an upstream error partway
-// through, so we translate the document in smaller segments instead.
-const MAX_CHUNK_CHARS = 3000
+// Each segment costs one upstream request, and the free-model tier only
+// allows 20 requests/minute and 50 requests/day. Tiny segments burn that
+// budget far too quickly — a 3000-char split turned a modest PDF into
+// 20+ back-to-back requests, which trips the per-minute cap and drains
+// the daily allowance. Segments are therefore deliberately large: big
+// enough that a normal document needs only a handful of requests, small
+// enough that the model still finishes one translation in a single
+// generation without stalling partway through.
+const MAX_CHUNK_CHARS = 12000
 
 // Split text on paragraph boundaries and pack paragraphs into chunks of
 // at most `maxLen` characters. A single oversized paragraph is hard-split
@@ -228,10 +276,19 @@ export async function POST(req: Request) {
   const filename = (body.filename || "document.pdf").trim()
   const fileSize = typeof body.fileSize === "number" && body.fileSize > 0 ? body.fileSize : 0
 
-  if (userId && fileSize > 0) {
-    const plan = await getUserPlan(userId)
-    const gate = await canProcessFile(userId, fileSize, plan)
+  if (userId) {
+    if (fileSize > 0) {
+      const plan = await getUserPlan(userId)
+      const gate = await canProcessFile(userId, fileSize, plan)
+      if (!gate.allowed) return errorResponse(gate.reason ?? "Processing limit reached", 402)
+    }
+  } else {
+    // Unauthenticated callers get the same cookie-backed free-plan cap
+    // as the other tools — otherwise this endpoint would be a free
+    // OpenRouter proxy. Pre-check then record the attempt.
+    const gate = await checkGuestLimits(1)
     if (!gate.allowed) return errorResponse(gate.reason ?? "Processing limit reached", 402)
+    await incrementGuestUsage(1)
   }
 
   const systemPrompt =
@@ -283,9 +340,12 @@ export async function POST(req: Request) {
         // Emit a real SSE error event instead of letting the stream
         // abort. An aborted stream reaches the browser as an opaque
         // "Failed to fetch", which tells the user nothing.
-        const message = isRateLimitError(err)
-          ? "The AI service is temporarily rate-limited. Please try again in a moment."
-          : (err as Error).message || "Translation failed"
+        const limit = describeRateLimit(err)
+        const message = limit?.isDaily
+          ? `The AI provider's free daily allowance is used up (${FREE_TIER_DAILY_REQUESTS} requests/day). Please try again tomorrow, or add credits to the OpenRouter account for a higher limit.`
+          : limit
+            ? "The AI service is temporarily rate-limited. Please try again in a moment."
+            : (err as Error).message || "Translation failed"
         yield { type: "error", message }
       }
     })()

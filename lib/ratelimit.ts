@@ -94,9 +94,16 @@ export const webhookLimiter = makeLimiter(120, "60 s")
  *  polls every ~2s, so this allows a few concurrent sessions per IP). */
 export const pollLimiter = makeLimiter(60, "60 s")
 
-/** Best-effort client IP from the proxy chain (Vercel sets
- *  `x-forwarded-for`). */
+/** Best-effort client IP from the proxy chain.
+ *
+ *  Vercel sets `x-real-ip` to the connecting IP and overwrites any
+ *  client-supplied value, so prefer it. `x-forwarded-for` is only a
+ *  fallback and its leftmost entry is client-controllable when the
+ *  request arrives via another proxy — trusting it blindly would let an
+ *  attacker rotate the header to bypass per-IP rate limits. */
 export function getClientIp(req: Request): string {
+  const real = req.headers.get("x-real-ip")
+  if (real && real.trim()) return real.trim()
   const fwd = req.headers.get("x-forwarded-for")
   if (fwd) {
     const first = fwd.split(",")[0]?.trim()

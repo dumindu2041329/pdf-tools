@@ -168,25 +168,25 @@ export interface CounterCounts {
  * Fast O(1) read from the denormalized usage_counter table.
  * Returns 0s if no row exists (new user) — the counter is created on the
  * first successful processing event. All date math uses explicit UTC.
+ *
+ * Throws when the read itself fails. Callers decide whether to fail open
+ * or closed — `canProcessFile` deliberately fails closed, because
+ * treating an unreadable counter as "zero usage" silently disables the
+ * free-plan caps.
  */
 export async function readUsageCounter(userId: string): Promise<CounterCounts> {
-  try {
-    await ensureDbSchema()
-    const supabase = getSupabaseServer()
-    const { data, error } = await supabase.rpc("pdf_tools_read_counter", {
-      p_user_id: userId,
-    })
-    if (error) throw error
-    const rows = (data ?? []) as Array<{ daily: number; monthly: number }>
-    if (rows.length === 0) return { daily: 0, monthly: 0 }
-    const row = rows[0]
-    return {
-      daily: Number(row.daily) || 0,
-      monthly: Number(row.monthly) || 0,
-    }
-  } catch (err) {
-    console.error("[db] readUsageCounter failed:", err)
-    return { daily: 0, monthly: 0 }
+  await ensureDbSchema()
+  const supabase = getSupabaseServer()
+  const { data, error } = await supabase.rpc("pdf_tools_read_counter", {
+    p_user_id: userId,
+  })
+  if (error) throw error
+  const rows = (data ?? []) as Array<{ daily: number; monthly: number }>
+  if (rows.length === 0) return { daily: 0, monthly: 0 }
+  const row = rows[0]
+  return {
+    daily: Number(row.daily) || 0,
+    monthly: Number(row.monthly) || 0,
   }
 }
 

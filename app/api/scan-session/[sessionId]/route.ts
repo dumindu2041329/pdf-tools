@@ -7,8 +7,9 @@ import {
   listStorageObjects,
   SCAN_SESSIONS_BUCKET,
   uploadToStorage,
+  type StorageScope,
 } from "@/lib/supabase-storage"
-import { pollLimiter } from "@/lib/ratelimit"
+import { getClientIp, pollLimiter, rateLimitKey } from "@/lib/ratelimit"
 import type { DeviceInfo } from "@/lib/device-info"
 
 /**
@@ -42,6 +43,15 @@ const SAVED_FILENAME = "_saved.json"
 
 function isValidSessionId(id: string): boolean {
   return /^[a-zA-Z0-9-]{1,100}$/.test(id)
+}
+
+/**
+ * Storage scope for a session: only objects under `<sessionId>/` in the
+ * scan-sessions bucket. Shared by the read and delete paths so neither
+ * can be pointed at another session's objects.
+ */
+function sessionScope(sessionId: string): StorageScope {
+  return { bucket: SCAN_SESSIONS_BUCKET, prefixes: [`${sessionId}/`] }
 }
 
 function ensureToken(): NextResponse | null {
@@ -102,7 +112,7 @@ export async function GET(
 
       if (leaf === DEVICE_FILENAME) {
         try {
-          const buffer = await downloadFromStorage(url)
+          const buffer = await downloadFromStorage(url, sessionScope(sessionId))
           const parsed = JSON.parse(buffer.toString("utf-8")) as DeviceInfo
           if (parsed && typeof parsed.label === "string") {
             device = parsed
@@ -135,7 +145,7 @@ export async function GET(
   } catch (err) {
     console.error("[scan-session] list failed:", err)
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Failed to list images" },
+      { error: "Failed to list images" },
       { status: 500 }
     )
   }
@@ -156,6 +166,14 @@ export async function POST(
 
   if (!isValidSessionId(sessionId)) {
     return NextResponse.json({ error: "Invalid sessionId" }, { status: 400 })
+  }
+
+  // This route is unauthenticated (the sessionId is the capability), so
+  // throttle writes by IP — otherwise an attacker can hammer the storage
+  // API, or spam the save-signal sentinel at a victim's session.
+  const rl = await pollLimiter.limit(rateLimitKey(null, getClientIp(request)))
+  if (!rl.success) {
+    return NextResponse.json({ error: "Too many requests" }, { status: 429 })
   }
 
   const tokenError = ensureToken()
@@ -200,7 +218,7 @@ export async function POST(
     } catch (err) {
       console.error("[scan-session] save signal failed:", err)
       return NextResponse.json(
-        { error: err instanceof Error ? err.message : "Failed to record save signal" },
+        { error: "Failed to record save signal" },
         { status: 500 }
       )
     }
@@ -246,7 +264,7 @@ export async function POST(
   } catch (err) {
     console.error("[scan-session] join failed:", err)
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Failed to record device" },
+      { error: "Failed to record device" },
       { status: 500 }
     )
   }
@@ -290,6 +308,14 @@ export async function DELETE(
     return NextResponse.json({ error: "Invalid sessionId" }, { status: 400 })
   }
 
+  // Unauthenticated (sessionId-only) mutation — throttle by IP so
+  // `destroy: true` can't be used to amplify load via the recursive
+  // prefix delete.
+  const rl = await pollLimiter.limit(rateLimitKey(null, getClientIp(request)))
+  if (!rl.success) {
+    return NextResponse.json({ error: "Too many requests" }, { status: 429 })
+  }
+
   const tokenError = ensureToken()
   if (tokenError) return tokenError
 
@@ -326,7 +352,7 @@ export async function DELETE(
     } catch (err) {
       console.error("[scan-session] destroy failed:", err)
       return NextResponse.json(
-        { error: err instanceof Error ? err.message : "Failed to destroy session" },
+        { error: "Failed to destroy session" },
         { status: 500 }
       )
     }
@@ -368,12 +394,12 @@ export async function DELETE(
 
   try {
     const url = publicUrlFor(SCAN_SESSIONS_BUCKET, normalized)
-    await deleteFromStorage(url)
+    await deleteFromStorage(url, sessionScope(sessionId))
     return NextResponse.json({ ok: true })
   } catch (err) {
     console.error("[scan-session] delete failed:", err)
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Failed to delete image" },
+      { error: "Failed to delete image" },
       { status: 500 }
     )
   }

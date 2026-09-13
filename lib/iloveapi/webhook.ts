@@ -21,6 +21,27 @@ import ILovePDFFile from "@ilovepdf/ilovepdf-nodejs/ILovePDFFile"
 import { ilovepdf, getRawToken } from "./client"
 import type { ILoveAPITool } from "./types"
 
+/** Outbound iLovePDF calls must fail fast instead of holding the
+ *  serverless invocation open until the platform kills it. */
+const ILOVEAPI_FETCH_TIMEOUT_MS = 60_000
+
+/**
+ * iLovePDF serves tasks from per-region hosts under `ilovepdf.com`. The
+ * task `server` value round-trips through the (client-reachable) webhook
+ * body, so it must be validated before being interpolated into a URL —
+ * otherwise a forged webhook could make us fetch an arbitrary host.
+ */
+function assertILoveApiHost(server: string): string {
+  const host = server.trim().toLowerCase()
+  const valid =
+    /^[a-z0-9-]+(\.[a-z0-9-]+)*$/.test(host) &&
+    (host === "ilovepdf.com" || host.endsWith(".ilovepdf.com"))
+  if (!valid) {
+    throw new Error(`Refusing to contact unexpected iLoveAPI host: ${server}`)
+  }
+  return host
+}
+
 export interface WebhookSourceFile {
   /** Supabase Storage public URL — iLovePDF fetches it directly. */
   url?: string
@@ -142,6 +163,7 @@ export async function startTaskWithWebhook(
   }
 
   const token = getRawToken()
+  const server = assertILoveApiHost(taskMeta.server)
   const body = {
     task: taskMeta.id,
     tool: taskMeta.type,
@@ -149,13 +171,14 @@ export async function startTaskWithWebhook(
     ...processOptions,
   }
 
-  const res = await fetch(`https://${taskMeta.server}/v1/process`, {
+  const res = await fetch(`https://${server}/v1/process`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json;charset=UTF-8",
       Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(ILOVEAPI_FETCH_TIMEOUT_MS),
   })
 
   if (!res.ok) {
@@ -171,7 +194,7 @@ export async function startTaskWithWebhook(
     )
   }
 
-  return { taskId: taskMeta.id, server: taskMeta.server, tool: taskMeta.type }
+  return { taskId: taskMeta.id, server, tool: taskMeta.type }
 }
 
 /**
@@ -183,9 +206,11 @@ export async function downloadTaskResult(
   taskId: string,
   server: string
 ): Promise<DownloadResult> {
+  const host = assertILoveApiHost(server)
   const token = getRawToken()
-  const res = await fetch(`https://${server}/v1/download/${taskId}`, {
+  const res = await fetch(`https://${host}/v1/download/${taskId}`, {
     headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(ILOVEAPI_FETCH_TIMEOUT_MS),
   })
 
   if (!res.ok) {
@@ -203,9 +228,10 @@ export async function downloadTaskResult(
   }
 
   // Release the task on iLovePDF's side — best-effort.
-  await fetch(`https://${server}/v1/task/${taskId}`, {
+  await fetch(`https://${host}/v1/task/${taskId}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(ILOVEAPI_FETCH_TIMEOUT_MS),
   }).catch(() => {})
 
   return { buffer, filename, contentType }

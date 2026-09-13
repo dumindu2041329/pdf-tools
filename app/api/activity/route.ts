@@ -2,6 +2,8 @@ import { NextResponse } from "next/server"
 import { auth } from "@clerk/nextjs/server"
 import { recordProcessingEvent } from "@/lib/usage"
 import { checkGuestLimits, incrementGuestUsage } from "@/lib/guest-usage"
+import { getToolBySlug } from "@/lib/tools-config"
+import { getClientIp, rateLimitKey, toolLimiter } from "@/lib/ratelimit"
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
@@ -26,8 +28,23 @@ export async function POST(req: Request) {
   if (!toolSlug) {
     return NextResponse.json({ error: "toolSlug is required" }, { status: 400 })
   }
+  // Only registered tool slugs may be recorded — an arbitrary string
+  // would let a caller write junk rows into the usage/analytics tables.
+  if (!getToolBySlug(toolSlug)) {
+    return NextResponse.json({ error: "Unknown toolSlug" }, { status: 400 })
+  }
 
   const { userId } = await auth()
+
+  // Burst protection — the endpoint is reachable unauthenticated and
+  // writes a usage event per call.
+  const rl = await toolLimiter.limit(rateLimitKey(userId, getClientIp(req)))
+  if (!rl.success) {
+    return NextResponse.json(
+      { error: "Too many requests. Please try again shortly." },
+      { status: 429 }
+    )
+  }
 
   if (!userId) {
     // Guest path for the local tools (merge / split / remove-pages /

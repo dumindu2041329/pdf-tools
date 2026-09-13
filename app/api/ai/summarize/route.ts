@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { canProcessFile, recordProcessingEvent } from "@/lib/usage"
 import { getUserPlan } from "@/lib/auth"
+import { checkGuestLimits, incrementGuestUsage } from "@/lib/guest-usage"
 import { aiLimiter, getClientIp, rateLimitKey } from "@/lib/ratelimit"
 
 const OPENROUTER_MODEL = "openrouter/free"
@@ -311,12 +312,23 @@ export async function POST(req: Request) {
   const filename = (body.filename || "document.pdf").trim() || "document.pdf"
   const fileSize = typeof body.fileSize === "number" && body.fileSize > 0 ? body.fileSize : 0
 
-  if (userId && fileSize > 0) {
-    const plan = await getUserPlan(userId)
-    const gate = await canProcessFile(userId, fileSize, plan)
+  if (userId) {
+    if (fileSize > 0) {
+      const plan = await getUserPlan(userId)
+      const gate = await canProcessFile(userId, fileSize, plan)
+      if (!gate.allowed) {
+        return errorResponse(gate.reason ?? "Processing limit reached", 402)
+      }
+    }
+  } else {
+    // Unauthenticated callers get the same cookie-backed free-plan cap
+    // as the other tools — otherwise this endpoint would be a free
+    // OpenRouter proxy. Pre-check then record the attempt.
+    const gate = await checkGuestLimits(1)
     if (!gate.allowed) {
       return errorResponse(gate.reason ?? "Processing limit reached", 402)
     }
+    await incrementGuestUsage(1)
   }
 
   const systemPrompt =
@@ -335,83 +347,97 @@ export async function POST(req: Request) {
 
   // Some free models occasionally return their internal moderation
   // classification (e.g. "User Safety: safe") as the first output
-  // instead of a real summary. We detect this pattern in the buffered
-  // first ~200 chars of the stream and surface a clear error instead
-  // of showing the user a non-summary string.
-  const SAFETY_RESPONSE_PATTERN = /^\s*User Safety:?\s*(safe|unsafe|blocked|flagged)\b/i
+  // instead of a real summary. The guard below holds back a short
+  // leading window of the model output *before* anything is flushed to
+  // the client, so a leaked classification never reaches the user and
+  // the attempt can be retried (streamed chunks cannot be un-sent).
+  //
+  // The pattern is matched against the *model* output only. The
+  // "[Standard Summary]" label must never be part of the buffer,
+  // otherwise the `^` anchor could never match and the leak would slip
+  // straight through to the user.
+  const SAFETY_RESPONSE_PATTERN =
+    /^user\s*safety[\s:=-]{0,4}(?:safe|unsafe|blocked|flagged)\b/i
+  // The leak is intermittent (it depends on which upstream provider
+  // `openrouter/free` routes to), so a fresh attempt usually returns a
+  // real summary. Give up only after a few tries.
+  const MAX_SUMMARY_ATTEMPTS = 3
+  // Start streaming once the first line of output is complete, or once
+  // the held-back window grows past this many characters.
+  const SAFETY_WINDOW_CHARS = 64
 
   const summaryStream = makeSseStream(
     (async function* (): AsyncGenerator<StreamEvent, void, undefined> {
       try {
-        const { stream } = await buildStreamingClient()
         // Prefix the first chunk with the length label so the user
         // always sees what flavor of summary they're reading.
-        let firstChunk = true
-        // Buffer the start of the model output so we can detect a
-        // safety-classification response and abort before flushing
-        // the bad content to the client.
-        let safetyCheckBuffer = ""
-        let isSafetyResponse = false
+        const prefix = `[${lengthLabel} Summary]\n\n`
 
-        for await (const text of await stream(
-          systemPrompt,
-          `Summarize the following document (${filename}):\n\n${documentText.slice(0, 50000)}`
-        )) {
-          if (firstChunk) {
-            const prefix = `[${lengthLabel} Summary]\n\n`
-            safetyCheckBuffer = prefix + text
-            yield { type: "chunk", text: prefix }
-            firstChunk = false
-          } else if (!isSafetyResponse) {
-            safetyCheckBuffer += text
-          }
+        for (let attempt = 1; attempt <= MAX_SUMMARY_ATTEMPTS; attempt++) {
+          const { stream } = await buildStreamingClient()
+          let leakedSafetyHeader = false
+          let pending = ""
+          let flushed = false
 
-          if (!isSafetyResponse) {
-            if (SAFETY_RESPONSE_PATTERN.test(safetyCheckBuffer)) {
-              isSafetyResponse = true
-            } else if (safetyCheckBuffer.length > 200) {
-              // Enough content to be confident this is a real
-              // summary; drop the buffer to free memory.
-              safetyCheckBuffer = ""
+          for await (const text of await stream(
+            systemPrompt,
+            `Summarize the following document (${filename}):\n\n${documentText.slice(0, 50000)}`
+          )) {
+            if (flushed) {
+              yield { type: "chunk", text }
+              continue
+            }
+
+            pending += text
+            if (SAFETY_RESPONSE_PATTERN.test(pending.trimStart())) {
+              leakedSafetyHeader = true
+              break
+            }
+            if (pending.includes("\n") || pending.trim().length >= SAFETY_WINDOW_CHARS) {
+              flushed = true
+              yield { type: "chunk", text: prefix + pending }
             }
           }
 
-          if (isSafetyResponse) {
-            // Stop streaming; the error event below will replace the
-            // partial content the client is holding.
-            break
+          if (leakedSafetyHeader) {
+            // Drop this attempt and re-ask. Nothing was emitted yet, so
+            // the user only ever sees the retried response.
+            continue
           }
 
-          yield { type: "chunk", text }
-        }
+          // A short summary can end before its first line break, so
+          // flush whatever is still held back.
+          if (!flushed) {
+            yield { type: "chunk", text: prefix + pending }
+          }
 
-        if (isSafetyResponse) {
-          const message =
-            "The AI returned a safety classification instead of a summary. " +
-            "Please try again in a moment."
-          yield { type: "error", message }
+          // Hand the extracted text back so the client can use it for
+          // follow-up questions without re-uploading the PDF.
+          yield { type: "done", documentText }
           await recordProcessingEvent({
             userId,
             toolSlug: "ai-summarizer",
-            status: "error",
+            status: "success",
             engine,
             inputFilesCount: 1,
             processingTimeMs: Date.now() - start,
-            errorMessage: message,
           })
           return
         }
 
-        // Hand the extracted text back so the client can use it for
-        // follow-up questions without re-uploading the PDF.
-        yield { type: "done", documentText }
+        // Every attempt leaked the moderation header.
+        const message =
+          "The AI returned a safety classification instead of a summary. " +
+          "Please try again in a moment."
+        yield { type: "error", message }
         await recordProcessingEvent({
           userId,
           toolSlug: "ai-summarizer",
-          status: "success",
+          status: "error",
           engine,
           inputFilesCount: 1,
           processingTimeMs: Date.now() - start,
+          errorMessage: message,
         })
       } catch (err) {
         console.error("AI Summarize (summary) error:", err)

@@ -9,8 +9,8 @@ import { useTheme } from "next-themes"
 import type { DeviceInfo } from "@/lib/device-info"
 import { createBackgroundPoller, type BackgroundPollerStatus } from "@/lib/backgroundPoller"
 
-function QrCodeSvg({ value }: { value: string }) {
-  const [svg, setSvg] = useState<string>("")
+function QrCodeImage({ value }: { value: string }) {
+  const [dataUrl, setDataUrl] = useState<string>("")
   const { resolvedTheme } = useTheme()
 
   useEffect(() => {
@@ -18,8 +18,10 @@ function QrCodeSvg({ value }: { value: string }) {
 
     const dark = resolvedTheme === "dark" ? "#ffffffff" : "#000000ff"
 
-    QRCode.toString(value, {
-      type: "svg",
+    // Render to a PNG data URL and mount it as an <img> rather than
+    // injecting the library's SVG via `dangerouslySetInnerHTML` — this
+    // keeps the QR content out of the HTML parser entirely.
+    QRCode.toDataURL(value, {
       margin: 1,
       width: 180,
       color: {
@@ -29,7 +31,7 @@ function QrCodeSvg({ value }: { value: string }) {
     })
       .then((result) => {
         if (cancelled) return
-        setSvg(result)
+        setDataUrl(result)
       })
       .catch((err) => {
         console.error("QR code generation failed", err)
@@ -40,11 +42,16 @@ function QrCodeSvg({ value }: { value: string }) {
     }
   }, [value, resolvedTheme])
 
+  if (!dataUrl) return null
+
   return (
-    <div
-      className="shrink-0 [&_svg]:!h-[180px] [&_svg]:!w-[180px]"
-      dangerouslySetInnerHTML={{ __html: svg }}
-      aria-label={`QR code for ${value}`}
+    // eslint-disable-next-line @next/next/no-img-element -- local data URL, not a fetchable asset
+    <img
+      src={dataUrl}
+      alt={`QR code for ${value}`}
+      width={180}
+      height={180}
+      className="shrink-0 !h-[180px] !w-[180px]"
     />
   )
 }
@@ -269,7 +276,7 @@ export function ScanToPdfView() {
               transition={{ duration: 0.25, ease: "easeOut" }}
               className="flex items-center justify-center"
             >
-              {mobileScanUrl ? <QrCodeSvg value={mobileScanUrl} /> : null}
+              {mobileScanUrl ? <QrCodeImage value={mobileScanUrl} /> : null}
             </motion.div>
 
             <motion.div

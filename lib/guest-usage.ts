@@ -79,6 +79,9 @@ async function writeGuestUsage(usage: GuestUsage): Promise<void> {
     value: JSON.stringify(usage),
     httpOnly: true,
     sameSite: "lax",
+    // Only send over HTTPS in production; forcing it on localhost would
+    // stop the cookie from being stored during development.
+    secure: process.env.NODE_ENV === "production",
     path: "/",
     maxAge: MAX_AGE_SECONDS,
   })

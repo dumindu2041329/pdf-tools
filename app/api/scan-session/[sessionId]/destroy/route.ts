@@ -4,6 +4,7 @@ import {
   isSupabaseStorageConfigured,
   SCAN_SESSIONS_BUCKET,
 } from "@/lib/supabase-storage"
+import { getClientIp, pollLimiter, rateLimitKey } from "@/lib/ratelimit"
 
 export const runtime = "nodejs"
 
@@ -28,6 +29,13 @@ export async function POST(
 
   if (!SAFE_SESSION.test(sessionId)) {
     return NextResponse.json({ error: "Invalid sessionId" }, { status: 400 })
+  }
+
+  // Unauthenticated + a recursive prefix delete — throttle by IP so it
+  // can't be used to amplify load.
+  const rl = await pollLimiter.limit(rateLimitKey(null, getClientIp(request)))
+  if (!rl.success) {
+    return NextResponse.json({ error: "Too many requests" }, { status: 429 })
   }
 
   if (!isSupabaseStorageConfigured()) {
@@ -68,7 +76,7 @@ export async function POST(
   } catch (err) {
     console.error("[scan-session/destroy] failed:", err)
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Failed to destroy session" },
+      { error: "Failed to destroy session" },
       { status: 500 }
     )
   }

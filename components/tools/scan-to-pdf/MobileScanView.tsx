@@ -21,6 +21,34 @@ interface CapturedItem {
 
 const SAFE_SESSION = /^[a-zA-Z0-9-]{1,100}$/
 
+/**
+ * Cameras and file inputs report names like `Screenshot 2026-09-13.png` or
+ * `IMG (1).jpg` — spaces/parentheses the storage path rules reject. The
+ * server (`/api/upload`) requires the leaf to match `[a-zA-Z0-9._-]{1,200}`,
+ * so normalise it here instead of letting the capture 400.
+ */
+function safeCaptureFilename(name: string, mimeType: string): string {
+  const leaf = name.split(/[\\/]/).pop() ?? ""
+  const dot = leaf.lastIndexOf(".")
+  const ext = (dot > 0 ? leaf.slice(dot + 1) : "")
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .toLowerCase()
+  const stem = (dot > 0 ? leaf.slice(0, dot) : leaf)
+    .replace(/[^a-zA-Z0-9._-]/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "")
+    .slice(0, 80)
+  const fallbackExt =
+    mimeType === "image/png"
+      ? "png"
+      : mimeType === "image/webp"
+        ? "webp"
+        : mimeType === "image/gif"
+          ? "gif"
+          : "jpg"
+  return `${stem || "capture"}.${ext || fallbackExt}`
+}
+
 export function MobileScanView({ sessionId }: MobileScanViewProps) {
   const router = useRouter()
   const [captures, setCaptures] = useState<CapturedItem[]>([])
@@ -176,7 +204,7 @@ export function MobileScanView({ sessionId }: MobileScanViewProps) {
         // lifecycle (smaller size cap, simpler policies) separate
         // from the main `pdf-uploads` bucket.
         bucket: "scan-sessions",
-        pathname: `scan-sessions/${sessionId}/${file.name}`,
+        pathname: `scan-sessions/${sessionId}/${safeCaptureFilename(file.name, file.type)}`,
         contentType: file.type,
         onProgress: undefined,
       })

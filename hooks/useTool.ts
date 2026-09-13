@@ -531,14 +531,6 @@ export function useTool(toolSlug: string) {
         watermarkDirectUpload,
       })
 
-      for (const file of files) {
-        console.log("[DEBUG] Adding file:", file.name, file.size, file.type)
-      }
-      console.log(
-        "[DEBUG] FormData entries:",
-        Array.from(form.entries()).map((e) => [e[0], typeof e[1]])
-      )
-
       if (toolSlug === "split-pdf" || toolSlug === "remove-pages" || toolSlug === "organize-pdf") {
         try {
           // Local tools: there's no real upload, but show the step briefly
@@ -733,7 +725,6 @@ export function useTool(toolSlug: string) {
 
         const data = response.json() as {
           fileData?: string
-          downloadId?: string
           jobId?: string
           filename?: string
           processingTime?: string
@@ -786,23 +777,21 @@ export function useTool(toolSlug: string) {
           return
         }
 
-        let downloadUrl: string
-        if (data.fileData) {
-          const binaryString = atob(data.fileData)
-          const bytes = new Uint8Array(binaryString.length)
-          for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i)
-          }
-          // Mobile browsers (notably iOS Safari) ignore the `download`
-          // attribute on blob: URLs and derive the extension from the
-          // blob's MIME type — a zip typed as application/pdf downloads
-          // as "converted-pdfs.zip.pdf". Derive the type from the real
-          // output filename instead.
-          const blob = new Blob([bytes], { type: mimeTypeForFilename(data.filename) })
-          downloadUrl = URL.createObjectURL(blob)
-        } else {
-          downloadUrl = `/api/download/${data.downloadId}`
+        if (!data.fileData) {
+          throw new Error("Server response contained neither file data nor a job id")
         }
+        const binaryString = atob(data.fileData)
+        const bytes = new Uint8Array(binaryString.length)
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i)
+        }
+        // Mobile browsers (notably iOS Safari) ignore the `download`
+        // attribute on blob: URLs and derive the extension from the
+        // blob's MIME type — a zip typed as application/pdf downloads
+        // as "converted-pdfs.zip.pdf". Derive the type from the real
+        // output filename instead.
+        const blob = new Blob([bytes], { type: mimeTypeForFilename(data.filename) })
+        const downloadUrl = URL.createObjectURL(blob)
 
         // Step 5: "Ready!" — shown briefly before the modal closes
         setState({ status: "processing", step: "done" })

@@ -36,6 +36,7 @@ export async function runTool(input: ToolRunInput): Promise<ToolRunResult> {
   const task = ilovepdf.newTask(input.tool as ILoveAPITool)
   await task.start()
 
+  try {
   // Step 2: Upload all files
   if (input.tool === "htmlpdf" && input.options?.url) {
     await task.addFile(input.options.url as string)
@@ -114,9 +115,6 @@ export async function runTool(input: ToolRunInput): Promise<ToolRunResult> {
   const timer = (task as unknown as { timer?: string }).timer || "0";
   const taskId = task.id;
 
-  // Cleanup
-  await task.delete();
-
   return {
     buffer: buffer,
     downloadFilename,
@@ -125,6 +123,13 @@ export async function runTool(input: ToolRunInput): Promise<ToolRunResult> {
     taskId,
     server: "api.ilovepdf.com",
   };
+  } finally {
+    // Always release the remote task. Without this, any throw from
+    // `process()`/`download()` (or the pdfjpg re-zip) leaks an iLovePDF
+    // task slot and its credits — exactly the heavy/timeout cases the
+    // async pipeline exists to survive.
+    await task.delete().catch(() => {})
+  }
 }
 
 // ── OCR Helper (for PDF→Office pipeline) ──────────────────────
@@ -137,15 +142,17 @@ export async function runPdfOcrForOffice(
   const task = ilovepdf.newTask("pdfocr" as ILoveAPITool)
   await task.start()
 
-  const file = ILovePDFFile.fromArray(pdfBuffer, filename)
-  await task.addFile(file)
+  try {
+    const file = ILovePDFFile.fromArray(pdfBuffer, filename)
+    await task.addFile(file)
 
-  await task.process({ ocr_languages: ocrLanguages })
+    await task.process({ ocr_languages: ocrLanguages })
 
-  const buffer = await task.download()
-  await task.delete()
-
-  return buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer as ArrayBuffer)
+    const buffer = await task.download()
+    return buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer as ArrayBuffer)
+  } finally {
+    await task.delete().catch(() => {})
+  }
 }
 
 // ── Workflow Runner (Chained Tools) ──────────────────────────
@@ -168,6 +175,7 @@ export async function runWorkflow(
   let currentTask = ilovepdf.newTask(steps[0].tool as ILoveAPITool)
   await currentTask.start()
 
+  try {
   // Upload files
   for (const f of initialFiles) {
     const file = ILovePDFFile.fromArray(Buffer.from(f.buffer), f.filename)
@@ -201,8 +209,6 @@ export async function runWorkflow(
   const timer = (currentTask as any).timer || "0";
   const taskId = currentTask.id;
 
-  await currentTask.delete()
-
   return {
     buffer: buffer,
     downloadFilename,
@@ -210,6 +216,10 @@ export async function runWorkflow(
     timer,
     taskId,
     server: "api.ilovepdf.com",
+  }
+  } finally {
+    // Release the (possibly chained) remote task on every exit path.
+    await currentTask.delete().catch(() => {})
   }
 }
 

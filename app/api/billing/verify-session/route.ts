@@ -41,9 +41,13 @@ export async function POST(req: Request) {
       )
     }
 
+    // Require an actual settled payment (or a no-charge trial). Merely
+    // having `status === "complete"` is NOT enough — a completed session
+    // can still be `payment_status: "unpaid"` (e.g. async payment methods
+    // that later fail), which would otherwise grant premium for free.
     const paid =
       session.payment_status === "paid" ||
-      session.status === "complete"
+      session.payment_status === "no_payment_required"
 
     if (!paid) {
       return NextResponse.json(

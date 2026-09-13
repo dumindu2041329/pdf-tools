@@ -35,16 +35,41 @@ function safeFilename(name: string): string {
   return cleaned.length > 0 ? cleaned : "output.pdf"
 }
 
+// Ids are used to build Storage keys, so restrict them to a safe charset
+// (matches the shape of `newJobId()` UUIDs and iLovePDF task ids).
+const JOB_ID_RE = /^[a-zA-Z0-9-]{1,100}$/
+const TASK_ID_RE = /^[a-zA-Z0-9_-]{1,100}$/
+
 /**
- * Best-effort webhook signature check. iLovePDF does not sign webhooks
- * yet (this replaces the old TODO); when `ILOVEAPI_WEBHOOK_SECRET` is
- * configured we verify a hex HMAC-SHA256 of the raw body provided in the
- * `x-ilovepdf-signature` header. Without a secret, validation is skipped
- * so the route keeps working until iLovePDF ships HMAC signing.
+ * Webhook signature check.
+ *
+ * When `ILOVEAPI_WEBHOOK_SECRET` is configured we verify a hex
+ * HMAC-SHA256 of the raw body provided in the `x-ilovepdf-signature`
+ * header. Without a secret the check FAILS CLOSED in production: an
+ * unsigned webhook is a forgeable one (it can be used to make the server
+ * download attacker-chosen "task results" into our bucket), so we refuse
+ * it rather than silently accepting it.
+ *
+ * Operators who run iLovePDF webhooks in an environment where the
+ * provider does not (yet) sign them can acknowledge the risk explicitly
+ * with `ILOVEAPI_WEBHOOK_ALLOW_UNSIGNED=true`. Development builds keep
+ * working without the flag.
  */
 function verifySignature(rawBody: string, req: Request): boolean {
   const secret = process.env.ILOVEAPI_WEBHOOK_SECRET
-  if (!secret) return true
+  if (!secret) {
+    if (
+      process.env.NODE_ENV === "production" &&
+      process.env.ILOVEAPI_WEBHOOK_ALLOW_UNSIGNED !== "true"
+    ) {
+      console.error(
+        "[iLoveAPI Webhook] ILOVEAPI_WEBHOOK_SECRET is not set — rejecting unsigned webhook. " +
+          "Set the secret (or explicitly opt out with ILOVEAPI_WEBHOOK_ALLOW_UNSIGNED=true)."
+      )
+      return false
+    }
+    return true
+  }
   const signature = req.headers.get("x-ilovepdf-signature")
   if (!signature) return false
   const expected = createHmac("sha256", secret).update(rawBody).digest("hex")
@@ -88,6 +113,17 @@ export async function POST(req: Request) {
   const taskId = typeof task.task === "string" ? task.task : ""
   const server = typeof task.server === "string" ? task.server : ""
   const tool = typeof task.tool === "string" ? task.tool : ""
+
+  // Both ids are interpolated into Storage keys (`results/<jobId>/…`)
+  // and the iLovePDF download path. The body is HMAC-signed, but the
+  // `jobId` query param is NOT part of the signed payload, so it is
+  // attacker-mutable on a replayed body — validate both before use.
+  if (taskId && !TASK_ID_RE.test(taskId)) {
+    return NextResponse.json({ error: "Invalid taskId" }, { status: 400 })
+  }
+  if (jobId && !JOB_ID_RE.test(jobId)) {
+    return NextResponse.json({ error: "Invalid jobId" }, { status: 400 })
+  }
 
   try {
     if (event === "task.completed" && taskId && server) {

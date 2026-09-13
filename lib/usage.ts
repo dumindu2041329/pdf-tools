@@ -46,8 +46,20 @@ export async function canProcessFile(
     }
   }
 
-  // Fast path: read denormalized counters (single row lookup, O(1))
-  const { daily, monthly } = await readUsageCounter(userId)
+  // Fast path: read denormalized counters (single row lookup, O(1)).
+  // Fail CLOSED if the read fails — treating an unreadable counter as
+  // "zero usage" would silently disable the free-plan caps for everyone.
+  let daily: number
+  let monthly: number
+  try {
+    ;({ daily, monthly } = await readUsageCounter(userId))
+  } catch (err) {
+    console.error("[usage] readUsageCounter failed; denying request:", err)
+    return {
+      allowed: false,
+      reason: "Usage limits are temporarily unavailable. Please try again in a moment.",
+    }
+  }
 
   if (limits.daily > 0 && daily >= limits.daily) {
     return {
@@ -108,11 +120,18 @@ export async function getUsageStats(userId: string): Promise<UsageStats> {
   const subscriptionPlan = await getUserPlan(userId)
   const limits = getLimitsForPlan(subscriptionPlan)
 
-  const { daily, monthly }: CounterCounts = await readUsageCounter(userId)
+  // Display-only path (/api/usage). Unlike the enforcement path, a read
+  // failure here must not break the meter — fall back to zeros.
+  let counts: CounterCounts = { daily: 0, monthly: 0 }
+  try {
+    counts = await readUsageCounter(userId)
+  } catch (err) {
+    console.error("[usage] getUsageStats counter read failed:", err)
+  }
 
   return {
-    filesProcessedToday: daily,
-    filesProcessedThisMonth: monthly,
+    filesProcessedToday: counts.daily,
+    filesProcessedThisMonth: counts.monthly,
     subscriptionPlan,
     limits,
   }

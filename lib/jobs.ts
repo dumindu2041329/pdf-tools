@@ -30,6 +30,12 @@ export type JobStatus =
 
 export interface JobRecord {
   jobId: string
+  /**
+   * Owner of the job, or `null` for guest jobs. Guest jobs have no account
+   * to key on, so their unguessable job id is the bearer capability — any
+   * caller that presents the id may read/cancel the job. Treat job ids as
+   * secrets (never log or put them in a referrer-carrying URL).
+   */
   userId: string | null
   toolSlug: string
   status: JobStatus
@@ -77,12 +83,20 @@ export async function createJob(input: {
   })
 }
 
+const TERMINAL_STATUSES: readonly JobStatus[] = ["completed", "failed", "cancelled"]
+
 export async function updateJob(
   jobId: string,
   patch: Partial<Omit<JobRecord, "jobId" | "userId" | "toolSlug" | "createdAt">>
 ): Promise<void> {
   const current = await getJob(jobId)
   if (!current) return
+  // The record lives as a Storage blob, so writes are read-modify-write
+  // with no compare-and-swap. The dangerous interleaving is a late writer
+  // (e.g. the Inngest `complete` step) resurrecting a job the user already
+  // cancelled — once a job is in a terminal state it must stay there, so
+  // drop any further write.
+  if (TERMINAL_STATUSES.includes(current.status)) return
   await uploadToStorage({
     bucket: RESULTS_BUCKET,
     pathname: jobStatusPath(jobId),
@@ -106,7 +120,8 @@ export async function getJob(jobId: string): Promise<JobRecord | null> {
     // Cache-buster: public Storage URLs can be CDN-cached, and the
     // client polls this every couple of seconds.
     const buf = await downloadFromStorage(
-      `${jobPublicUrl(jobId)}?t=${Date.now()}`
+      `${jobPublicUrl(jobId)}?t=${Date.now()}`,
+      { bucket: RESULTS_BUCKET, prefixes: [`jobs/${jobId}/`] }
     )
     const parsed = JSON.parse(buf.toString("utf-8")) as Partial<JobRecord>
     if (typeof parsed.jobId !== "string" || parsed.jobId.length === 0) {

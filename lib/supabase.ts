@@ -4,15 +4,16 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js"
  * Supabase client singletons (server + browser).
  *
  * The same project hosts two distinct clients:
- *  - `getSupabaseServer()` — uses the service role key (when available) or
- *    the anon key as a fallback. Used for server-side listing / deleting
- *    objects and for issuing signed upload URLs.
+ *  - `getSupabaseServer()` — requires the service role key. Used for
+ *    server-side listing / deleting objects and for issuing signed upload
+ *    URLs.
  *  - `getSupabaseBrowser()` — uses the anon key, safe to ship to the
  *    client. Used by direct browser uploads (`uploadToSignedUrl`).
  *
  * Both clients read their credentials from `NEXT_PUBLIC_SUPABASE_URL` plus
- * one of the key vars. The anon key is intentionally public — RLS policies
- * on the buckets control what each role can do.
+ * one of the key vars. The anon key is intentionally public (`NEXT_PUBLIC_*`)
+ * and is therefore NOT an authorization boundary — it must never be used for
+ * privileged server-side operations.
  */
 
 function getSupabaseUrl(): string {
@@ -44,19 +45,23 @@ let serverClient: SupabaseClient | null = null
 let browserClient: SupabaseClient | null = null
 
 /**
- * Server-side Supabase client. Prefers the service role key so that
- * server-side list/delete operations bypass RLS, but falls back to the
- * anon key when the service role key isn't configured (e.g. local dev
- * before the secret is wired up). RLS policies on the public buckets
- * grant the anon role full CRUD access (SELECT/INSERT/UPDATE/DELETE on
- * `storage.objects` scoped to the two buckets), so even without the
- * service role key, server-side `list()` and `remove()` calls work via
- * the anon key. The SELECT policies are intentionally added so the
- * scan-session poll and cleanup endpoints work without a service key.
+ * Server-side Supabase client. Requires the service role key.
+ *
+ * The anon key is shipped to every browser (`NEXT_PUBLIC_*`) and is not an
+ * authorization boundary. Silently falling back to it would either grant
+ * the public key the privileges these operations need, or fail opaquely
+ * when RLS denies the anon role. Both are worse than a loud error, so we
+ * refuse to construct the client without `SUPABASE_SERVICE_ROLE_KEY`.
  */
 export function getSupabaseServer(): SupabaseClient {
   if (serverClient) return serverClient
-  serverClient = createClient(getSupabaseUrl(), getServiceRoleKey() ?? getAnonKey(), {
+  const serviceRoleKey = getServiceRoleKey()
+  if (!serviceRoleKey) {
+    throw new Error(
+      "Missing SUPABASE_SERVICE_ROLE_KEY. Server-side Storage operations require the service role key; the public anon key is not used as a fallback."
+    )
+  }
+  serverClient = createClient(getSupabaseUrl(), serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   })
   return serverClient

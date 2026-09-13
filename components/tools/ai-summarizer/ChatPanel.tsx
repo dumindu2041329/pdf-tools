@@ -464,6 +464,7 @@ function MermaidDiagram({
     ;(async () => {
       try {
         const mermaid = (await import("mermaid")).default
+        const DOMPurify = (await import("dompurify")).default
         // `securityLevel: "strict"` blocks any node/click/JS handlers
         // injected by the diagram text — required because we ultimately
         // mount the rendered SVG via `dangerouslySetInnerHTML`.
@@ -482,7 +483,14 @@ function MermaidDiagram({
         })
         const { svg: rendered } = await mermaid.render(diagramId, code.trim())
         if (!cancelled) {
-          setSvg(rendered)
+          // `securityLevel: "strict"` already strips script/event handlers,
+          // but this SVG is mounted via `dangerouslySetInnerHTML` — run it
+          // through DOMPurify as a second, independent barrier so a future
+          // mermaid default change can't silently reopen the sink.
+          const sanitized = DOMPurify.sanitize(rendered, {
+            USE_PROFILES: { svg: true, svgFilters: true },
+          })
+          setSvg(sanitized)
           setError(null)
         }
       } catch (err) {

@@ -21,11 +21,16 @@ import { getJob, RESULTS_BUCKET, updateJob } from "@/lib/jobs"
 import {
   deleteFromStorage,
   downloadFromStorage,
+  ownerUploadPrefix,
+  PDF_UPLOADS_BUCKET,
   uploadToStorage,
+  type StorageScope,
 } from "@/lib/supabase-storage"
 import { startTaskWithWebhook, type StartedTask } from "@/lib/iloveapi/webhook"
 import { runTool } from "@/lib/iloveapi/tools"
 import { getToolBySlug } from "@/lib/tools-config"
+import { getUserPlan } from "@/lib/auth"
+import { getLimitsForPlan } from "@/lib/usageLimits"
 import { mapPageNumberOptions } from "@/lib/iloveapi/page-number-mapper"
 import { mapWatermarkOptions } from "@/lib/iloveapi/watermark-mapper"
 import {
@@ -54,6 +59,12 @@ const ADOBE_TOOLS = new Set([
   "pdf-to-word",
   "pdf-to-powerpoint",
 ])
+
+// Adobe PDF Services rejects input assets larger than ~100 MB. The route
+// pre-flights this against the client-reported `size`, but that value is
+// untrusted — enforce the real limit here against the downloaded bytes so a
+// mis-reported size can't push an oversized asset at Adobe.
+const ADOBE_MAX_INPUT_BYTES = 100 * 1024 * 1024
 
 // Tools whose multi-file path runs one iLoveAPI task per file (the
 // route zips the individual results). jpg-to-pdf / scan-to-pdf only
@@ -201,6 +212,39 @@ export const processToolJob = inngest.createFunction(
     const isLocalRotate = toolSlug === "rotate-pdf"
     const multi = blobUrls.length > 1
 
+    // Exact set of Storage objects this job may read/delete: the caller's
+    // own source uploads, the server's inline copies for this job, and
+    // this job's own results. `blobUrls` are already validated at the
+    // route, but re-checking here means a forged event can't reach
+    // another tenant's (or another bucket's) objects.
+    const jobScope: StorageScope = {
+      bucket: PDF_UPLOADS_BUCKET,
+      prefixes: [
+        ownerUploadPrefix(userId),
+        `uploads/${jobId}/`,
+        `results/${jobId}/`,
+      ],
+    }
+    const userPlan = userId ? await getUserPlan(userId) : "free"
+    const maxFileBytes = getLimitsForPlan(userPlan).maxFileSizeMB * 1024 * 1024
+    // Adobe-backed tools have a hard 100 MB ceiling regardless of plan, so
+    // cap the download there too — the real byte length is what counts, not
+    // the client-reported `size` the route pre-flighted on.
+    const maxDownloadBytes = isAdobe
+      ? Math.min(maxFileBytes, ADOBE_MAX_INPUT_BYTES)
+      : maxFileBytes
+
+    // Releases the job's input objects (the caller's uploads plus the
+    // server's inline copies) once they're no longer needed. Used on
+    // success, cancellation, and failure so a failed job doesn't orphan
+    // Storage objects.
+    const cleanupSources = async (): Promise<void> => {
+      await Promise.allSettled(blobUrls.map((u) => deleteFromStorage(u.url, jobScope)))
+      if (data.watermarkImageUrl) {
+        await deleteFromStorage(data.watermarkImageUrl, jobScope).catch(() => {})
+      }
+    }
+
     const results: Array<{ url: string; filename: string; size: number }> = []
 
     try {
@@ -219,7 +263,9 @@ export const processToolJob = inngest.createFunction(
         for (let i = 0; i < blobUrls.length; i++) {
           const entry = blobUrls[i]
           const res = await step.run(`process-file-${i}`, async () => {
-            const buffer = await downloadFromStorage(entry.url)
+            const buffer = await downloadFromStorage(entry.url, jobScope, {
+              maxBytes: maxDownloadBytes,
+            })
             const out = await processSingleFile(toolSlug, buffer, entry.filename, options)
             const stored = await uploadToStorage({
               bucket: RESULTS_BUCKET,
@@ -300,7 +346,9 @@ export const processToolJob = inngest.createFunction(
               }> = []
               for (const f of plan.files) {
                 files.push({
-                  buffer: await downloadFromStorage(f.url),
+                  buffer: await downloadFromStorage(f.url, jobScope, {
+                    maxBytes: maxFileBytes,
+                  }),
                   filename: f.filename,
                   ...(password ? { password } : {}),
                 })
@@ -308,7 +356,9 @@ export const processToolJob = inngest.createFunction(
               let watermarkImage: { buffer: Buffer; filename: string } | undefined
               if (plan.watermarkImage) {
                 watermarkImage = {
-                  buffer: await downloadFromStorage(plan.watermarkImage.url),
+                  buffer: await downloadFromStorage(plan.watermarkImage.url, jobScope, {
+                    maxBytes: maxFileBytes,
+                  }),
                   filename: plan.watermarkImage.filename,
                 }
               }
@@ -342,10 +392,10 @@ export const processToolJob = inngest.createFunction(
           const JSZip = (await import("jszip")).default
           const zip = new JSZip()
           for (const r of results) {
-            const buf = await downloadFromStorage(r.url)
+            const buf = await downloadFromStorage(r.url, jobScope)
             zip.file(r.filename, buf)
             // Per-file results are superseded by the zip.
-            await deleteFromStorage(r.url).catch(() => {})
+            await deleteFromStorage(r.url, jobScope).catch(() => {})
           }
           const zipBuffer = await zip.generateAsync({ type: "uint8array" })
           const stored = await uploadToStorage({
@@ -364,10 +414,7 @@ export const processToolJob = inngest.createFunction(
         // result instead of resurrecting the record.
         const current = await getJob(jobId).catch(() => null)
         if (current?.status === "cancelled") {
-          await Promise.allSettled(blobUrls.map((u) => deleteFromStorage(u.url)))
-          if (data.watermarkImageUrl) {
-            await deleteFromStorage(data.watermarkImageUrl).catch(() => {})
-          }
+          await cleanupSources()
           return
         }
 
@@ -387,18 +434,21 @@ export const processToolJob = inngest.createFunction(
           outputSizeBytes: final.size,
         })
         // Source blobs are no longer needed once the job is done.
-        await Promise.allSettled(blobUrls.map((u) => deleteFromStorage(u.url)))
-        if (data.watermarkImageUrl) {
-          await deleteFromStorage(data.watermarkImageUrl).catch(() => {})
-        }
+        await cleanupSources()
       })
 
       return { ok: true, jobId }
     } catch (err) {
       console.error(`[inngest] tool job ${jobId} failed:`, err)
+      // Release the inputs even on failure so a permanently-failing job
+      // doesn't leak the caller's uploads (retries: 2 means the old code
+      // left them behind only after the final attempt).
+      await cleanupSources().catch(() => {})
       await updateJob(jobId, {
         status: "failed",
-        error: err instanceof Error ? err.message : "Processing failed",
+        // Generic message — the raw error can carry upstream internals
+        // and this value is returned to the client via /api/jobs.
+        error: "Processing failed. Please try again.",
       }).catch(() => {})
       throw err
     }

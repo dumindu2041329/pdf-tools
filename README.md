@@ -139,7 +139,6 @@ lib/
   device-info.ts         # Parses UA into a friendly device label (scan flow)
   editResultStore.ts     # In-memory store for Edit PDF results
   extractFormatConverter.ts  # extract-data → csv/json/md/txt
-  fileStore.ts           # In-memory Map<id, file> for /api/download/[id]
   guest-usage.ts         # Cookie-backed counter for unauthenticated users
   jobs.ts                # Async job records stored in Supabase Storage
   ratelimit.ts           # Upstash-backed burst limiters

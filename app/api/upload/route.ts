@@ -1,10 +1,13 @@
+import { randomBytes } from "crypto"
 import { auth } from "@clerk/nextjs/server"
 import { NextResponse } from "next/server"
 import { getLimitsForPlan } from "@/lib/usageLimits"
+import { getUserPlan } from "@/lib/auth"
 import { getClientIp, rateLimitKey, uploadLimiter } from "@/lib/ratelimit"
 import {
   createSignedUploadUrl,
   isSupabaseStorageConfigured,
+  ownerNamespace,
   PDF_UPLOADS_BUCKET,
   SCAN_SESSIONS_BUCKET,
 } from "@/lib/supabase-storage"
@@ -113,23 +116,30 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   // Per-file cap. Guests inherit the free-plan limit (20 MB); signed-in
-  // users get the premium 4 GB cap. The client also enforces this via
-  // `getLimitsForPlan`, but the server is the source of truth.
-  const maxBytes = isGuest
-    ? getLimitsForPlan("free").maxFileSizeMB * 1024 * 1024
-    : 4 * 1024 * 1024 * 1024
+  // users get the cap for their *actual* plan. This is an *advisory*
+  // pre-flight check — the client controls `size`, and a signed upload URL
+  // carries no size enforcement of its own. The authoritative check happens
+  // after download in `/api/tools/[tool]`, which measures the real byte
+  // length before processing. We still resolve the real plan here so a
+  // signed-in free user can't park a 4 GB object that the free plan would
+  // reject at processing time.
+  const plan = userId ? await getUserPlan(userId) : "free"
+  const maxBytes = getLimitsForPlan(plan).maxFileSizeMB * 1024 * 1024
   if (size <= 0 || size > maxBytes) {
     return NextResponse.json(
       {
-        error: `File too large for ${isGuest ? "guest" : "signed-in"} plan (max ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`,
+        error: `File too large for ${isGuest ? "guest" : plan} plan (max ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`,
       },
       { status: 413 }
     )
   }
 
-  // Scan-session flows must upload under `scan-sessions/<sessionId>/…`.
-  // We validate the prefix up front so a leaked signed URL can't be
-  // abused to write into another session's namespace.
+  // Scan-session flows must upload as `<sessionId>/<filename>` under the
+  // `scan-sessions` bucket. We validate the shape up front so a leaked
+  // signed URL can't write into another session's namespace, and reject
+  // nested folders so a session's tree stays flat — that keeps destroy /
+  // delete cheap and stops an attacker seeding a deep tree to amplify
+  // the recursive cleanup.
   if (bucket === SCAN_SESSIONS_BUCKET) {
     const expectedPrefix = `${SCAN_SESSIONS_BUCKET}/`
     if (!pathname.startsWith(expectedPrefix)) {
@@ -138,10 +148,22 @@ export async function POST(request: Request): Promise<NextResponse> {
         { status: 400 }
       )
     }
-    const rest = pathname.slice(expectedPrefix.length)
-    const sessionSegment = rest.split("/")[0]
+    const segments = pathname
+      .slice(expectedPrefix.length)
+      .split("/")
+      .filter((s) => s.length > 0)
+    if (segments.length !== 2) {
+      return NextResponse.json(
+        { error: "Pathname must be <sessionId>/<filename>" },
+        { status: 400 }
+      )
+    }
+    const [sessionSegment, leaf] = segments
     if (!SAFE_SESSION.test(sessionSegment)) {
       return NextResponse.json({ error: "Invalid sessionId" }, { status: 400 })
+    }
+    if (!/^[a-zA-Z0-9._-]{1,200}$/.test(leaf)) {
+      return NextResponse.json({ error: "Invalid filename" }, { status: 400 })
     }
   }
 
@@ -156,18 +178,38 @@ export async function POST(request: Request): Promise<NextResponse> {
     ? pathname.slice(bucket.length + 1)
     : pathname
 
-  // Append a random suffix to the leaf filename so concurrent uploads
-  // of `report.pdf` from different users don't collide on the same
-  // object path.
-  const finalPath = withRandomSuffix(pathRelativeToBucket)
+  // Scope the writable path per caller. Without this, a signed upload
+  // URL lets the caller write to *any* object key in the bucket — a
+  // leaked/observed public URL could be targeted, and guests could
+  // squat in server-owned prefixes (`jobs/`, `results/`, `uploads/`).
+  //
+  //  - `scan-sessions` is already namespaced by `sessionId` (the
+  //    session id is the bearer capability for that flow), so we keep
+  //    the validated `<sessionId>/<file>` shape.
+  //  - `pdf-uploads` is forced under `uploads/<owner>/`, where `owner`
+  //    is the Clerk user id for signed-in callers and the literal
+  //    `guest` otherwise. Client-supplied directories are dropped —
+  //    nothing downstream lists this bucket by prefix; the tool
+  //    pipeline resolves files purely by the returned public URL.
+  //
+  // The random suffix still guards against collisions on the leaf name.
+  let finalPath: string
+  if (bucket === SCAN_SESSIONS_BUCKET) {
+    finalPath = withRandomSuffix(pathRelativeToBucket)
+  } else {
+    const leaf = pathRelativeToBucket.split("/").filter(Boolean).pop() ?? "upload"
+    finalPath = `uploads/${ownerNamespace(userId)}/${withRandomSuffix(leaf)}`
+  }
 
   try {
     const { signedUrl, token, path } = await createSignedUploadUrl(bucket, finalPath)
     return NextResponse.json({ signedUrl, token, path })
   } catch (err) {
+    // Log the detail server-side; never echo storage internals to the
+    // caller — the raw message can disclose bucket/policy details.
     console.error("[supabase] createSignedUploadUrl failed:", err)
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Failed to create signed upload URL" },
+      { error: "Failed to create signed upload URL" },
       { status: 500 }
     )
   }
@@ -191,6 +233,7 @@ function withRandomSuffix(path: string): string {
 }
 
 function randomToken(): string {
-  // 9-char base36 token → ~47 bits of entropy. Cheap and URL-safe.
-  return Math.random().toString(36).slice(2, 11)
+  // 6 random bytes → 8 URL-safe base64url chars (~48 bits). Crypto-strength
+  // so the suffix isn't guessable/enumerable the way Math.random() output is.
+  return randomBytes(6).toString("base64url")
 }
